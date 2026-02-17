@@ -1,0 +1,70 @@
+# Binaries and build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+/build/
+out/
+
+# Go workspace and test
+*.test
+*.out
+go.work
+go.work.sum
+vendor/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+.secrets
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS generated
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+
+# Debug and profiling
+__debug_bin
+debug
+*.prof
+*.pprof
+trace.out
+
+# Temporary and logs
+tmp/
+temp/
+*.log
+*.tmp
+*.temp
+.cache/
+
+# Coverage and tools
+coverage.html
+coverage.out
+*.cover
+*.coverprofile
+
+# Air (live reload) and similar
+tmp/
+
+# Local config overrides (do not commit)
+config.local.*
+*.local.yaml
+*.local.yml

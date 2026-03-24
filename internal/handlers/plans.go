@@ -15,8 +15,11 @@ type Plan struct {
 	Description string `json:"description,omitempty"`
 }
 
-func ListPlans(c *gin.Context) {
-	// TODO: load from DB, filter by merchant
-	plans := []Plan{}
+func (h *Handler) ListPlans(c *gin.Context) {
+	plans, err := h.Plans.ListPlans(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"plans": plans})
 }

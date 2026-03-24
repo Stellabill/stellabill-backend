@@ -6,7 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/routes"
+	"stellarbill-backend/internal/services"
 )
 
 func main() {
@@ -16,7 +18,12 @@ func main() {
 	}
 
 	router := gin.Default()
-	routes.Register(router)
+
+	planSvc := services.NewPlanService()
+	subSvc := services.NewSubscriptionService()
+	h := handlers.NewHandler(planSvc, subSvc)
+
+	routes.Register(router, h)
 
 	addr := ":" + cfg.Port
 	if p := os.Getenv("PORT"); p != "" {

@@ -5,15 +5,15 @@ import (
 	"stellarbill-backend/internal/handlers"
 )
 
-func Register(r *gin.Engine) {
+func Register(r *gin.Engine, h *handlers.Handler) {
 	r.Use(corsMiddleware())
 
 	api := r.Group("/api")
 	{
-		api.GET("/health", handlers.Health)
-		api.GET("/subscriptions", handlers.ListSubscriptions)
-		api.GET("/subscriptions/:id", handlers.GetSubscription)
-		api.GET("/plans", handlers.ListPlans)
+		api.GET("/health", h.Health)
+		api.GET("/subscriptions", h.ListSubscriptions)
+		api.GET("/subscriptions/:id", h.GetSubscription)
+		api.GET("/plans", h.ListPlans)
 	}
 }
 

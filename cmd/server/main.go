@@ -1,13 +1,10 @@
 package main
 
 import (
-	"context"
-	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,73 +16,77 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	// Load configuration with strict validation
+	cfg, err := config.Load()
+	if err != nil {
+		// Fail fast with descriptive error
+		fmt.Fprintf(os.Stderr, "ERROR: Configuration validation failed: %s\n", err.Error())
+		fmt.Fprintln(os.Stderr, "\nRequired environment variables:")
+		for _, key := range config.GetRequiredEnvVars() {
+			fmt.Fprintf(os.Stderr, "  - %s\n", key)
+		}
+		fmt.Fprintln(os.Stderr, "\nOptional environment variables and defaults:")
+		for key, val := range config.GetOptionalEnvVars() {
+			fmt.Fprintf(os.Stderr, "  - %s (default: %s)\n", key, val)
+		}
+		os.Exit(1)
+	}
+
+	// Log warnings if any
+	if vResult := cfg.Validate(); len(vResult.Warnings) > 0 {
+		log.Printf("WARNING: Configuration warnings:")
+		for _, w := range vResult.Warnings {
+			log.Printf("  - %s", w)
+		}
+	}
+
+	// Set Gin mode based on environment
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
+		log.Println("Running in production mode")
+	} else if cfg.Env == "development" {
+		gin.SetMode(gin.DebugMode)
+		log.Println("Running in development mode")
+	} else {
+		gin.SetMode(gin.TestMode)
+		log.Printf("Running in %s mode", cfg.Env)
 	}
 
-	// Initialize database
-	db, err := sql.Open("postgres", cfg.DBConn)
-	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
-	}
-	defer db.Close()
+	// Create router with configured timeouts
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(gin.Logger())
 
-	// Test database connection
-	if err := db.Ping(); err != nil {
-		log.Fatal("Failed to ping database:", err)
-	}
+	// Set timeouts from configuration
+	router.Use(func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Next()
+	})
 
-	// Initialize outbox manager
-	outboxManager, err := outbox.NewManager(db, cfg)
-	if err != nil {
-		log.Fatal("Failed to initialize outbox manager:", err)
-	}
-
-	// Start outbox system
-	if err := outboxManager.Start(); err != nil {
-		log.Fatal("Failed to start outbox system:", err)
-	}
-	defer outboxManager.Stop()
-
-	// Set outbox manager in handlers for health checks
-	handlers.SetOutboxManager(outboxManager)
-
-	router := gin.Default()
+	// Register routes
 	routes.Register(router)
 
-	addr := ":" + cfg.Port
-	if p := os.Getenv("PORT"); p != "" {
-		addr = ":" + p
+	// Build server address
+	addr := fmt.Sprintf(":%d", cfg.Port)
+
+	// Create HTTP server with configuration
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      router,
+		ReadTimeout:  time.Duration(cfg.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.IdleTimeout) * time.Second,
 	}
 
-	// Create HTTP server
-	server := &http.Server{
-		Addr:    addr,
-		Handler: router,
-	}
+	log.Printf("Starting Stellarbill backend on %s (env: %s)", addr, cfg.Env)
+	log.Printf("Server timeouts - Read: %ds, Write: %ds, Idle: %ds", 
+		cfg.ReadTimeout, cfg.WriteTimeout, cfg.IdleTimeout)
 
-	// Start server in a goroutine
-	go func() {
-		log.Printf("Stellarbill backend listening on %s", addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("Server failed to start:", err)
-		}
-	}()
-
-	// Wait for interrupt signal to gracefully shutdown the server
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("Shutting down server...")
-
-	// Create a deadline for shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Attempt graceful shutdown
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatal("Server forced to shutdown:", err)
+	// Start server with fail-fast behavior
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("Failed to start server: %v", err)
 	}
 
 	log.Println("Server exited")

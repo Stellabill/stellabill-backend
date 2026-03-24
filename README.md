@@ -8,6 +8,7 @@ Go (Gin) API backend for Stellabill — subscription and billing plans API. This
 
 - [Tech stack](#tech-stack)
 - [What this backend provides (for the frontend)](#what-this-backend-provides-for-the-frontend)
+- [Background Worker](#background-worker)
 - [Local setup](#local-setup)
 - [Configuration](#configuration)
 - [API reference](#api-reference)
@@ -36,6 +37,44 @@ This service is the **backend only**. A separate frontend (or any client) can:
 - **Subscriptions** — `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
 
 CORS is enabled for all origins in development so a frontend on another port or domain can call these endpoints.
+
+---
+
+## Background Worker
+
+The backend includes a production-ready background worker system for automated billing job scheduling and execution.
+
+### Key Features
+
+- **Job Scheduling**: Schedule billing operations (charges, invoices, reminders) with configurable execution times
+- **Distributed Locking**: Prevents duplicate processing when running multiple worker instances
+- **Retry Policy**: Automatic retry with exponential backoff (1s, 4s, 9s) for failed jobs
+- **Dead-Letter Queue**: Failed jobs after max attempts are moved for manual review
+- **Graceful Shutdown**: Workers complete in-flight jobs before shutting down
+- **Metrics Tracking**: Monitor job processing statistics (processed, succeeded, failed, dead-lettered)
+- **Concurrent Workers**: Multiple workers can run safely without duplicate processing
+
+### Documentation
+
+- `internal/worker/README.md` - Complete worker documentation
+- `internal/worker/INTEGRATION.md` - Integration guide with examples
+- `internal/worker/SECURITY.md` - Security analysis and threat model
+- `WORKER_IMPLEMENTATION.md` - Implementation summary
+
+### Quick Example
+
+```go
+store := worker.NewMemoryStore()
+executor := worker.NewBillingExecutor()
+config := worker.DefaultConfig()
+
+w := worker.NewWorker(store, executor, config)
+w.Start()
+defer w.Stop()
+
+scheduler := worker.NewScheduler(store)
+job, _ := scheduler.ScheduleCharge("sub-123", time.Now(), 3)
+```
 
 ---
 
@@ -235,28 +274,23 @@ stellabill-backend/
 │   │   ├── health.go        # GET /api/health (includes outbox status)
 │   │   ├── plans.go         # GET /api/plans
 │   │   └── subscriptions.go # GET /api/subscriptions, /api/subscriptions/:id
-│   ├── middleware/
-│   │   ├── recovery.go      # Panic recovery middleware
-│   │   └── recovery_test.go # Tests for recovery middleware
-│   ├── outbox/
-│   │   ├── types.go         # Outbox types and interfaces
-│   │   ├── repository.go    # PostgreSQL repository implementation
-│   │   ├── publisher.go     # Event publisher implementations
-│   │   ├── dispatcher.go    # Background event dispatcher
-│   │   ├── service.go       # Outbox service and domain events
-│   │   ├── manager.go       # Outbox system lifecycle management
-│   │   ├── outbox_test.go   # Comprehensive test suite
-│   │   └── integration_test.go # Integration tests
-│   └── routes/
+│   ├── routes/
 │       └── routes.go        # Registers routes and CORS middleware
-├── migrations/
-│   └── 001_create_outbox_table.sql # Database migration for outbox
-├── test-outbox.bat          # Windows test script
-├── test-outbox.sh           # Unix/Linux test script
+│   └── worker/
+│       ├── job.go           # Job model and JobStore interface
+│       ├── store_memory.go  # In-memory JobStore implementation
+│       ├── worker.go        # Background worker with scheduler loop
+│       ├── executor.go      # Billing job executor
+│       ├── scheduler.go     # Job scheduling utilities
+│       ├── *_test.go        # Comprehensive test suite (95%+ coverage)
+│       ├── README.md        # Worker documentation
+│       ├── SECURITY.md      # Security analysis and threat model
+│       └── INTEGRATION.md   # Integration guide with examples
 ├── go.mod
 ├── go.sum
 ├── .gitignore
-└── README.md
+├── README.md
+└── WORKER_IMPLEMENTATION.md # Implementation summary
 ```
 
 ---

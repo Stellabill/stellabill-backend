@@ -1,0 +1,156 @@
+openapi: 3.0.3
+info:
+  title: Stellabill Backend API
+  description: |
+    Stellabill backend HTTP API.
+
+    This specification covers all implemented `/api/*` routes.
+
+    Notes:
+      - Preflight CORS requests (`OPTIONS`) are handled by middleware and return `204`.
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: Health
+  - name: Plans
+  - name: Subscriptions
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/plans:
+    get:
+      tags: [Plans]
+      summary: List billing plans
+      operationId: listPlans
+      responses:
+        "200":
+          description: Plans list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlansResponse"
+  /api/subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List subscriptions
+      operationId: listSubscriptions
+      responses:
+        "200":
+          description: Subscriptions list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionsResponse"
+  /api/subscriptions/{id}:
+    get:
+      tags: [Subscriptions]
+      summary: Get one subscription
+      operationId: getSubscription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Subscription identifier
+      responses:
+        "200":
+          description: Subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: stellarbill-backend
+    Plan:
+      type: object
+      additionalProperties: false
+      required: [id, name, amount, currency, interval]
+      properties:
+        id:
+          type: string
+          example: plan_basic
+        name:
+          type: string
+          example: Basic
+        amount:
+          type: string
+          description: Amount as string (placeholder until DB integration).
+          example: "1000"
+        currency:
+          type: string
+          example: NGN
+        interval:
+          type: string
+          example: monthly
+        description:
+          type: string
+          example: Starter plan
+    PlansResponse:
+      type: object
+      additionalProperties: false
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          items:
+            $ref: "#/components/schemas/Plan"
+    Subscription:
+      type: object
+      additionalProperties: false
+      required: [id, plan_id, customer, status, amount, interval]
+      properties:
+        id:
+          type: string
+          example: sub_123
+        plan_id:
+          type: string
+          example: plan_basic
+        customer:
+          type: string
+          example: customer_123
+        status:
+          type: string
+          example: active
+        amount:
+          type: string
+          example: "1000"
+        interval:
+          type: string
+          example: monthly
+        next_billing:
+          type: string
+          description: Next billing datetime (string placeholder).
+          example: "2026-04-01T00:00:00Z"
+    SubscriptionsResponse:
+      type: object
+      additionalProperties: false
+      required: [subscriptions]
+      properties:
+        subscriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Subscription"

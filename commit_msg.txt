@@ -1,0 +1,19 @@
+feat: add baseline http security headers middleware
+
+- Applied global middleware for setting HSTS, X-Frame-Options, and X-Content-Type-Options.
+- Handled local development environment overrides.
+- Implemented checks to prevent insecure header combinations and proxy-layer conflicts.
+- Achieved 100% statement coverage for the new middleware package.
+
+Test output:
+=== RUN   TestSecurityHeaders_Production
+--- PASS: TestSecurityHeaders_Production (0.00s)
+=== RUN   TestSecurityHeaders_Development
+--- PASS: TestSecurityHeaders_Development (0.00s)
+=== RUN   TestSecurityHeaders_PreventInsecureFrameOptions
+--- PASS: TestSecurityHeaders_PreventInsecureFrameOptions (0.00s)
+=== RUN   TestSecurityHeaders_ProxyLayerConflicts
+--- PASS: TestSecurityHeaders_ProxyLayerConflicts (0.00s)
+PASS
+coverage: 100.0% of statements
+ok  	stellarbill-backend/internal/middleware	1.338s	coverage: 100.0% of statements

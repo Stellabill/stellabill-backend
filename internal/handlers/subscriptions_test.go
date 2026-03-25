@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-
 	"stellarbill-backend/internal/service"
 )
 
@@ -23,9 +22,13 @@ func (m *mockSubscriptionService) GetDetail(_ context.Context, _, _ string) (*se
 	return m.detail, m.warnings, m.err
 }
 
-// setupRouter builds a minimal Gin router with the handler wired up.
+func (m *mockSubscriptionService) ListSubscriptions(_ context.Context) ([]Subscription, error) {
+	return nil, nil
+}
+
+// setupRouter builds a minimal Gin router with the Handler wired up.
 // If setCallerID is true, a middleware injects "callerID" into the context.
-func setupRouter(svc service.SubscriptionService, setCallerID bool) *gin.Engine {
+func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	if setCallerID {
@@ -34,13 +37,28 @@ func setupRouter(svc service.SubscriptionService, setCallerID bool) *gin.Engine 
 			c.Next()
 		})
 	}
-	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(svc))
+	h := &Handler{Subscriptions: svc}
+	r.GET("/api/subscriptions/:id", h.GetSubscription)
 	return r
+}
+
+func TestListSubscriptions_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &mockSubscriptionService{}
+	h := &Handler{Subscriptions: svc}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	h.ListSubscriptions(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
 }
 
 func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 	svc := &mockSubscriptionService{}
-	r := setupRouter(svc, false) // no callerID injected
+	r := setupRouter(svc, false)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
@@ -57,19 +75,15 @@ func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 }
 
 func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
-	// Gin strips trailing slashes, so we test whitespace-only via a custom param.
-	// We use a route that accepts a whitespace id by registering a wildcard.
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set("callerID", "caller-123")
 		c.Next()
 	})
-	// Register a route that captures whitespace as the id segment.
 	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(&mockSubscriptionService{}))
 
 	w := httptest.NewRecorder()
-	// Send a request with only spaces as the id (URL-encoded space = %20).
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%20", nil)
 	r.ServeHTTP(w, req)
 
@@ -187,18 +201,15 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Check Content-Type header.
 	ct := w.Header().Get("Content-Type")
 	if ct != "application/json; charset=utf-8" {
 		t.Errorf("unexpected Content-Type: %q", ct)
 	}
 
-	// Decode and verify envelope shape.
 	var envelope map[string]interface{}
 	if err := json.NewDecoder(w.Body).Decode(&envelope); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-
 	if envelope["api_version"] != "1" {
 		t.Errorf("expected api_version=1, got %v", envelope["api_version"])
 	}
@@ -223,7 +234,6 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 		t.Errorf("expected data.interval=monthly, got %v", data["interval"])
 	}
 
-	// Check plan metadata embedded.
 	plan, ok := data["plan"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected data.plan to be an object")
@@ -232,7 +242,6 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 		t.Errorf("expected plan.plan_id=plan-1, got %v", plan["plan_id"])
 	}
 
-	// Check billing_summary.
 	billing, ok := data["billing_summary"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected data.billing_summary to be an object")

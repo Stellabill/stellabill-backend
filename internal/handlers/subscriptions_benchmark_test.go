@@ -51,10 +51,10 @@ func generateNextBilling(i int) string {
 // BenchmarkListSubscriptions_Empty tests performance with no data
 func BenchmarkListSubscriptions_Empty(b *testing.B) {
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		ListSubscriptions(c)
 	}
@@ -63,16 +63,16 @@ func BenchmarkListSubscriptions_Empty(b *testing.B) {
 // BenchmarkListSubscriptions_Small tests performance with 10 subscriptions
 func BenchmarkListSubscriptions_Small(b *testing.B) {
 	subscriptions := generateSubscriptions(10)
-	
+
 	handler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	}
-	
+
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		handler(c)
 	}
@@ -81,16 +81,16 @@ func BenchmarkListSubscriptions_Small(b *testing.B) {
 // BenchmarkListSubscriptions_Medium tests performance with 100 subscriptions
 func BenchmarkListSubscriptions_Medium(b *testing.B) {
 	subscriptions := generateSubscriptions(100)
-	
+
 	handler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	}
-	
+
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		handler(c)
 	}
@@ -99,16 +99,16 @@ func BenchmarkListSubscriptions_Medium(b *testing.B) {
 // BenchmarkListSubscriptions_Large tests performance with 1000 subscriptions
 func BenchmarkListSubscriptions_Large(b *testing.B) {
 	subscriptions := generateSubscriptions(1000)
-	
+
 	handler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	}
-	
+
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		handler(c)
 	}
@@ -117,16 +117,16 @@ func BenchmarkListSubscriptions_Large(b *testing.B) {
 // BenchmarkListSubscriptions_ExtraLarge tests performance with 10000 subscriptions
 func BenchmarkListSubscriptions_ExtraLarge(b *testing.B) {
 	subscriptions := generateSubscriptions(10000)
-	
+
 	handler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	}
-	
+
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		handler(c)
 	}
@@ -135,10 +135,10 @@ func BenchmarkListSubscriptions_ExtraLarge(b *testing.B) {
 // BenchmarkListSubscriptions_JSONEncoding tests JSON encoding performance
 func BenchmarkListSubscriptions_JSONEncoding_Small(b *testing.B) {
 	subscriptions := generateSubscriptions(10)
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(gin.H{"subscriptions": subscriptions})
 		if err != nil {
@@ -149,10 +149,10 @@ func BenchmarkListSubscriptions_JSONEncoding_Small(b *testing.B) {
 
 func BenchmarkListSubscriptions_JSONEncoding_Medium(b *testing.B) {
 	subscriptions := generateSubscriptions(100)
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(gin.H{"subscriptions": subscriptions})
 		if err != nil {
@@ -163,10 +163,10 @@ func BenchmarkListSubscriptions_JSONEncoding_Medium(b *testing.B) {
 
 func BenchmarkListSubscriptions_JSONEncoding_Large(b *testing.B) {
 	subscriptions := generateSubscriptions(1000)
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(gin.H{"subscriptions": subscriptions})
 		if err != nil {
@@ -179,15 +179,15 @@ func BenchmarkListSubscriptions_JSONEncoding_Large(b *testing.B) {
 func BenchmarkListSubscriptions_FullHTTP_Small(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	subscriptions := generateSubscriptions(10)
 	router.GET("/api/subscriptions", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/subscriptions", nil)
@@ -198,15 +198,15 @@ func BenchmarkListSubscriptions_FullHTTP_Small(b *testing.B) {
 func BenchmarkListSubscriptions_FullHTTP_Medium(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	subscriptions := generateSubscriptions(100)
 	router.GET("/api/subscriptions", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/subscriptions", nil)
@@ -217,15 +217,15 @@ func BenchmarkListSubscriptions_FullHTTP_Medium(b *testing.B) {
 func BenchmarkListSubscriptions_FullHTTP_Large(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	subscriptions := generateSubscriptions(1000)
 	router.GET("/api/subscriptions", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/subscriptions", nil)
@@ -237,15 +237,15 @@ func BenchmarkListSubscriptions_FullHTTP_Large(b *testing.B) {
 func BenchmarkListSubscriptions_Parallel_Small(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	subscriptions := generateSubscriptions(10)
 	router.GET("/api/subscriptions", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			w := httptest.NewRecorder()
@@ -258,15 +258,15 @@ func BenchmarkListSubscriptions_Parallel_Small(b *testing.B) {
 func BenchmarkListSubscriptions_Parallel_Medium(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	subscriptions := generateSubscriptions(100)
 	router.GET("/api/subscriptions", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			w := httptest.NewRecorder()
@@ -280,11 +280,15 @@ func BenchmarkListSubscriptions_Parallel_Medium(b *testing.B) {
 func BenchmarkGetSubscription_FullHTTP(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.GET("/api/subscriptions/:id", GetSubscription)
-	
+	router.Use(func(c *gin.Context) {
+		c.Set("callerID", "bench-caller")
+		c.Next()
+	})
+	router.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(&mockSubscriptionService{}))
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/subscriptions/sub-123", nil)
@@ -295,12 +299,12 @@ func BenchmarkGetSubscription_FullHTTP(b *testing.B) {
 // BenchmarkListSubscriptions_FilteredByStatus simulates filtering
 func BenchmarkListSubscriptions_FilteredByStatus_Medium(b *testing.B) {
 	subscriptions := generateSubscriptions(100)
-	
+
 	// Simulate filtering by status
 	handler := func(c *gin.Context) {
 		status := c.Query("status")
 		filtered := subscriptions
-		
+
 		if status != "" {
 			filtered = make([]Subscription, 0)
 			for _, sub := range subscriptions {
@@ -309,17 +313,17 @@ func BenchmarkListSubscriptions_FilteredByStatus_Medium(b *testing.B) {
 				}
 			}
 		}
-		
+
 		c.JSON(http.StatusOK, gin.H{"subscriptions": filtered})
 	}
-	
+
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/api/subscriptions", handler)
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/subscriptions?status=active", nil)
@@ -329,11 +333,11 @@ func BenchmarkListSubscriptions_FilteredByStatus_Medium(b *testing.B) {
 
 func BenchmarkListSubscriptions_FilteredByStatus_Large(b *testing.B) {
 	subscriptions := generateSubscriptions(1000)
-	
+
 	handler := func(c *gin.Context) {
 		status := c.Query("status")
 		filtered := subscriptions
-		
+
 		if status != "" {
 			filtered = make([]Subscription, 0)
 			for _, sub := range subscriptions {
@@ -342,17 +346,17 @@ func BenchmarkListSubscriptions_FilteredByStatus_Large(b *testing.B) {
 				}
 			}
 		}
-		
+
 		c.JSON(http.StatusOK, gin.H{"subscriptions": filtered})
 	}
-	
+
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/api/subscriptions", handler)
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/subscriptions?status=active", nil)

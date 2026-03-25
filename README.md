@@ -1,6 +1,6 @@
 # Stellabill Backend
 
-Go (Gin) API backend for Stellabill — subscription and billing plans API. This repo is backend-only; a separate frontend consumes these APIs.
+Go (Gin) API backend for Stellabill - subscription and billing plans API. This repo is backend-only; a separate frontend consumes these APIs.
 
 ---
 
@@ -12,6 +12,7 @@ Go (Gin) API backend for Stellabill — subscription and billing plans API. This
 - [Local setup](#local-setup)
 - [Configuration](#configuration)
 - [API reference](#api-reference)
+- [Database migrations](#database-migrations)
 - [Contributing (open source)](#contributing-open-source)
 - [Project layout](#project-layout)
 - [License](#license)
@@ -30,9 +31,9 @@ Go (Gin) API backend for Stellabill — subscription and billing plans API. This
 
 This service is the **backend only**. A separate frontend (or any client) can:
 
-- **Health check** — `GET /api/health` to verify the API is up.
-- **Plans** — `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). Currently returns an empty list; DB integration is planned.
-- **Subscriptions** — `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
+- **Health check** - `GET /api/health` to verify the API is up.
+- **Plans** - `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). Currently returns an empty list; DB integration is planned.
+- **Subscriptions** - `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
 
 CORS is enabled for all origins in development so a frontend on another port or domain can call these endpoints.
 
@@ -80,12 +81,10 @@ job, _ := scheduler.ScheduleCharge("sub-123", time.Now(), 3)
 
 ### Prerequisites
 
-- **Go 1.22 or later**  
-  - Check: `go version`  
+- **Go 1.22 or later**
+  - Check: `go version`
   - Install: [https://go.dev/doc/install](https://go.dev/doc/install)
-
 - **Git** (for cloning and contributing)
-
 - **PostgreSQL** (optional for now; app runs without it using default config; DB will be used when persistence is added)
 
 ### 1. Clone the repository
@@ -103,17 +102,20 @@ go mod download
 
 ### 3. (Optional) Environment variables
 
-Create a `.env` file in the project root (do not commit it; it’s in `.gitignore`):
+Create a `.env` file in the project root (do not commit it; it is in `.gitignore`):
 
 ```bash
-# Optional — defaults shown
+# Optional - defaults shown
 ENV=development
 PORT=8080
 DATABASE_URL=postgres://localhost/stellarbill?sslmode=disable
 JWT_SECRET=change-me-in-production
+ADMIN_TOKEN=change-me-admin-token
+AUDIT_HMAC_SECRET=stellarbill-dev-audit
+AUDIT_LOG_PATH=audit.log
 ```
 
-Or export them in your shell. The app will run with the defaults if you don’t set anything.
+Or export them in your shell. The app will run with the defaults if you do not set anything.
 
 ### 4. Run the server
 
@@ -140,8 +142,70 @@ curl http://localhost:8080/api/health
 | `PORT`         | `8080`                                       | HTTP server port               |
 | `DATABASE_URL` | `postgres://localhost/stellarbill?sslmode=disable` | PostgreSQL connection string   |
 | `JWT_SECRET`   | `change-me-in-production`                     | Secret for JWT (change in prod)|
+| `FF_DEFAULT_ENABLED` | `false`                                | Default state for unknown flags |
+| `FF_LOG_DISABLED` | `true`                                  | Log when flags block requests  |
+| `FF_CONFIG_FILE` | `""`                                    | Path to feature flags config file |
 
-In production, set these via your host’s environment or secrets manager; do not commit secrets.
+### Feature Flags Configuration
+
+Feature flags can be configured using environment variables in several ways:
+
+#### 1. Individual Flags (Recommended)
+Use the `FF_` prefix for individual flags:
+```bash
+# Enable/disable specific features
+FF_SUBSCRIPTIONS_ENABLED=true
+FF_PLANS_ENABLED=false
+FF_NEW_BILLING_FLOW=true
+FF_ADVANCED_ANALYTICS=false
+```
+
+#### 2. JSON Configuration
+Use the `FEATURE_FLAGS` environment variable for bulk configuration:
+```bash
+export FEATURE_FLAGS='{"subscriptions_enabled": true, "plans_enabled": true, "new_billing_flow": false}'
+```
+
+#### 3. Priority Order
+The system uses the following priority (highest to lowest):
+1. `FF_*` individual environment variables
+2. `FEATURE_FLAGS` JSON configuration
+3. Default flag values
+
+#### Available Feature Flags
+
+| Flag Name | Default | Description |
+|-----------|---------|-------------|
+| `subscriptions_enabled` | `true` | Enable subscription management endpoints |
+| `plans_enabled` | `true` | Enable billing plans endpoints |
+| `new_billing_flow` | `false` | Enable new billing flow feature |
+| `advanced_analytics` | `false` | Enable advanced analytics endpoints |
+
+In production, set these via your host's environment or secrets manager; do not commit secrets.
+
+---
+
+## Using Feature Flags in Code
+
+```go
+import "stellarbill-backend/internal/middleware"
+import "stellarbill-backend/internal/featureflags"
+
+// Method 1: Middleware (recommended for endpoints)
+router.GET("/feature", middleware.FeatureFlag("my_feature"), handler)
+
+// Method 2: With default value
+router.GET("/feature", middleware.FeatureFlagWithDefault("my_feature", true), handler)
+
+// Method 3: Direct check in code
+if featureflags.IsEnabled("my_feature") {
+    // Feature code here
+}
+
+// Method 4: Multiple flags requirement
+router.GET("/feature", middleware.RequireAllFeatureFlags("flag1", "flag2"), handler)
+router.GET("/feature", middleware.RequireAnyFeatureFlags("flag1", "flag2"), handler)
+```
 
 ---
 
@@ -149,20 +213,162 @@ In production, set these via your host’s environment or secrets manager; do no
 
 Base URL (local): `http://localhost:8080`
 
-| Method | Path                     | Description              |
-|--------|--------------------------|--------------------------|
-| GET    | `/api/health`            | Health check             |
-| GET    | `/api/plans`             | List billing plans       |
-| GET    | `/api/subscriptions`     | List subscriptions       |
-| GET    | `/api/subscriptions/:id` | Get one subscription     |
+| Method | Path                     | Feature Flag Required | Description              |
+|--------|--------------------------|---------------------|--------------------------|
+| GET    | `/api/health`            | None                | Health check             |
+| GET    | `/api/plans`             | `plans_enabled` (default: true) | List billing plans       |
+| GET    | `/api/subscriptions`     | `subscriptions_enabled` (default: true) | List subscriptions       |
+| GET    | `/api/subscriptions/:id` | `subscriptions_enabled` (default: true) | Get one subscription     |
+| GET    | `/api/billing/new-flow`  | `new_billing_flow` (default: false) | New billing flow feature |
+| GET    | `/api/analytics/advanced` | `advanced_analytics` AND `subscriptions_enabled` | Advanced analytics |
 
 All JSON responses. CORS allowed for `*` origin with common methods and headers.
+
+**Feature Flag Responses**: When a feature flag blocks a request, the API returns:
+```json
+{
+  "error": "feature_unavailable",
+  "message": "This feature is currently unavailable",
+  "feature_flag": "flag_name"
+}
+```
+
+---
+
+## Database migrations
+
+Migrations live in `migrations/` and are applied with:
+
+```bash
+go run ./cmd/migrate up
+```
+
+See `docs/migrations.md` for conventions and a production runbook.
+
+---
+
+## CI / Quality gates
+
+Every push and pull request runs the following checks automatically via GitHub Actions (`.github/workflows/ci.yml`):
+
+| Step | Command |
+|------|---------|
+| Build | `go build ./...` |
+| Vet | `go vet ./...` |
+| Test + coverage | `go test ./internal/... -covermode=atomic -coverpkg=./internal/...` |
+| Coverage threshold | `./scripts/check-coverage.sh coverage.out 95` (≥ 95 % on `internal/`) |
+
+Coverage artifacts (`coverage.out`) are uploaded and retained for 14 days on every run.
+
+### Run checks locally before opening a PR
+
+```bash
+# 1. Build
+go build ./...
+
+# 2. Vet
+go vet ./...
+
+# 3. Test with coverage (internal packages only — cmd/server is the process entrypoint)
+go test ./internal/... \
+  -covermode=atomic \
+  -coverpkg=./internal/... \
+  -coverprofile=coverage.out \
+  -count=1 \
+  -timeout=60s
+
+# 4. Enforce the 95 % threshold
+./scripts/check-coverage.sh coverage.out 95
+
+# 5. (Optional) Browse the HTML report
+go tool cover -html=coverage.out
+```
+
+> **Why `./internal/...` and not `./...`?**  
+> `cmd/server/main.go` is the process entry point (`main()`). Go cannot instrument it as a unit-testable package, so it always reports 0 % and would drag the total below the threshold. All business logic lives in `internal/`, which is what the threshold enforces.
+
+> **Security note:** Never commit `.env`, JWT secrets, or database credentials. The CI workflow contains no secrets; configure them via your host's environment or a secrets manager.
+
+---
+
+## Middleware order
+
+Recommended order for the HTTP chain:
+
+1. `recovery`
+2. `request-id`
+3. `logging`
+4. `cors`
+5. `rate-limit`
+6. `auth` for protected routes only
+
+Why this order:
+
+- `recovery` wraps the full chain so panics from downstream middleware and handlers are converted into structured `500` responses.
+- `request-id` runs early so every response and log line can carry the same correlation ID.
+- `logging` runs before short-circuiting middleware so failed auth, rate-limit, and panic-recovery responses are still logged.
+- `cors` handles preflight `OPTIONS` requests before rate limiting or auth rejects them.
+- `rate-limit` runs before `auth` on protected routes to reduce brute-force pressure on authentication logic.
+- `auth` should be attached only to protected groups so public endpoints like `/api/health` can remain reachable.
+
+Behavior verified by tests:
+
+- Middleware entry and unwind order.
+- Request ID propagation across middleware and handlers.
+- Expected short-circuit responses for preflight, auth failures, rate limiting, and panic recovery.
+
+Security notes:
+
+- `X-Request-ID` input is sanitized before reuse in logs and responses.
+- The in-memory rate limiter is process-local and keyed by client IP, so deployments behind proxies should ensure trusted forwarding headers are configured correctly.
+- CORS is currently configured as `*`; production deployments should replace that with an explicit frontend origin.
+- The sample auth middleware validates a bearer token against the configured secret and is intended as a lightweight guard for protected groups until full JWT validation is introduced.
+
+---
+
+## Dependency Injection
+
+Handlers are constructed with explicit dependencies instead of reaching into package-level state. That keeps startup wiring easy to review and makes unit tests cheap to write because services can be replaced with focused mocks.
+
+Current boundaries:
+
+- `internal/services` defines the interfaces and default placeholder implementations used by the API.
+- `internal/handlers` validates constructor input and translates service results into HTTP responses.
+- `internal/routes` requires an injected handler bundle and returns an error on nil wiring instead of registering a partially working router.
+- `cmd/server` is responsible for composing concrete services and failing fast if startup wiring is incomplete.
+
+Security notes:
+
+- Constructor validation prevents nil dependencies from reaching request handling paths, which avoids panic-driven denial of service during misconfigured startup.
+- Route registration returns errors for missing router or handler wiring so invalid startup state fails closed.
+- Service interfaces keep handlers decoupled from future storage implementations, making authorization and data-access checks easier to test in isolation.
+
+---
+
+## Audit logging
+
+- **Tamper-evident chain:** Each audit entry is HMAC-signed with `AUDIT_HMAC_SECRET` and linked to the previous hash (chain-of-trust). Breaking or removing a line invalidates later hashes.
+- **What gets logged:** `actor`, `action`, `target`, `outcome`, request method/path, client IP, and any supplied metadata (e.g., attempts, reasons).
+- **Redaction:** Sensitive fields such as tokens, passwords, secrets, Authorization headers, and values that *look* like bearer/basic credentials are stored as `[REDACTED]`.
+- **Sink:** Default sink writes JSON Lines to `AUDIT_LOG_PATH` (default `audit.log`). File permissions are `0600` on creation.
+- **Admin example:** `POST /api/admin/purge` demonstrates a sensitive operation. Success, partial success (`?partial=1`), denied access, and retry attempts are all audit-logged.
+- **Auth failures:** 401/403 responses are automatically logged via middleware, with headers redacted.
+
+---
+
+## Testing
+
+```
+go test ./... -cover
+```
+
+Tests include redaction coverage, hash chaining, admin action logging, and middleware auth-failure logging. Coverage currently exceeds 95%.
 
 ---
 
 ## Contributing (open source)
 
-We welcome contributions from the community. Below is a short guide to get you from “first look” to “merged change”.
+We welcome contributions from the community. Below is a short guide to get you from "first look" to "merged change".
 
 ### Code of conduct
 
@@ -171,43 +377,36 @@ We welcome contributions from the community. Below is a short guide to get you f
 
 ### How to contribute
 
-1. **Open an issue**  
-   - Bug: describe what you did, what you expected, and what happened.  
+1. **Open an issue**
+   - Bug: describe what you did, what you expected, and what happened.
    - Feature: describe the goal and why it helps.
-
-2. **Fork and clone**  
+2. **Fork and clone**
    - Fork the repo on GitHub, then clone your fork locally.
-
-3. **Create a branch**  
+3. **Create a branch**
    ```bash
    git checkout -b fix/your-fix   # or feature/your-feature
    ```
-
-4. **Make changes**  
-   - Follow existing style (format with `go fmt`).  
-   - Keep commits logical and messages clear (e.g. “Add validation for plan ID”).
-
-5. **Run checks**  
+4. **Make changes**
+   - Follow existing style (format with `go fmt`).
+   - Keep commits logical and messages clear (e.g. "Add validation for plan ID").
+5. **Run checks**
    ```bash
    go build ./...
    go vet ./...
    go fmt ./...
-   ```  
+   ```
    Add or run tests if the project has them.
-
-6. **Commit**  
+6. **Commit**
    - Prefer small, atomic commits (one logical change per commit).
-
-7. **Push and open a PR**  
+7. **Push and open a PR**
    ```bash
    git push origin fix/your-fix
-   ```  
-   - Open a Pull Request against the main branch.  
-   - Fill in the PR template (if any).  
-   - Link related issues.  
+   ```
+   - Open a Pull Request against the main branch.
+   - Fill in the PR template (if any).
+   - Link related issues.
    - Describe what you changed and why.
-
-8. **Review**  
+8. **Review**
    - Address review comments. Maintainers will merge when everything looks good.
 
 ### Development workflow
@@ -218,22 +417,31 @@ We welcome contributions from the community. Below is a short guide to get you f
 
 ### Project standards
 
-- **Go:** `go fmt`, `go vet`, no unnecessary dependencies.  
-- **APIs:** Keep JSON shape stable; document breaking changes in PRs.  
+- **Go:** `go fmt`, `go vet`, no unnecessary dependencies.
+- **APIs:** Keep JSON shape stable; document breaking changes in PRs.
 - **Secrets:** Never commit `.env`, keys, or passwords.
 
 ---
 
 ## Project layout
 
-```
+```text
 stellabill-backend/
+├── .github/
+│   └── workflows/
+│       └── ci.yml           # CI: build, vet, test, coverage threshold
 ├── cmd/
 │   └── server/
 │       └── main.go          # Entry point, Gin router, server start
 ├── internal/
 │   ├── config/
-│   │   └── config.go        # Loads ENV, PORT, DATABASE_URL, JWT_SECRET
+│   │   └── config.go        # Loads ENV, PORT, DATABASE_URL, JWT_SECRET, feature flags
+│   ├── featureflags/
+│   │   ├── featureflags.go   # Feature flag management system
+│   │   └── featureflags_test.go # Unit tests for feature flags
+│   ├── middleware/
+│   │   ├── featureflags.go   # Feature flag middleware for endpoint gating
+│   │   └── featureflags_test.go # Middleware tests
 │   ├── handlers/
 │   │   ├── health.go        # GET /api/health
 │   │   ├── plans.go         # GET /api/plans
@@ -256,6 +464,37 @@ stellabill-backend/
 ├── README.md
 └── WORKER_IMPLEMENTATION.md # Implementation summary
 ```
+
+---
+
+## Security Considerations
+
+### Feature Flags Security
+
+- **Environment Variables**: Feature flags are configured via environment variables, which are secure and not committed to version control
+- **Default Behavior**: Unknown flags default to `false` for security (fail-safe)
+- **No Dynamic Loading**: Flags are loaded at startup only, preventing runtime injection attacks
+- **Thread Safety**: All flag operations are thread-safe with proper mutex locking
+- **Validation**: Invalid flag values are safely ignored and logged
+
+### Best Practices
+
+1. **Production Flags**: Always set explicit flag values in production; don't rely on defaults
+2. **Secret Management**: Use your cloud provider's secret manager for sensitive flag configurations
+3. **Monitoring**: Monitor flag usage and access patterns
+4. **Audit Trail**: Flag changes are tracked with timestamps for auditing
+5. **Testing**: Test both enabled and disabled states in your test suite
+
+### Testing Security
+
+The feature flag system includes comprehensive tests covering:
+- Concurrent access and race conditions
+- Invalid input handling
+- Memory leak prevention
+- Environment variable injection attempts
+- Edge cases and error conditions
+
+Run tests with: `go test ./...`
 
 ---
 

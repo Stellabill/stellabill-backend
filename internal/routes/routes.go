@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/idempotency"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
@@ -13,6 +14,7 @@ import (
 func Register(r *gin.Engine) {
 	r.Use(corsMiddleware())
 
+	store := idempotency.NewStore(idempotency.DefaultTTL)
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
 		jwtSecret = "dev-secret"
@@ -23,6 +25,7 @@ func Register(r *gin.Engine) {
 	svc := service.NewSubscriptionService(subRepo, planRepo)
 
 	api := r.Group("/api")
+	api.Use(idempotency.Middleware(store))
 	{
 		api.GET("/health", handlers.Health)
 		api.GET("/subscriptions", handlers.ListSubscriptions)

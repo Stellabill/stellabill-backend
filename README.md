@@ -23,6 +23,7 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 
 - **Language:** Go 1.22+
 - **Framework:** [Gin](https://github.com/gin-gonic/gin)
+- **Database:** PostgreSQL with [Outbox Pattern](https://microservices.io/patterns/data/transactional-outbox.html) for reliable event publishing
 - **Config:** Environment variables (no config files required for default dev)
 
 ---
@@ -129,7 +130,13 @@ Server listens on `http://localhost:8080` (or the port you set via `PORT`).
 
 ```bash
 curl http://localhost:8080/api/health
-# Expected: {"service":"stellarbill-backend","status":"ok"}
+# Expected: {"service":"stellarbill-backend","status":"ok","outbox":{"pending_events":0,"dispatcher_running":true,"database_health":"healthy"}}
+
+curl http://localhost:8080/api/outbox/stats
+# Expected: {"pending_events":0,"dispatcher_running":true,"database_health":"healthy"}
+
+curl -X POST http://localhost:8080/api/outbox/test
+# Expected: {"message":"Test event published successfully","event_type":"test.event"}
 ```
 
 ---
@@ -433,6 +440,9 @@ stellabill-backend/
 ├── cmd/
 │   └── server/
 │       └── main.go          # Entry point, Gin router, server start
+├── docs/
+│   ├── outbox-pattern.md    # Outbox pattern documentation
+│   └── security-notes.md    # Security considerations
 ├── internal/
 │   ├── config/
 │   │   └── config.go        # Loads ENV, PORT, DATABASE_URL, JWT_SECRET, feature flags
@@ -443,7 +453,7 @@ stellabill-backend/
 │   │   ├── featureflags.go   # Feature flag middleware for endpoint gating
 │   │   └── featureflags_test.go # Middleware tests
 │   ├── handlers/
-│   │   ├── health.go        # GET /api/health
+│   │   ├── health.go        # GET /api/health (includes outbox status)
 │   │   ├── plans.go         # GET /api/plans
 │   │   └── subscriptions.go # GET /api/subscriptions, /api/subscriptions/:id
 │   ├── routes/

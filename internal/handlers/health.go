@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"os"
 	"time"
@@ -95,14 +96,9 @@ func PublishTestEvent(c *gin.Context) {
 	})
 }
 
-// --------------------
-// READINESS HANDLER
-// --------------------
-
-// ReadinessHandler checks if the service is ready (dependencies included)
+// ReadinessHandler checks if the service is ready
 func ReadinessHandler(db DBPinger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-
 		deps := make(map[string]string)
 
 		dbStatus := checkDatabase(db)
@@ -117,12 +113,8 @@ func ReadinessHandler(db DBPinger) gin.HandlerFunc {
 			Dependencies: deps,
 		}
 
-		// Map status to HTTP code
 		statusCode := http.StatusOK
-		if overallStatus == StatusDegraded {
-			statusCode = http.StatusServiceUnavailable
-		}
-		if overallStatus == StatusUnavailable {
+		if overallStatus == StatusDegraded || overallStatus == StatusUnavailable {
 			statusCode = http.StatusServiceUnavailable
 		}
 
@@ -130,54 +122,47 @@ func ReadinessHandler(db DBPinger) gin.HandlerFunc {
 	}
 }
 
-// --------------------
-// DATABASE CHECK
-// --------------------
-
+// checkDatabase implements Timeout and Bounded Retry policies
 func checkDatabase(db DBPinger) string {
-
-	// If DATABASE_URL not set → not configured
 	if os.Getenv("DATABASE_URL") == "" {
 		return "not_configured"
 	}
-
-	// If DB instance not injected
 	if db == nil {
 		return "down"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	var lastErr error
 
-	err := db.PingContext(ctx)
-	if err != nil {
-		// Check if timeout
-		if ctx.Err() == context.DeadlineExceeded {
-			return "timeout"
+	// IMPLEMENTATION: Bounded Retry Loop
+	for i := 0; i < MaxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), MaxDatabaseTimeout)
+		
+		lastErr = db.PingContext(ctx)
+		cancel() // Release context resources immediately
+
+		if lastErr == nil {
+			return "up"
 		}
-		return "down"
+
+		// If not the last attempt, wait before retrying (Exponential Backoff)
+		if i < MaxRetries-1 {
+			backoff := time.Duration(math.Pow(2, float64(i))) * InitialBackoff
+			time.Sleep(backoff)
+		}
 	}
 
-	return "up"
+	// Determine final failure state
+	if lastErr == context.DeadlineExceeded {
+		return "timeout"
+	}
+	return "down"
 }
 
-// --------------------
-// STATUS DERIVATION
-// --------------------
-
 func deriveOverallStatus(deps map[string]string) string {
-	hasFailure := false
-
 	for _, status := range deps {
-		switch status {
-		case "down", "timeout":
-			hasFailure = true
+		if status == "down" || status == "timeout" {
+			return StatusDegraded
 		}
 	}
-
-	if hasFailure {
-		return StatusDegraded
-	}
-
 	return StatusReady
 }

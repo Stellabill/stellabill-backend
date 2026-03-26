@@ -25,3 +25,18 @@ type PlanRow struct {
 	Interval    string
 	Description string
 }
+
+// StatementRow is the raw DB record for a billing statement.
+type StatementRow struct {
+	ID             string
+	SubscriptionID string
+	CustomerID     string
+	PeriodStart    string // RFC 3339
+	PeriodEnd      string // RFC 3339
+	IssuedAt       string // RFC 3339
+	TotalAmount    string
+	Currency       string
+	Kind           string
+	Status         string
+	DeletedAt      *time.Time
+}

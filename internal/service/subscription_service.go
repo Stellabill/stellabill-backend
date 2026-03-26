@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
-	"log"
 	"strconv"
 	"strings"
 
+	"go.uber.org/zap"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/security"
 )
 
 // SubscriptionService defines the business logic interface for subscriptions.
@@ -27,8 +28,9 @@ func NewSubscriptionService(subRepo repository.SubscriptionRepository, planRepo 
 
 // GetDetail retrieves a full SubscriptionDetail for the given subscriptionID.
 // It enforces ownership (callerID must match the subscription's CustomerID),
-// handles soft-deletes, joins plan metadata, and normalizes billing fields.
-func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
+//
+ // handles soft-deletes, joins plan metadata, and normalizes billing fields.
+func (s *subscriptionService) GetDetail(ctx context.Context, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
 	var warnings []string
 
 	// 1. Fetch subscription row scoped to tenant.
@@ -73,7 +75,10 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 	// 5. Parse amount to int64 cents.
 	amountCents, parseErr := strconv.ParseInt(row.Amount, 10, 64)
 	if parseErr != nil {
-		log.Printf("ERROR: failed to parse amount %q for subscription %s: %v", row.Amount, row.ID, parseErr)
+		security.ProductionLogger().Error("failed to parse amount",
+			zap.String("amount", row.Amount),
+			zap.String("subscription_id", row.ID),
+			zap.Error(parseErr))
 		return nil, nil, ErrBillingParse
 	}
 
@@ -104,3 +109,4 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 	// 8. Return detail and warnings.
 	return detail, warnings, nil
 }
+

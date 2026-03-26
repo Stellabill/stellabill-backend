@@ -19,13 +19,28 @@ type BillingSummary struct {
 
 // SubscriptionDetail is the payload placed in ResponseEnvelope.Data.
 type SubscriptionDetail struct {
-	ID             string         `json:"id"`
-	PlanID         string         `json:"plan_id"`
-	Customer       string         `json:"customer"`
+	ID             string         `json:"id" redacted:"false"`
+	PlanID         string         `json:"plan_id" redacted:"false"`
+	Customer       string         `json:"customer,omitempty" redacted:"true"`
 	Status         string         `json:"status"`
 	Interval       string         `json:"interval"`
 	Plan           *PlanMetadata  `json:"plan,omitempty"`
-	BillingSummary BillingSummary `json:"billing_summary"`
+	BillingSummary BillingSummary `json:"billing_summary" redacted:"amount"`
+}
+
+// MarshalJSON implements redacted JSON marshaling
+func (sd *SubscriptionDetail) MarshalJSON() ([]byte, error) {
+	type Alias SubscriptionDetail
+	data := struct {
+		*Alias
+		Customer string `json:"customer,omitempty"`
+	}{
+		Alias: (*Alias)(sd),
+	}
+	if data.Customer != "" {
+		data.Customer = "cust_***" // Minimal redaction - hide full ID
+	}
+	return json.Marshal(data)
 }
 
 // ResponseEnvelope is the top-level JSON object returned by the endpoint.

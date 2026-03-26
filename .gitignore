@@ -60,6 +60,7 @@ coverage.html
 coverage.out
 *.cover
 *.coverprofile
+.tools/
 
 # Air (live reload) and similar
 tmp/

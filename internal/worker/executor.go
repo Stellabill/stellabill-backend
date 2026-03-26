@@ -3,8 +3,10 @@ package worker
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
+
+	"go.uber.org/zap"
+	"stellarbill-backend/internal/security"
 )
 
 // BillingExecutor implements JobExecutor for billing operations
@@ -19,8 +21,10 @@ func NewBillingExecutor() *BillingExecutor {
 
 // Execute processes a billing job based on its type
 func (e *BillingExecutor) Execute(ctx context.Context, job *Job) error {
-	log.Printf("Executing billing job %s (type: %s, subscription: %s)", 
-		job.ID, job.Type, job.SubscriptionID)
+	security.ProductionLogger().Info("Executing billing job",
+		zap.String("job_id", job.ID),
+		zap.String("type", job.Type),
+		zap.String("subscription_id", job.SubscriptionID))
 
 	switch job.Type {
 	case "charge":
@@ -40,7 +44,8 @@ func (e *BillingExecutor) executeCharge(ctx context.Context, job *Job) error {
 	// 2. Call payment processor API
 	// 3. Record transaction
 	// 4. Update subscription status
-	log.Printf("Processing charge for subscription %s", job.SubscriptionID)
+	security.ProductionLogger().Info("Processing charge",
+		zap.String("subscription_id", job.SubscriptionID))
 	
 	// Simulate work
 	select {
@@ -59,7 +64,8 @@ func (e *BillingExecutor) executeInvoice(ctx context.Context, job *Job) error {
 	// 2. Generate invoice PDF
 	// 3. Send via email
 	// 4. Store invoice record
-	log.Printf("Generating invoice for subscription %s", job.SubscriptionID)
+	security.ProductionLogger().Info("Generating invoice",
+		zap.String("subscription_id", job.SubscriptionID))
 	
 	select {
 	case <-ctx.Done():
@@ -76,7 +82,8 @@ func (e *BillingExecutor) executeReminder(ctx context.Context, job *Job) error {
 	// 1. Fetch subscription and customer details
 	// 2. Check if payment is overdue
 	// 3. Send reminder notification
-	log.Printf("Sending reminder for subscription %s", job.SubscriptionID)
+	security.ProductionLogger().Info("Sending reminder",
+		zap.String("subscription_id", job.SubscriptionID))
 	
 	select {
 	case <-ctx.Done():
@@ -87,3 +94,4 @@ func (e *BillingExecutor) executeReminder(ctx context.Context, job *Job) error {
 	
 	return nil
 }
+

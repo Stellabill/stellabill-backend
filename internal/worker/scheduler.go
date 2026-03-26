@@ -75,3 +75,4 @@ func (s *Scheduler) ScheduleReminder(subscriptionID string, scheduledAt time.Tim
 func generateJobID(jobType string) string {
 	return fmt.Sprintf("%s-%d", jobType, time.Now().UnixNano())
 }
+

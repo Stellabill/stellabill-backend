@@ -9,7 +9,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stellarbill-backend/internal/repository"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
+
+var tracer = otel.Tracer("repository/postgres")
 
 // SubscriptionRepo implements repository.SubscriptionRepository against a live Postgres database.
 type SubscriptionRepo struct {
@@ -31,6 +35,11 @@ func (r *SubscriptionRepo) FindByID(ctx context.Context, id string) (*repository
 
 	var s repository.SubscriptionRow
 	var deletedAt *time.Time
+
+	ctx, span := tracer.Start(ctx, "SubscriptionRepo.FindByID",
+		otel.WithAttributes(attribute.String("subscription.id", id)))
+	defer span.End()
+
 	err := r.pool.QueryRow(ctx, q, id).Scan(
 		&s.ID, &s.PlanID, &s.CustomerID, &s.Status,
 		&s.Amount, &s.Currency, &s.Interval, &s.NextBilling,

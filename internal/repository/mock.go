@@ -67,3 +67,37 @@ func (m *MockPlanRepo) List(_ context.Context) ([]*PlanRow, error) {
 	}
 	return out, nil
 }
+
+// MockStatementRepo is an in-memory StatementRepository for testing.
+type MockStatementRepo struct {
+	records map[string]*StatementRow
+}
+
+// NewMockStatementRepo creates a MockStatementRepo pre-populated with the given rows.
+func NewMockStatementRepo(rows ...*StatementRow) *MockStatementRepo {
+	m := &MockStatementRepo{records: make(map[string]*StatementRow)}
+	for _, r := range rows {
+		m.records[r.ID] = r
+	}
+	return m
+}
+
+// FindByID returns the StatementRow with the given ID, or ErrNotFound.
+func (m *MockStatementRepo) FindByID(_ context.Context, id string) (*StatementRow, error) {
+	row, ok := m.records[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return row, nil
+}
+
+// ListByCustomerID returns statement rows for the customer matching the query.
+func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID string, q StatementQuery) ([]*StatementRow, int, error) {
+	out := make([]*StatementRow, 0)
+	for _, r := range m.records {
+		if r.CustomerID == customerID {
+			out = append(out, r)
+		}
+	}
+	return out, len(out), nil
+}

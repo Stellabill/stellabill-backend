@@ -52,6 +52,9 @@ type Config struct {
 	RateLimitRPS        int
 	RateLimitBurst      int
 	RateLimitWhitelist  []string
+	// Tracing configuration
+	TracingExporter string
+	TracingServiceName string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -103,6 +106,8 @@ var optionalEnvVars = map[string]string{
 	"READ_TIMEOUT":     "30",
 	"WRITE_TIMEOUT":    "30",
 	"IDLE_TIMEOUT":     "120",
+	"TRACING_EXPORTER": "stdout",
+	"TRACING_SERVICE_NAME": "stellabill-backend",
 }
 
 // Load loads configuration from environment variables with validation
@@ -116,6 +121,8 @@ func Load() (Config, error) {
 		ReadTimeout:    DefaultReadTimeout,
 		WriteTimeout:   DefaultWriteTimeout,
 		IdleTimeout:    DefaultIdleTimeout,
+		TracingExporter: getEnv("TRACING_EXPORTER", "stdout"),
+		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 	}
 
 	result := cfg.Validate()
@@ -269,6 +276,20 @@ func (c *Config) Validate() *ValidationResult {
 			paths[i] = strings.TrimSpace(path)
 		}
 		c.RateLimitWhitelist = paths
+	}
+
+	// Validate TRACING_EXPORTER
+	if exporter := os.Getenv("TRACING_EXPORTER"); exporter != "" {
+		validExporters := map[string]bool{"stdout": true, "otlp": true, "none": true}
+		if !validExporters[exporter] {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("TRACING_EXPORTER invalid: %s, using default", exporter))
+		} else {
+			c.TracingExporter = exporter
+		}
+	}
+
+	if svcName := os.Getenv("TRACING_SERVICE_NAME"); svcName != "" {
+		c.TracingServiceName = svcName
 	}
 
 	// Set optional env values

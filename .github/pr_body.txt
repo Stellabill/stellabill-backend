@@ -1,0 +1,36 @@
+feat: add contract-to-backend reconciliation endpoint and reports
+
+Summary
+- Adds a backend ↔ contract reconciliation subsystem and an admin HTTP endpoint to run on-demand checks.
+- Provides models, a comparator (field-by-field), adapters (in-memory + HTTP), and an in-memory store for report persistence.
+- Adds unit tests for comparator, adapters, and handler.
+- Adds documentation and a GitHub Actions workflow that runs `go test ./...` on push/PR.
+
+Files of interest
+- `internal/reconciliation/*` — comparator, models, adapters, store, and tests
+- `internal/handlers/reconciliation.go` — admin POST `/api/admin/reconcile` (accepts backend subscriptions)
+- `internal/routes/routes.go` — route wiring, adapter selection via `CONTRACT_SNAPSHOT_URL`, admin GET `/api/admin/reports`
+- `docs/reconciliation.md` — short doc + security notes
+- `scripts/install_go_and_run_tests.ps1` — helper to install Go and run reconciliation tests locally
+- `.github/workflows/reconciliation-ci.yml` — CI that runs the full test suite
+
+How it works
+- POST JSON array of backend subscriptions to `/api/admin/reconcile` (admin-only).
+- The handler fetches contract snapshots via configured adapter:
+  - If `CONTRACT_SNAPSHOT_URL` is set -> HTTP adapter fetches JSON snapshots from that URL (set `CONTRACT_SNAPSHOT_AUTH` for auth header).
+  - Otherwise uses an in-memory adapter for dev.
+- Comparator checks: status, amount+currency, interval, per-key balances, missing snapshots, and stale snapshots (>24h).
+- Reports are saved to an in-memory store and can be retrieved via GET `/api/admin/reports`.
+
+Security notes
+- Endpoint is protected by `auth.RequirePermission(auth.PermManageSubscriptions)`; ensure only admin roles can call it.
+- For HTTP adapter use TLS and set `CONTRACT_SNAPSHOT_AUTH` for authentication.
+- Redact PII and use a persistent, access-controlled store in production — the current store is in-memory for dev/tests.
+
+Testing
+- Unit tests added under `internal/reconciliation` and `internal/handlers`.
+- CI workflow runs `go test ./...` on push/PR.
+
+Next steps
+- Replace in-memory store with DB-backed store (migration, repo, tests) for production.
+- Wire a real contract snapshot endpoint and add integration tests. Provide API details (URL, auth, JSON schema) and I will implement the adapter and tests.

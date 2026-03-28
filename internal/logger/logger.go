@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/contrib/bridges/otellogrus"
 )
 
 var Log = logrus.New()
@@ -11,6 +12,7 @@ var Log = logrus.New()
 func Init() {
 	Log.SetFormatter(&logrus.JSONFormatter{})
 	Log.SetOutput(os.Stdout)
+	Log.AddHook(otellogrus.NewHook())
 
 	level := os.Getenv("LOG_LEVEL")
 	switch level {

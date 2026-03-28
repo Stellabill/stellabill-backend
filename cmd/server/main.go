@@ -15,6 +15,7 @@ import (
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/routes"
 	"stellarbill-backend/internal/shutdown"
+	"stellarbill-backend/internal/startup"
 )
 
 var listenAndServe = func(srv *http.Server) error {
@@ -46,12 +47,18 @@ func main() {
 		gin.SetMode(gin.TestMode)
 		logger.Info("Running in test mode", zap.String("env", cfg.Env))
 	}
-}
 
 	// Log config warnings
 	if vResult := cfg.Validate(); len(vResult.Warnings) > 0 {
 		logger.Warn("Configuration warnings",
 			zap.Strings("warnings", vResult.Warnings))
+	}
+
+	// Run startup diagnostics — fail fast if critical checks fail
+	startupResults := startup.RunChecks(cfg, nil, nil) // db/migrations wired below once available
+	logger.Info("Startup checks completed:\n" + startup.FormatResults(startupResults))
+	if startup.HasFailures(startupResults) {
+		logger.Fatal("Startup checks failed — aborting")
 	}
 
 	// Create router with configured middleware

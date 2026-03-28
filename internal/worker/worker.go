@@ -117,18 +117,6 @@ func (w *Worker) Stop() error {
 	}
 }
 
-// GetMetrics returns a copy of the current worker metrics
-func (w *Worker) GetMetrics() Metrics {
-	w.metrics.mu.RLock()
-	defer w.metrics.mu.RUnlock()
-	return Metrics{
-		JobsProcessed:    w.metrics.JobsProcessed,
-		JobsSucceeded:    w.metrics.JobsSucceeded,
-		JobsFailed:       w.metrics.JobsFailed,
-		JobsDeadLettered: w.metrics.JobsDeadLettered,
-		LastPollTime:     w.metrics.LastPollTime,
-	}
-}
 
 // schedulerLoop continuously polls for pending jobs
 func (w *Worker) schedulerLoop() {

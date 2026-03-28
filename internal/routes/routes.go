@@ -9,14 +9,31 @@ import (
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/tracing"
 
 	"stellarbill-backend/internal/auth"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func Register(r *gin.Engine) {
 	cfg := config.Load()
+
+	// Initialize tracing
+	if cfg.TracingExporter != "none" {
+		_, err := tracing.InitTracer(cfg.TracingServiceName)
+		if err != nil {
+			// Log error but continue
+			middleware.Log.Errorf("Failed to initialize tracer: %v", err)
+		}
+	}
+
+	// Add OpenTelemetry middleware
+	r.Use(otelgin.Middleware(cfg.TracingServiceName))
+	// Add TraceID middleware to bridge OTEL trace ID to response headers
+	r.Use(middleware.TraceIDMiddleware())
+
 	corsProfile := cors.ProfileForEnv(cfg.Env, cfg.AllowedOrigins)
 
 	// Apply rate limiting middleware

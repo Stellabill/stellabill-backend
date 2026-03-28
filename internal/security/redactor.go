@@ -1,7 +1,6 @@
 package security
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -74,12 +73,8 @@ var (
 func ZapRedactHook(entry zapcore.Entry) error {
 	// Redact message
 	entry.Message = MaskPII(entry.Message)
-	// Redact all field strings
-	for i := range entry.Context {
-		if entry.Context[i].Type == zapcore.StringType {
-			entry.Context[i].Interface = MaskPII(entry.Context[i].String)
-		}
-	}
+	// zapcore.Entry does not have a Context field in this version of zap.
+	// Fields are handled at the Core level.
 	return nil
 }
 

@@ -8,7 +8,11 @@ import (
 	"go.uber.org/zap"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/security"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
+
+var tracer = otel.Tracer("service/subscriptions")
 
 // SubscriptionService defines the business logic interface for subscriptions.
 type SubscriptionService interface {
@@ -31,6 +35,13 @@ func NewSubscriptionService(subRepo repository.SubscriptionRepository, planRepo 
 //
  // handles soft-deletes, joins plan metadata, and normalizes billing fields.
 func (s *subscriptionService) GetDetail(ctx context.Context, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
+	ctx, span := tracer.Start(ctx, "SubscriptionService.GetDetail",
+		otel.WithAttributes(
+			attribute.String("subscription.id", subscriptionID),
+			attribute.String("caller.id", callerID),
+		))
+	defer span.End()
+
 	var warnings []string
 
 	// 1. Fetch subscription row scoped to tenant.

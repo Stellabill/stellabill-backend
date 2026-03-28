@@ -10,6 +10,7 @@ import (
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/tracing"
 
 	"stellarbill-backend/internal/auth"
@@ -117,6 +118,9 @@ func Register(r *gin.Engine) {
 		admin := api.Group("/admin")
 		{
 			admin.POST("/purge", adminHandler.PurgeCache)
+			// Diagnostics endpoint — re-runs startup checks for live triage
+			diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
+			admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
 			// Reconciliation endpoint (admin-only) - accepts backend subscription list
 				// Choose adapter implementation via env var CONTRACT_SNAPSHOT_URL. If set, use HTTPAdapter.
 				contractURL := os.Getenv("CONTRACT_SNAPSHOT_URL")

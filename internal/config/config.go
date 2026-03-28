@@ -1,12 +1,16 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"stellarbill-backend/internal/secrets"
 )
 
 // ConfigErrorType represents the category of configuration error
@@ -110,8 +114,38 @@ var optionalEnvVars = map[string]string{
 	"TRACING_SERVICE_NAME": "stellabill-backend",
 }
 
-// Load loads configuration from environment variables with validation
-func Load() (Config, error) {
+// Option configures the Load function.
+type Option func(*loadOptions)
+
+type loadOptions struct {
+	secretsProvider secrets.Provider
+}
+
+// WithSecretsProvider overrides the default env-based secrets provider.
+func WithSecretsProvider(p secrets.Provider) Option {
+	return func(o *loadOptions) {
+		o.secretsProvider = p
+	}
+}
+
+// secretKeys are the config keys that must be fetched through the secrets provider
+// rather than read directly from os.Getenv.
+var secretKeys = []string{
+	"DATABASE_URL",
+	"JWT_SECRET",
+}
+
+// Load loads configuration from environment variables with validation.
+// Sensitive values (DATABASE_URL, JWT_SECRET) are fetched through the secrets
+// provider, which defaults to EnvProvider when no option is supplied.
+func Load(opts ...Option) (Config, error) {
+	o := &loadOptions{
+		secretsProvider: secrets.NewEnvProvider(),
+	}
+	for _, fn := range opts {
+		fn(o)
+	}
+
 	cfg := Config{
 		Env:            getEnv("ENV", "development"),
 		Port:           DefaultPort,
@@ -125,7 +159,10 @@ func Load() (Config, error) {
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 	}
 
-	result := cfg.Validate()
+	// Resolve secrets through the provider
+	resolved, secretErrs := resolveSecrets(o.secretsProvider, secretKeys)
+
+	result := cfg.validate(resolved, secretErrs)
 	if !result.Valid() {
 		return Config{}, result
 	}
@@ -133,22 +170,57 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// Validate validates the configuration and returns a ValidationResult
+// resolveSecrets fetches each key from the provider and returns the values
+// alongside any errors keyed by name.
+func resolveSecrets(p secrets.Provider, keys []string) (map[string]string, map[string]error) {
+	ctx := context.Background()
+	vals := make(map[string]string, len(keys))
+	errs := make(map[string]error, len(keys))
+
+	for _, k := range keys {
+		v, err := p.GetSecret(ctx, k)
+		if err != nil {
+			errs[k] = err
+		} else {
+			vals[k] = v
+		}
+	}
+	return vals, errs
+}
+
+// Validate validates the configuration using os.Getenv for secrets (legacy path).
+// Prefer Load() which uses the secrets provider abstraction.
 func (c *Config) Validate() *ValidationResult {
+	p := secrets.NewEnvProvider()
+	resolved, secretErrs := resolveSecrets(p, secretKeys)
+	return c.validate(resolved, secretErrs)
+}
+
+// validate is the internal validation method that uses pre-resolved secrets.
+func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[string]error) *ValidationResult {
 	result := &ValidationResult{
 		Errors:   []ConfigError{},
 		Warnings: []string{},
 	}
 
-	// Validate required environment variables are present
-	for _, key := range requiredEnvVars {
-		if value := os.Getenv(key); value == "" {
-			result.Errors = append(result.Errors, ConfigError{
-				Type:    ErrMissingEnvVar,
-				Key:     key,
-				Message: "required environment variable is missing",
-				Value:   "",
-			})
+	// Validate required secrets are present via the provider
+	for _, key := range secretKeys {
+		if err, failed := secretErrs[key]; failed {
+			if errors.Is(err, secrets.ErrSecretNotFound) {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrMissingEnvVar,
+					Key:     key,
+					Message: "required secret is missing",
+					Value:   "",
+				})
+			} else {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrValidationFailed,
+					Key:     key,
+					Message: fmt.Sprintf("failed to retrieve secret: %v", err),
+					Value:   "",
+				})
+			}
 		}
 	}
 
@@ -175,7 +247,7 @@ func (c *Config) Validate() *ValidationResult {
 	}
 
 	// Validate DATABASE_URL format
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+	if dbURL, ok := resolvedSecrets["DATABASE_URL"]; ok {
 		if !isValidDatabaseURL(dbURL) {
 			result.Errors = append(result.Errors, ConfigError{
 				Type:    ErrInvalidURL,
@@ -189,7 +261,7 @@ func (c *Config) Validate() *ValidationResult {
 	}
 
 	// Validate JWT_SECRET
-	if secret := os.Getenv("JWT_SECRET"); secret != "" {
+	if secret, ok := resolvedSecrets["JWT_SECRET"]; ok {
 		if !isValidSecret(secret) {
 			result.Errors = append(result.Errors, ConfigError{
 				Type:    ErrWeakSecret,

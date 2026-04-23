@@ -34,6 +34,20 @@ paths:
       tags: [Plans]
       summary: List billing plans
       operationId: listPlans
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor for the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+          description: Maximum number of items to return
+          example: 20
       responses:
         "200":
           description: Plans list
@@ -41,11 +55,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlansResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/subscriptions:
     get:
       tags: [Subscriptions]
       summary: List subscriptions
       operationId: listSubscriptions
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor for the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+          description: Maximum number of items to return
+          example: 20
       responses:
         "200":
           description: Subscriptions list
@@ -53,6 +85,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubscriptionsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/subscriptions/{id}:
     get:
       tags: [Subscriptions]
@@ -65,6 +101,7 @@ paths:
           schema:
             type: string
           description: Subscription identifier
+          example: "sub_123"
       responses:
         "200":
           description: Subscription
@@ -72,8 +109,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error, message, code]
+      properties:
+        error:
+          type: string
+          description: High-level error type
+        message:
+          type: string
+          description: Human-readable error detail
+        code:
+          type: string
+          description: Machine-readable error code
+    Pagination:
+      type: object
+      additionalProperties: false
+      required: [has_more]
+      properties:
+        next_cursor:
+          type: string
+          description: Opaque token to retrieve the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        has_more:
+          type: boolean
+          description: Indicates if there are more results available
+          example: true
     HealthResponse:
       type: object
       additionalProperties: false
@@ -112,12 +182,14 @@ components:
     PlansResponse:
       type: object
       additionalProperties: false
-      required: [plans]
+      required: [plans, pagination]
       properties:
         plans:
           type: array
           items:
             $ref: "#/components/schemas/Plan"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
     Subscription:
       type: object
       additionalProperties: false
@@ -148,9 +220,70 @@ components:
     SubscriptionsResponse:
       type: object
       additionalProperties: false
-      required: [subscriptions]
+      required: [subscriptions, pagination]
       properties:
         subscriptions:
           type: array
           items:
             $ref: "#/components/schemas/Subscription"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+  responses:
+    BadRequest:
+      description: Validation or client error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            PaginationLimitExceeded:
+              value:
+                error: "Bad Request"
+                message: "Pagination limit cannot exceed 100 items."
+                code: "validation_error"
+            InvalidCursorFormat:
+              value:
+                error: "Bad Request"
+                message: "Invalid pagination cursor format provided."
+                code: "invalid_cursor"
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            TokenMissing:
+              value:
+                error: "Unauthorized"
+                message: "Authentication token is missing or invalid."
+                code: "auth_unauthorized"
+            TokenExpired:
+              value:
+                error: "Unauthorized"
+                message: "Authentication token has expired."
+                code: "auth_token_expired"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            AccessDenied:
+              value:
+                error: "Forbidden"
+                message: "You do not have permission to access this resource."
+                code: "auth_forbidden"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            ResourceNotFound:
+              value:
+                error: "Not Found"
+                message: "The requested subscription could not be found."
+                code: "resource_not_found"

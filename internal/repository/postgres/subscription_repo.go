@@ -8,11 +8,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/timeutil"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/timeutil"
 )
 
 var subscriptionTracer = otel.Tracer("repository/postgres/subscription")

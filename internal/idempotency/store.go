@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"sync"
 	"time"
+
+	"stellarbill-backend/internal/timeutil"
 )
 
 const DefaultTTL = 24 * time.Hour
@@ -22,7 +24,7 @@ type Entry struct {
 
 // Expired reports whether the entry has exceeded its TTL.
 func (e *Entry) Expired(ttl time.Duration) bool {
-	return time.Since(e.CreatedAt) > ttl
+	return timeutil.NowUTC().After(e.CreatedAt.Add(ttl))
 }
 
 // Store is a thread-safe in-memory idempotency store.

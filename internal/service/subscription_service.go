@@ -5,13 +5,14 @@ import (
 	"strconv"
 	"strings"
 
+	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/timeutil"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/security"
-	"stellarbill-backend/internal/timeutil"
 )
 
 var tracer = otel.Tracer("service/subscriptions")

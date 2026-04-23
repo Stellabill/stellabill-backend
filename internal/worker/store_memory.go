@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"stellarbill-backend/internal/timeutil"
 )
 
 var (
@@ -40,9 +42,10 @@ func (s *MemoryStore) Create(job *Job) error {
 	if job.ID == "" {
 		return errors.New("job ID is required")
 	}
-	job.CreatedAt = time.Now()
-	job.UpdatedAt = time.Now()
-	
+	job.ScheduledAt = timeutil.NormalizeUTC(job.ScheduledAt)
+	job.CreatedAt = timeutil.NowUTC()
+	job.UpdatedAt = job.CreatedAt
+
 	// Deep copy to avoid external mutations
 	jobCopy := *job
 	if job.Payload != nil {
@@ -63,7 +66,7 @@ func (s *MemoryStore) Get(id string) (*Job, error) {
 	if !exists {
 		return nil, ErrJobNotFound
 	}
-	
+
 	// Return a copy to prevent external mutations
 	jobCopy := *job
 	if job.Payload != nil {
@@ -82,8 +85,12 @@ func (s *MemoryStore) Update(job *Job) error {
 	if _, exists := s.jobs[job.ID]; !exists {
 		return ErrJobNotFound
 	}
-	
-	job.UpdatedAt = time.Now()
+
+	job.ScheduledAt = timeutil.NormalizeUTC(job.ScheduledAt)
+	job.StartedAt = timeutil.NormalizePtrUTC(job.StartedAt)
+	job.CompletedAt = timeutil.NormalizePtrUTC(job.CompletedAt)
+	job.CreatedAt = timeutil.NormalizeUTC(job.CreatedAt)
+	job.UpdatedAt = timeutil.NowUTC()
 	jobCopy := *job
 	if job.Payload != nil {
 		jobCopy.Payload = make(map[string]interface{})
@@ -100,8 +107,8 @@ func (s *MemoryStore) ListPending(limit int) ([]*Job, error) {
 	defer s.mu.RUnlock()
 
 	var pending []*Job
-	now := time.Now()
-	
+	now := timeutil.NowUTC()
+
 	for _, job := range s.jobs {
 		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
 			jobCopy := *job
@@ -114,16 +121,16 @@ func (s *MemoryStore) ListPending(limit int) ([]*Job, error) {
 			pending = append(pending, &jobCopy)
 		}
 	}
-	
+
 	// Sort by scheduled time (oldest first)
 	sort.Slice(pending, func(i, j int) bool {
 		return pending[i].ScheduledAt.Before(pending[j].ScheduledAt)
 	})
-	
+
 	if len(pending) > limit {
 		pending = pending[:limit]
 	}
-	
+
 	return pending, nil
 }
 
@@ -144,7 +151,7 @@ func (s *MemoryStore) ListDeadLetter() ([]*Job, error) {
 			deadLetters = append(deadLetters, &jobCopy)
 		}
 	}
-	
+
 	return deadLetters, nil
 }
 
@@ -154,7 +161,7 @@ func (s *MemoryStore) AcquireLock(jobID string, workerID string, ttl time.Durati
 
 	// Clean up expired locks
 	if lock, exists := s.locks[jobID]; exists {
-		if time.Now().After(lock.expiresAt) {
+		if timeutil.NowUTC().After(lock.expiresAt) {
 			delete(s.locks, jobID)
 		} else if lock.workerID != workerID {
 			return false, nil
@@ -164,7 +171,7 @@ func (s *MemoryStore) AcquireLock(jobID string, workerID string, ttl time.Durati
 	// Acquire or renew lock
 	s.locks[jobID] = &lockInfo{
 		workerID:  workerID,
-		expiresAt: time.Now().Add(ttl),
+		expiresAt: timeutil.NowUTC().Add(ttl),
 	}
 	return true, nil
 }
@@ -177,11 +184,11 @@ func (s *MemoryStore) ReleaseLock(jobID string, workerID string) error {
 	if !exists {
 		return nil // Already released
 	}
-	
+
 	if lock.workerID != workerID {
 		return ErrLockNotHeld
 	}
-	
+
 	delete(s.locks, jobID)
 	return nil
 }

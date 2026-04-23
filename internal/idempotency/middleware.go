@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/timeutil"
 )
 
 const (
-	headerKey     = "Idempotency-Key"
-	maxKeyLength  = 255
-	inflightWait  = 10 * time.Second
+	headerKey    = "Idempotency-Key"
+	maxKeyLength = 255
+	inflightWait = 10 * time.Second
 )
 
 // responseRecorder captures the status code and body written by downstream handlers.
@@ -127,7 +128,7 @@ func Middleware(store *Store) gin.HandlerFunc {
 				StatusCode:  rec.status,
 				Body:        rec.body.Bytes(),
 				PayloadHash: payloadHash,
-				CreatedAt:   time.Now(),
+				CreatedAt:   timeutil.NowUTC(),
 			})
 		}
 	}

@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"stellarbill-backend/internal/timeutil"
+
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
-	"stellarbill-backend/internal/timeutil"
 )
 
 // Plan represents a subscription plan

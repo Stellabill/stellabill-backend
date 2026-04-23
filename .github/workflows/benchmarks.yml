@@ -57,6 +57,26 @@ jobs:
             exit 1
           fi
           echo "✅ No significant regressions"
+       
+      - name: Enforce benchmark thresholds
+        run: |
+          go test ./internal/handlers/... -bench=. -benchmem -benchtime=3s -run=^$ 2>&1 | tee threshold_check.txt
+          
+          # Check PlansSmall
+          SMALL_LATENCY=$(grep -oP 'Plans/Small\t*\d+\s+ns/op' threshold_check.txt | awk '{print $2}')
+          if [ -n "$SMALL_LATENCY" ] && [ "$SMALL_LATENCY" -gt 30000 ]; then
+            echo "❌ Plans Small latency ($SMALL_LATENCY ns) exceeds threshold (30000 ns)"
+            exit 1
+          fi
+          
+          # Check SubscriptionsSmall  
+          SUB_LATENCY=$(grep -oP 'Subscriptions/Small\t*\d+\s+ns/op' threshold_check.txt | awk '{print $2}')
+          if [ -n "$SUB_LATENCY" ] && [ "$SUB_LATENCY" -gt 35000 ]; then
+            echo "❌ Subscriptions Small latency ($SUB_LATENCY ns) exceeds threshold (35000 ns)"
+            exit 1
+          fi
+          
+          echo "✅ All benchmark thresholds enforced"
       
       - name: Upload results
         uses: actions/upload-artifact@v3

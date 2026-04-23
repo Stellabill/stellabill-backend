@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"log"
 	"os"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/cors"
@@ -59,7 +58,6 @@ func Register(r *gin.Engine) {
 
 	subRepo := repository.NewMockSubscriptionRepo()
 	planRepo := repository.NewMockPlanRepo()
-	svc := service.NewSubscriptionService(subRepo, planRepo)
 
 	// Statement service wiring (in-memory mock for test/dev)
 	stmtRepo := repository.NewMockStatementRepo()
@@ -105,14 +103,7 @@ func Register(r *gin.Engine) {
 
 		// Example future admin-only endpoints:
 		// api.POST("/plans", auth.RequirePermission(auth.PermManagePlans), ...)
-		api.GET("/subscriptions", dep, handlers.ListSubscriptions)
-		v1.GET("/subscriptions", handlers.ListSubscriptions)
-		api.GET("/subscriptions/:id", dep, middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		v1.GET("/subscriptions/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		api.GET("/plans", dep, handlers.ListPlans)
-		v1.GET("/plans", handlers.ListPlans)
-
-			api.GET("/statements/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetStatementHandler(stmtSvc))
+		api.GET("/statements/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetStatementHandler(stmtSvc))
 		api.GET("/statements", middleware.AuthMiddleware(jwtSecret), handlers.NewListStatementsHandler(stmtSvc))
 
 		admin := api.Group("/admin")
@@ -122,29 +113,29 @@ func Register(r *gin.Engine) {
 			diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 			admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
 			// Reconciliation endpoint (admin-only) - accepts backend subscription list
-				// Choose adapter implementation via env var CONTRACT_SNAPSHOT_URL. If set, use HTTPAdapter.
-				contractURL := os.Getenv("CONTRACT_SNAPSHOT_URL")
-				var adapter reconciliation.Adapter
-				if contractURL != "" {
-					// Optional auth header via CONTRACT_SNAPSHOT_AUTH (e.g. "Bearer <token>")
-					authHeader := os.Getenv("CONTRACT_SNAPSHOT_AUTH")
-					adapter = reconciliation.NewHTTPAdapter(contractURL, authHeader)
-				} else {
-					// Default to in-memory adapter (empty) — replace or seed as needed in dev.
-					adapter = reconciliation.NewMemoryAdapter()
+			// Choose adapter implementation via env var CONTRACT_SNAPSHOT_URL. If set, use HTTPAdapter.
+			contractURL := os.Getenv("CONTRACT_SNAPSHOT_URL")
+			var adapter reconciliation.Adapter
+			if contractURL != "" {
+				// Optional auth header via CONTRACT_SNAPSHOT_AUTH (e.g. "Bearer <token>")
+				authHeader := os.Getenv("CONTRACT_SNAPSHOT_AUTH")
+				adapter = reconciliation.NewHTTPAdapter(contractURL, authHeader)
+			} else {
+				// Default to in-memory adapter (empty) — replace or seed as needed in dev.
+				adapter = reconciliation.NewMemoryAdapter()
+			}
+			// Wire in-memory store for persistence by default; can be swapped for DB-backed store.
+			reconStore := reconciliation.NewMemoryStore()
+			admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
+			// List persisted reports
+			admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
+				reports, err := reconStore.ListReports()
+				if err != nil {
+					c.JSON(500, gin.H{"error": "failed to load reports"})
+					return
 				}
-				// Wire in-memory store for persistence by default; can be swapped for DB-backed store.
-				reconStore := reconciliation.NewMemoryStore()
-				admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
-				// List persisted reports
-				admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
-					reports, err := reconStore.ListReports()
-					if err != nil {
-						c.JSON(500, gin.H{"error": "failed to load reports"})
-						return
-					}
-					c.JSON(200, gin.H{"reports": reports})
-				})
+				c.JSON(200, gin.H{"reports": reports})
+			})
 		}
 	}
 }

@@ -44,6 +44,7 @@ func TestSubscriptionsEndpoint_FlagEnabled(t *testing.T) {
 	router := setupIntegrationTestRouter()
 	
 	req, _ := http.NewRequest("GET", "/api/subscriptions", nil)
+	req.Header.Set("X-Role", "merchant")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	
@@ -59,6 +60,7 @@ func TestSubscriptionsEndpoint_FlagDisabled(t *testing.T) {
 	router := setupIntegrationTestRouter()
 	
 	req, _ := http.NewRequest("GET", "/api/subscriptions", nil)
+	req.Header.Set("X-Role", "merchant")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	
@@ -77,6 +79,7 @@ func TestPlansEndpoint_FlagEnabled(t *testing.T) {
 	router := setupIntegrationTestRouter()
 	
 	req, _ := http.NewRequest("GET", "/api/plans", nil)
+	req.Header.Set("X-Role", "customer")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	
@@ -92,6 +95,7 @@ func TestPlansEndpoint_FlagDisabled(t *testing.T) {
 	router := setupIntegrationTestRouter()
 	
 	req, _ := http.NewRequest("GET", "/api/plans", nil)
+	req.Header.Set("X-Role", "customer")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	

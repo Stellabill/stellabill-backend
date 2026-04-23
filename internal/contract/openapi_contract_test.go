@@ -62,14 +62,18 @@ func TestOpenAPI_ResponsesMatchSchemas(t *testing.T) {
 		name   string
 		method string
 		path   string
+		role   string
 	}{
 		{name: "health", method: http.MethodGet, path: "/api/health"},
-		{name: "plans", method: http.MethodGet, path: "/api/plans"},
-		{name: "subscriptions", method: http.MethodGet, path: "/api/subscriptions"},
-		{name: "subscriptionByID", method: http.MethodGet, path: "/api/subscriptions/sub_test"},
+		{name: "plans", method: http.MethodGet, path: "/api/plans", role: "customer"},
+		{name: "subscriptions", method: http.MethodGet, path: "/api/subscriptions", role: "merchant"},
+		{name: "subscriptionByID", method: http.MethodGet, path: "/api/subscriptions/sub_test", role: "admin"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, "http://localhost:8080"+tc.path, nil)
+			if tc.role != "" {
+				req.Header.Set("X-Role", tc.role)
+			}
 			rec := httptest.NewRecorder()
 			engine.ServeHTTP(rec, req)
 

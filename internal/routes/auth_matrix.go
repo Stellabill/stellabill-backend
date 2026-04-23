@@ -26,7 +26,7 @@ var AuthMatrix = map[string]RouteAuth{
 		Method:        "GET",
 		Path:          "/api/plans",
 		Public:        false,
-		RequiredRoles: []string{}, // Any authenticated user
+		RequiredRoles: []string{"admin", "merchant", "customer"},
 		Description:   "List plans - requires authentication, accessible to all roles",
 	},
 
@@ -45,6 +45,30 @@ var AuthMatrix = map[string]RouteAuth{
 		Public:        false,
 		RequiredRoles: []string{"admin", "merchant"},
 		Description:   "Get subscription by ID - requires admin or merchant role, checks ownership",
+	},
+
+	"GET:/api/admin/diagnostics": {
+		Method:        "GET",
+		Path:          "/api/admin/diagnostics",
+		Public:        false,
+		RequiredRoles: []string{"admin"},
+		Description:   "Run diagnostics - admin only",
+	},
+
+	"POST:/api/admin/reconcile": {
+		Method:        "POST",
+		Path:          "/api/admin/reconcile",
+		Public:        false,
+		RequiredRoles: []string{"admin"},
+		Description:   "Run reconciliation - admin only",
+	},
+
+	"GET:/api/admin/reports": {
+		Method:        "GET",
+		Path:          "/api/admin/reports",
+		Public:        false,
+		RequiredRoles: []string{"admin"},
+		Description:   "List reconciliation reports - admin only",
 	},
 
 	// Future protected routes follow this pattern:

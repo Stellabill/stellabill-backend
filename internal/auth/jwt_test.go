@@ -34,7 +34,7 @@ func TestJWTMiddleware(t *testing.T) {
 
 	// Helper to generate tokens
 	generateToken := func(userID string, exp time.Time, iss, aud string) string {
-		claims := Claims{
+		claims := JWTClaims{
 			UserID: userID,
 			RegisteredClaims: jwt.RegisteredClaims{
 				ExpiresAt: jwt.NewNumericDate(exp),

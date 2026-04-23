@@ -2,8 +2,8 @@ package outbox
 
 import (
 	"context"
+	"fmt"
 	"log"
-	"math"
 	"sync"
 	"time"
 )
@@ -14,6 +14,7 @@ type DispatcherConfig struct {
 	BatchSize           int
 	MaxRetries          int
 	RetryBackoffFactor  float64
+	RetryBaseDelay      time.Duration
 	CleanupInterval     time.Duration
 	CompletedEventTTL   time.Duration
 	ProcessingTimeout   time.Duration
@@ -26,6 +27,7 @@ func DefaultDispatcherConfig() DispatcherConfig {
 		BatchSize:          10,
 		MaxRetries:         3,
 		RetryBackoffFactor: 2.0,
+		RetryBaseDelay:     1 * time.Second,
 		CleanupInterval:    1 * time.Hour,
 		CompletedEventTTL:  24 * time.Hour,
 		ProcessingTimeout:  30 * time.Second,
@@ -138,6 +140,15 @@ func (d *dispatcher) cleanupLoop() {
 
 // processPendingEvents processes a batch of pending events
 func (d *dispatcher) processPendingEvents() {
+	// Recover events stuck in processing status (crash recovery)
+	olderThan := time.Now().Add(-d.config.ProcessingTimeout)
+	if recovered, err := d.repository.RecoverStuckEvents(olderThan); err != nil {
+		log.Printf("Failed to recover stuck events: %v", err)
+		// continue — don't return, just log and proceed
+	} else if recovered > 0 {
+		log.Printf("Recovered %d stuck events", recovered)
+	}
+
 	events, err := d.repository.GetPendingEvents(d.config.BatchSize)
 	if err != nil {
 		log.Printf("Failed to get pending events: %v", err)
@@ -159,19 +170,26 @@ func (d *dispatcher) processPendingEvents() {
 
 // processEvent processes a single event
 func (d *dispatcher) processEvent(event *Event) error {
+	log.Printf("Processing event id=%s type=%s retry=%d", event.ID, event.EventType, event.RetryCount)
+
 	// Mark as processing to prevent other dispatchers from picking it up
 	if err := d.repository.MarkAsProcessing(event.ID); err != nil {
 		log.Printf("Failed to mark event %s as processing: %v", event.ID, err)
 		return err
 	}
-	
+
 	// Create a timeout context for processing
 	ctx, cancel := context.WithTimeout(d.ctx, d.config.ProcessingTimeout)
 	defer cancel()
-	
+
 	// Process in a goroutine to respect timeout
 	done := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("publisher panicked: %v", r)
+			}
+		}()
 		done <- d.publisher.Publish(event)
 	}()
 	
@@ -214,8 +232,7 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	}
 	
 	// Calculate next retry time with exponential backoff
-	backoffSeconds := math.Pow(d.config.RetryBackoffFactor, float64(event.RetryCount))
-	nextRetryAt := time.Now().Add(time.Duration(backoffSeconds) * time.Second)
+	nextRetryAt := time.Now().Add(CalculateNextRetry(event.RetryCount, d.config))
 	
 	errorMsg := err.Error()
 	if updateErr := d.repository.IncrementRetryCount(event.ID, nextRetryAt, &errorMsg); updateErr != nil {

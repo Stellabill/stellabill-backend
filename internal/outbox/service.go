@@ -22,6 +22,14 @@ type ServiceConfig struct {
 	DispatcherConfig DispatcherConfig
 	PublisherType    string // "console", "http", "multi"
 	HTTPEndpoint     string
+	// PIIFieldBlocklist is the list of top-level JSON keys that SanitizePayload
+	// will redact. Defaults to a secure set when empty.
+	PIIFieldBlocklist []string
+}
+
+// DefaultPIIFieldBlocklist is the secure default set of PII field names.
+var DefaultPIIFieldBlocklist = []string{
+	"email", "phone", "ssn", "card_number", "password", "token", "secret",
 }
 
 // NewService creates a new outbox service
@@ -93,21 +101,24 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 
 // PublishEventWithTx publishes an event within an existing transaction
 func (s *Service) PublishEventWithTx(tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
-	// Create the event
 	event, err := NewEvent(eventType, data, aggregateID, aggregateType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
-	
-	// Store the event using the transaction
-	// Note: This requires a transaction-aware repository implementation
-	// For now, we'll use the regular repository (in a real implementation,
-	// you'd create a transactional wrapper)
-	if err := s.repository.Store(event); err != nil {
-		return nil, fmt.Errorf("failed to store event: %w", err)
+	if err := s.repository.StoreWithTx(tx, event); err != nil {
+		return nil, fmt.Errorf("failed to store event in transaction: %w", err)
 	}
-	
 	return event, nil
+}
+
+// ListDeadLetterEvents returns events that have exhausted all retries.
+func (s *Service) ListDeadLetterEvents(limit int) ([]*Event, error) {
+	return s.repository.ListDeadLetterEvents(limit)
+}
+
+// RequeueEvent resets a dead-lettered event back to pending status.
+func (s *Service) RequeueEvent(id uuid.UUID) error {
+	return s.repository.RequeueEvent(id)
 }
 
 // Start starts the outbox dispatcher

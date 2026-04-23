@@ -113,6 +113,7 @@ func (suite *OutboxTestSuite) SetupTest() {
 		PublisherType:    "console",
 	}
 	
+	var err error
 	suite.service, err = NewService(suite.db, serviceConfig)
 	require.NoError(suite.T(), err)
 }

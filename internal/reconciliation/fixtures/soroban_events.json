@@ -1,0 +1,142 @@
+{
+  "subscription_created_events": [
+    {
+      "raw": "eyJ0eXBlIjoic3Vic2NyaXB0aW9uX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSJdLCJkYXRhIjp7InN1YnNjcmlwdGlvbl9pZCI6InN1Yi0xMDAxIiwicGxhbl9pZCI6InBsYW4tMTAwMSIsImN1c3RvbWVyIjoiZ29vZ2xlLXVzZXItb25lIiwiYW1vdW50IjoiOTk5MCIsImN1cnJlbmN5IjoiVVNEIiwiaW50ZXJ2YWwiOiJtb250aCIsInN0YXR1cyI6ImFjdGl2ZSIsImNyZWF0ZWRBdCI6MTcwMDAwMDAwMDB9LCJsZWRnZXIiOjMwMDAwLCJ0eF9oYXNoIjoiMHhkMTIzNDU2Nzg5YWJjZGVmZzEyMzQ1Njc4OWFiY2RlZmcyMTIzNDU2Nzh4eXoifQ==",
+      "decoded": {
+        "type": "subscription_created",
+        "topics": ["google-user-one", "customer", "sub-1001"],
+        "data": {
+          "subscription_id": "sub-1001",
+          "plan_id": "plan-1001",
+          "customer": "google-user-one",
+          "amount": 9990,
+          "currency": "USD",
+          "interval": "month",
+          "status": "active",
+          "created_at": 1700000000000
+        },
+        "ledger": 300000,
+        "tx_hash": "0xd123456789abcdef0123456789abcdegf2123456789abcdegf21z2345678xyz"
+      }
+    },
+    {
+      "raw": "eyJ0eXBlIjoic3Vic2NyaXB0aW9uX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItdHdvIiwiY3VzdG9tZXIiLCJzdWItMTAwMiJdLCJkYXRhIjp7InN1YnNjcmlwdGlvbl9pZCI6InN1Yi0xMDAyIiwicGxhbl9pZCI6InBsYW4tMTAwMiIsImN1c3RvbWVyIjoiZ29vZ2xlLXVzZXItdHdvIiwiYW1vdW50IjoiMTk5OSIsImN1cnJlbmN5IjoiVVNEIiwiaW50ZXJ2YWwiOiJ5ZWFyIiwic3RhdHVzIjoiYWN0aXZlIiwiY3JlYXRlZEF0IjoxNzAwMDAwMDAwMH0sImxlZGdlIjozMDAwMSwidHhfaGFzaCI6IjB4ZTIzNDU2Nzg5YWJjZGVmZzIzNDU2Nzg5YWJjZGVmZzE yMzQ1Njc4OWFiY2RlZmcyMTQzNTY3ODl4eXoifQ==",
+      "decoded": {
+        "type": "subscription_created",
+        "topics": ["google-user-two", "customer", "sub-1002"],
+        "data": {
+          "subscription_id": "sub-1002",
+          "plan_id": "plan-1002",
+          "customer": "google-user-two",
+          "amount": 19990,
+          "currency": "USD",
+          "interval": "year",
+          "status": "active",
+          "created_at": 1700000000000
+        },
+        "ledger": 300001,
+        "tx_hash": "0xe23456789abcdef0123456789abcdegf23456789abcdef0123456789abcdefg"
+      }
+    }
+  ],
+  "subscription_updated_events": [
+    {
+      "raw": "eyJ0eXBlIjoic3Vic2NyaXB0aW9uX3VwZGF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSJdLCJkYXRhIjp7InN1YnNjcmlwdGlvbl9pZCI6InN1Yi0xMDAxIiwiYW1vdW50IjoiMTQ5OSIsImN1cnJlbmN5IjoiVVNEIiwic3RhdHVzIjoiY3JlZGl0X3VwZ3JhZGUiLCJpbnRlcnZhbCI6Im1vbnRoIiwidXBkYXRlZEF0IjoxNzAwMDAwMDA1MH0sImxlZGdlIjozMDAwMiwidHhfaGFzaCI6IjB4ZjMzNDU2Nzg5YWJjZGVmZzMzNDU2Nzg5YWJjZGVmZzE zMzQ1Njc4OWFiY2RlZmczMTQzNTY3ODl4eXoifQ==",
+      "decoded": {
+        "type": "subscription_updated",
+        "topics": ["google-user-one", "customer", "sub-1001"],
+        "data": {
+          "subscription_id": "sub-1001",
+          "amount": 14990,
+          "currency": "USD",
+          "status": "credit_upgrade",
+          "interval": "month",
+          "updated_at": 1700000000050
+        },
+        "ledger": 300002,
+        "tx_hash": "0xf3456789abcdef0123456789abcdegf3456789abcdef0123456789abcdegf3z45678xyz"
+      }
+    }
+  ],
+  "subscription_canceled_events": [
+    {
+      "raw": "eyJ0eXBlIjoic3Vic2NyaXB0aW9uX2NhbmNlbGVkIiwidG9waWNzIjpbImdvb2dsZS11c2VyLW9uZSIsImN1c3RvbWVyIiwic3ViLTEwMDEiXSwiZGF0YSI6eyJzdWJzY3JpcHRpb25faWQiOiJzdWItMTAwMSIsImNhbmNlbGVkQXQiOjE3MDAwMDAwMTAwLCJyZWFzb24iOiJjdXN0b21lcl9yZXF1ZXN0In0sImxlZGdlIjozMDAwMywidHhfaGFzaCI6IjB4ZDQzNDU2Nzg5YWJjZGVmZzQ0NTY3ODlhbWJlY2RlZmc0NTY3ODlhYmNlZGYzNTQ2Nzg5eXoifQ==",
+      "decoded": {
+        "type": "subscription_canceled",
+        "topics": ["google-user-one", "customer", "sub-1001"],
+        "data": {
+          "subscription_id": "sub-1001",
+          "canceled_at": 1700000000100,
+          "reason": "customer_request"
+        },
+        "ledger": 300003,
+        "tx_hash": "0xd43456789abcdef01234567cf890abcdef0123456789abcdef0123456789abcdef"
+      }
+    }
+  ],
+  "charge_created_events": [
+    {
+      "raw": "eyJ0eXBlIjoiY2hhcmdlX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSIsImNyZy0xXzEyMzRdXSwiZGF0YSI6eyJjaGFyZ2VfaWQiOiJjcmctMV8xMjM0Iiwic3Vic2NyaXB0aW9uX2lkIjoic3ViLTEwMDEiLCJhbW91bnQiOjk5OTAsImN1cnJlbmN5IjoiVVNEIiwiY3JlYXRlZEF0IjoxNzAwMDAwMDAyMDAiLCJzdGF0dXMiOiJzbGlwcGVkIn0sImxlZGdlIjozMDAwNCwidHhfaGFzaCI6IjB4ZTUzNDU2Nzg5YWJjZGVmZzU1NDU2Nzg5YWJjZGVmZzU1NDU2Nzg5eXoifQ==",
+      "decoded": {
+        "type": "charge_created",
+        "topics": ["google-user-one", "customer", "sub-1001", "charge-1_1234"],
+        "data": {
+          "charge_id": "charge-1_1234",
+          "subscription_id": "sub-1001",
+          "amount": 9990,
+          "currency": "USD",
+          "created_at": 1700000000200,
+          "status": "slipped"
+        },
+        "ledger": 300004,
+        "tx_hash": "0xe53456789abcdef01234567ef890abcdef0123456789abcdef0123456789abcdef"
+      }
+    }
+  ],
+  "refund_created_events": [
+    {
+      "raw": "eyJ0eXBlIjoicmVmdW5kX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSIsImNyZy0xXzEyMzQiLCJyZWYtMV8yNTYzIl0sImRhdGEiOnsicmVmdW5kX2lkIjoicmVmLTVfMjU2MyIsImNoYXJnZV9pZCI6ImNyZy0xXzEyMzQiLCJhbW91bnQiOjQ5OTUsImN1cnJlbmN5IjoiVVNEIiwicmVhc29uIjoiY3JlZGl0X3VwZ3JhZGUiLCJjcmVhdGVkQXQiOjE3MDAwMDAwNTAwIn0sImxlZGdlIjozMDAwNSwidHhfaGFzaCI6IjB4ZjY1NDU2Nzg5YWJjZGVmZzY1NDU2Nzg5YWJjZGVmZzY1NDU2Nzg5eXoifQ==",
+      "decoded": {
+        "type": "refund_created",
+        "topics": ["google-user-one", "customer", "sub-1001", "charge-1_1234", "ref-1_2563"],
+        "data": {
+          "refund_id": "ref-5_2563",
+          "charge_id": "charge-1_1234",
+          "amount": 4995,
+          "currency": "USD",
+          "reason": "credit_upgrade",
+          "created_at": 1700000000500
+        },
+        "ledger": 300005,
+        "tx_hash": "0xf656789abcdef0123456789fabcdegf123456789abcdef0123456789abcdef"
+      }
+    }
+  ],
+  "malformed_events": [
+    {
+      "name": "missing_type",
+      "raw": "eyJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSJdLCJkYXRhIjp7fSwibGVkZ2VyIjozMDAwMCwidHhfaGFzaCI6IjB4YTQ1Njc4OWFiY2RlZmIxMjM0NTY3ODlhYmNkZWZiMTIzNDU2Nzg5eXoifQ==",
+      "expected_error": "event type is required"
+    },
+    {
+      "name": "missing_topics",
+      "raw": "eyJ0eXBlIjoic3Vic2NyaXB0aW9uX2NyZWF0ZWQiLCJkYXRhIjp7fSwibGVkZ2VyIjozMDAwMCwidHhfaGFzaCI6IjB4YjQ1Njc4OWFiY2RlZmIxMjM0NTY3ODlhYmNkZWZiMTIzNDU2Nzg5eXoifQ==",
+      "expected_error": "topics are required"
+    },
+    {
+      "name": "missing_data",
+      "raw": "eyJ0eXBlIjoic3Vic2NyaXB0aW9uX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSJdLCJsZWRnZXIiOjMwMDAwLCJ0eF9oYXNoIjoiMHhjNDU2Nzg5YWJjZGVmYzE yMzQ1Njc4OWFiY2RlZmMxMjM0NTY2Nzg5eXoifQ==",
+      "expected_error": "data is required"
+    },
+    {
+      "name": "invalid_json",
+      "raw": "NOT_VALID_JSON",
+      "expected_error": "invalid base64"
+    },
+    {
+      "name": "unknown_event_name",
+      "raw": "eyJ0eXBlIjoiaW52YWxpZF9ldmVudF9uYW1lIiwidG9waWNzIjpbXSwiZGF0YSI6e30sImxlZGdlIjozMDAwMCwidHhfaGFzaCI6IjB4ZGU1NDU2Nzg5YWJjZGVmZTU1NDU2Nzg5eXoifQ==",
+      "expected_error": "unknown event type"
+    }
+  ]
+}

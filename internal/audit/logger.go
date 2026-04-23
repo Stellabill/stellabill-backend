@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"stellarbill-backend/internal/requestid"
 )
 
 // redactedValue is applied to sensitive metadata fields.
@@ -69,7 +71,7 @@ func (l *Logger) Log(ctx context.Context, actor, action, target, outcome string,
 		Action:    strings.TrimSpace(action),
 		Target:    strings.TrimSpace(target),
 		Outcome:   strings.TrimSpace(outcome),
-		Metadata:  redact(metadata),
+		Metadata:  redact(withRequestID(ctx, metadata)),
 		PrevHash:  l.lastHash,
 	}
 
@@ -120,6 +122,26 @@ type actorContextKey struct{}
 // WithActor annotates a context with the actor performing the action.
 func WithActor(ctx context.Context, actor string) context.Context {
 	return context.WithValue(ctx, actorContextKey{}, strings.TrimSpace(actor))
+}
+
+// withRequestID merges the request_id from ctx into meta.
+// If no request_id is present in ctx, meta is returned unchanged.
+// If meta is nil, a new map is created only when a request_id is found.
+func withRequestID(ctx context.Context, meta map[string]string) map[string]string {
+	id, ok := requestid.FromContext(ctx)
+	if !ok {
+		return meta
+	}
+	if meta == nil {
+		return map[string]string{requestid.ContextKey: id}
+	}
+	// Copy to avoid mutating the caller's map
+	out := make(map[string]string, len(meta)+1)
+	for k, v := range meta {
+		out[k] = v
+	}
+	out[requestid.ContextKey] = id
+	return out
 }
 
 func redact(meta map[string]string) map[string]string {

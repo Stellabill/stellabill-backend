@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"stellarbill-backend/internal/requestid"
 	"stellarbill-backend/internal/security"
 )
 
@@ -194,6 +195,10 @@ func (w *Worker) executeJob(job *Job) {
 	execCtx, cancel := context.WithTimeout(w.ctx, w.config.LockTTL-5*time.Second)
 	defer cancel()
 
+	// Inject job_id and worker_id into execution context
+	execCtx = requestid.WithJobID(execCtx, job.ID)
+	execCtx = requestid.WithWorkerID(execCtx, w.config.WorkerID)
+
 	err := w.executor.Execute(execCtx, job)
 
 	if err != nil {
@@ -222,7 +227,8 @@ func (w *Worker) handleJobSuccess(job *Job) {
 	w.metrics.mu.Unlock()
 
 	security.ProductionLogger().Info("Job completed successfully",
-		zap.String("job_id", job.ID))
+		zap.String("job_id", job.ID),
+		zap.String("worker_id", w.config.WorkerID))
 }
 
 // handleJobFailure implements retry logic with dead-letter queue
@@ -241,6 +247,7 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 		
 		security.ProductionLogger().Warn("Job moved to dead-letter queue",
 			zap.String("job_id", job.ID),
+			zap.String("worker_id", w.config.WorkerID),
 			zap.Int("attempts", job.Attempts),
 			zap.Error(execErr))
 	} else {

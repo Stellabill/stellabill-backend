@@ -150,7 +150,6 @@ func main() {
 	r := gin.New()
 
 	r.Use(middleware.RecoveryLogger())
-	r.Use(middleware.RequestLogger())
 
 	var db *sql.DB = nil // existing or future DB
 

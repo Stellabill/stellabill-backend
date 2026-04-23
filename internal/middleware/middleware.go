@@ -1,22 +1,65 @@
 package middleware
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/requestid"
 )
 
-const (
-	RequestIDHeader = "X-Request-ID"
-	RequestIDKey    = "request_id"
-	AuthSubjectKey  = "auth_subject"
-)
+// Re-export for backward compatibility with existing tests and call sites.
+const RequestIDKey = requestid.ContextKey
+const RequestIDHeader = requestid.HeaderName
+
+const AuthSubjectKey = "auth_subject"
+
+// RequestIDConfig holds configuration for the RequestIDWithConfig middleware.
+type RequestIDConfig struct {
+	// TrustedProxies is the parsed allowlist of CIDR ranges whose inbound
+	// X-Request-ID header values are accepted without replacement.
+	TrustedProxies []net.IPNet
+}
+
+// RequestIDWithConfig returns a Gin middleware that assigns a request_id to
+// every request. If the inbound X-Request-ID header is present and the request
+// originates from a trusted source, the sanitized inbound value is used.
+// Otherwise a new cryptographically random ID is generated.
+func RequestIDWithConfig(cfg RequestIDConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		inbound := c.GetHeader(requestid.HeaderName)
+		var id string
+
+		if inbound != "" {
+			sanitized, ok := requestid.Sanitize(inbound)
+			if ok && requestid.IsTrustedSource(c.Request.RemoteAddr, cfg.TrustedProxies) {
+				id = sanitized
+			} else {
+				if ok {
+					// Valid ID but untrusted source — discard and log.
+					log.Printf("DEBUG: discarding spoofed request_id from %s", c.Request.RemoteAddr)
+				}
+				id = requestid.Generate()
+			}
+		} else {
+			id = requestid.Generate()
+		}
+
+		c.Set(requestid.ContextKey, id)
+		c.Request = c.Request.WithContext(requestid.WithRequestID(c.Request.Context(), id))
+		c.Writer.Header().Set(requestid.HeaderName, id)
+		c.Next()
+	}
+}
+
+// RequestID is a zero-config shim around RequestIDWithConfig for backward compatibility.
+func RequestID() gin.HandlerFunc {
+	return RequestIDWithConfig(RequestIDConfig{})
+}
 
 type RateLimiter struct {
 	mu      sync.Mutex
@@ -40,36 +83,14 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
-func RequestID() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		requestID := sanitizeRequestID(c.GetHeader(RequestIDHeader))
-		if requestID == "" {
-			requestID = newRequestID()
-		}
-
-		c.Set(RequestIDKey, requestID)
-		c.Writer.Header().Set(RequestIDHeader, requestID)
-		c.Next()
-	}
-}
-
-func Recovery(logger *log.Logger) gin.HandlerFunc {
-	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf("panic recovered request_id=%v err=%v", requestID, recovered)
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error":      "internal server error",
-			"request_id": requestID,
-		})
-	})
-}
+// Recovery is defined in recovery.go with variadic logger support.
 
 func Logging(logger *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 
-		requestID, _ := c.Get(RequestIDKey)
+		requestID, _ := c.Get(requestid.ContextKey)
 		logger.Printf(
 			"method=%s path=%s status=%d request_id=%v duration=%s",
 			c.Request.Method,
@@ -91,7 +112,7 @@ func CORS(allowOrigin string) gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Origin", origin)
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-		c.Header("Access-Control-Expose-Headers", RequestIDHeader)
+		c.Header("Access-Control-Expose-Headers", requestid.HeaderName)
 		c.Header("Vary", "Origin")
 
 		if c.Request.Method == http.MethodOptions {
@@ -110,7 +131,7 @@ func RateLimit(limiter *RateLimiter) gin.HandlerFunc {
 			return
 		}
 
-		requestID, _ := c.Get(RequestIDKey)
+		requestID, _ := c.Get(requestid.ContextKey)
 		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 			"error":      "rate limit exceeded",
 			"request_id": requestID,
@@ -127,7 +148,7 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 
 		token := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer"))
 		if token == "" || token != jwtSecret {
-			requestID, _ := c.Get(RequestIDKey)
+			requestID, _ := c.Get(requestid.ContextKey)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error":      "unauthorized",
 				"request_id": requestID,
@@ -167,46 +188,12 @@ func (r *RateLimiter) Allow(key string) bool {
 	return true
 }
 
-func sanitizeRequestID(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 128 {
-		return ""
-	}
-
-	var b strings.Builder
-	b.Grow(len(value))
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case strings.ContainsRune("-_.", r):
-			b.WriteRune(r)
-		default:
-			return ""
-		}
-	}
-	return b.String()
-}
-
-func newRequestID() string {
-	buf := make([]byte, 12)
-	if _, err := rand.Read(buf); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format("150405.000000000")))
-	}
-	return hex.EncodeToString(buf)
-}
-
 func DeprecationHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Deprecation", "true")
 		c.Header("Sunset", time.Now().Add(180*24*time.Hour).Format(time.RFC1123))
 
 		// Build Link header pointing to the v1 equivalent of this route.
-		// Requests to /api/foo become </api/v1/foo>; rel="successor-version".
 		path := c.Request.URL.Path
 		const prefix = "/api"
 		if strings.HasPrefix(path, prefix) {

@@ -26,31 +26,31 @@ func TestRecoveryMiddleware(t *testing.T) {
 			name:           "string panic",
 			panicType:      "string",
 			expectedStatus: 500,
-			expectedError:  "Internal server error",
+			expectedError:  "internal server error",
 		},
 		{
 			name:           "runtime error panic",
 			panicType:      "runtime",
 			expectedStatus: 500,
-			expectedError:  "Internal server error",
+			expectedError:  "internal server error",
 		},
 		{
 			name:           "nil pointer panic",
 			panicType:      "nil",
 			expectedStatus: 500,
-			expectedError:  "Internal server error",
+			expectedError:  "internal server error",
 		},
 		{
 			name:           "custom panic type",
 			panicType:      "custom",
 			expectedStatus: 500,
-			expectedError:  "Internal server error",
+			expectedError:  "internal server error",
 		},
 		{
 			name:           "default panic",
 			panicType:      "",
 			expectedStatus: 500,
-			expectedError:  "Internal server error",
+			expectedError:  "internal server error",
 		},
 	}
 
@@ -224,7 +224,7 @@ func TestNestedPanic(t *testing.T) {
 	var response ErrorResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
-	assert.Equal(t, "Internal server error", response.Error)
+	assert.Equal(t, "internal server error", response.Error)
 }
 
 func TestRequestIDMiddleware(t *testing.T) {

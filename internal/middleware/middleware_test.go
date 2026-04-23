@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/requestid"
 )
 
 func TestProtectedChainContextPropagationAndLogging(t *testing.T) {
@@ -19,10 +21,14 @@ func TestProtectedChainContextPropagationAndLogging(t *testing.T) {
 	logger := log.New(&logs, "", 0)
 	limiter := NewRateLimiter(5, time.Minute)
 
+	// Use a trusted proxy so the inbound X-Request-ID is accepted.
+	_, trustedCIDR, _ := net.ParseCIDR("127.0.0.1/32")
+	cfg := RequestIDConfig{TrustedProxies: []net.IPNet{*trustedCIDR}}
+
 	router := gin.New()
 	router.Use(
 		Recovery(logger),
-		RequestID(),
+		RequestIDWithConfig(cfg),
 		Logging(logger),
 		CORS("https://frontend.example"),
 		RateLimit(limiter),
@@ -148,8 +154,12 @@ func TestPreflightShortCircuitsBeforeRateLimitAndAuth(t *testing.T) {
 func TestAuthFailureShortCircuitsWithRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	// Use a trusted proxy so the inbound X-Request-ID is accepted.
+	_, trustedCIDR, _ := net.ParseCIDR("127.0.0.1/32")
+	cfg := RequestIDConfig{TrustedProxies: []net.IPNet{*trustedCIDR}}
+
 	router := gin.New()
-	router.Use(RequestID(), CORS("*"), RateLimit(NewRateLimiter(2, time.Minute)), Auth("secret"))
+	router.Use(RequestIDWithConfig(cfg), CORS("*"), RateLimit(NewRateLimiter(2, time.Minute)), Auth("secret"))
 	router.GET("/protected", func(c *gin.Context) {
 		t.Fatal("handler should not run on unauthorized request")
 	})
@@ -172,8 +182,12 @@ func TestAuthFailureShortCircuitsWithRequestID(t *testing.T) {
 func TestRateLimitShortCircuits(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	// Use a trusted proxy so the inbound X-Request-ID is accepted.
+	_, trustedCIDR, _ := net.ParseCIDR("127.0.0.1/32")
+	cfg := RequestIDConfig{TrustedProxies: []net.IPNet{*trustedCIDR}}
+
 	router := gin.New()
-	router.Use(RequestID(), RateLimit(NewRateLimiter(1, time.Minute)))
+	router.Use(RequestIDWithConfig(cfg), RateLimit(NewRateLimiter(1, time.Minute)))
 	router.GET("/limited", func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
@@ -203,8 +217,12 @@ func TestRecoveryReturnsStructuredError(t *testing.T) {
 	var logs bytes.Buffer
 	logger := log.New(&logs, "", 0)
 
+	// Use a trusted proxy so the inbound X-Request-ID is accepted.
+	_, trustedCIDR, _ := net.ParseCIDR("127.0.0.1/32")
+	cfg := RequestIDConfig{TrustedProxies: []net.IPNet{*trustedCIDR}}
+
 	router := gin.New()
-	router.Use(Recovery(logger), RequestID(), Auth("secret"))
+	router.Use(Recovery(logger), RequestIDWithConfig(cfg), Auth("secret"))
 	router.GET("/panic", func(c *gin.Context) {
 		panic("boom")
 	})
@@ -228,14 +246,21 @@ func TestRecoveryReturnsStructuredError(t *testing.T) {
 func TestSanitizeRequestID(t *testing.T) {
 	t.Parallel()
 
-	if got := sanitizeRequestID(" valid-id_123 "); got != "valid-id_123" {
-		t.Fatalf("expected valid request id, got %q", got)
+	// Valid ID passes through unchanged.
+	if got, ok := requestid.Sanitize("valid-id_123"); !ok || got != "valid-id_123" {
+		t.Fatalf("expected valid request id, got %q ok=%v", got, ok)
 	}
-	if got := sanitizeRequestID("bad id"); got != "" {
-		t.Fatalf("expected invalid request id to be rejected, got %q", got)
+	// Whitespace is not trimmed — space causes rejection.
+	if _, ok := requestid.Sanitize(" valid-id_123 "); ok {
+		t.Fatal("expected whitespace-padded request id to be rejected")
 	}
-	if got := sanitizeRequestID(""); got != "" {
-		t.Fatalf("expected empty request id to be rejected, got %q", got)
+	// Space in value is rejected.
+	if _, ok := requestid.Sanitize("bad id"); ok {
+		t.Fatal("expected request id with space to be rejected")
+	}
+	// Empty string is rejected.
+	if _, ok := requestid.Sanitize(""); ok {
+		t.Fatal("expected empty request id to be rejected")
 	}
 }
 

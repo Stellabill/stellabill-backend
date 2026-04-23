@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -57,8 +58,15 @@ type Config struct {
 	RateLimitBurst      int
 	RateLimitWhitelist  []string
 	// Tracing configuration
-	TracingExporter string
+	TracingExporter    string
 	TracingServiceName string
+	// Request ID trusted proxies (parsed from REQUEST_ID_TRUSTED_PROXIES)
+	RequestIDTrustedProxies []net.IPNet
+	// Security header configuration
+	SecurityHSTSMaxAge string
+	SecurityFrameOpt   string
+	// Allowed origins for CORS (comma-separated)
+	AllowedOrigins string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -110,8 +118,9 @@ var optionalEnvVars = map[string]string{
 	"READ_TIMEOUT":     "30",
 	"WRITE_TIMEOUT":    "30",
 	"IDLE_TIMEOUT":     "120",
-	"TRACING_EXPORTER": "stdout",
-	"TRACING_SERVICE_NAME": "stellabill-backend",
+	"TRACING_EXPORTER":            "stdout",
+	"TRACING_SERVICE_NAME":        "stellabill-backend",
+	"REQUEST_ID_TRUSTED_PROXIES":  "",
 }
 
 // Option configures the Load function.
@@ -366,6 +375,23 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 
 	// Set optional env values
 	c.Env = getEnv("ENV", "development")
+
+	// Parse REQUEST_ID_TRUSTED_PROXIES
+	if val := os.Getenv("REQUEST_ID_TRUSTED_PROXIES"); val != "" {
+		entries := strings.Split(val, ",")
+		for _, entry := range entries {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			_, ipNet, err := net.ParseCIDR(entry)
+			if err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("REQUEST_ID_TRUSTED_PROXIES: invalid CIDR %q, skipping", entry))
+				continue
+			}
+			c.RequestIDTrustedProxies = append(c.RequestIDTrustedProxies, *ipNet)
+		}
+	}
 
 	return result
 }

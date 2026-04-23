@@ -21,7 +21,12 @@ import (
 )
 
 func Register(r *gin.Engine) {
-	cfg := config.Load()
+	cfg, _ := config.Load()
+
+	// Register RequestID middleware first — must run before all other middleware
+	r.Use(middleware.RequestIDWithConfig(middleware.RequestIDConfig{
+		TrustedProxies: cfg.RequestIDTrustedProxies,
+	}))
 
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {

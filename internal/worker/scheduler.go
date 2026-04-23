@@ -3,6 +3,8 @@ package worker
 import (
 	"fmt"
 	"time"
+
+	"stellarbill-backend/internal/requestid"
 )
 
 // Scheduler provides utilities for creating and scheduling billing jobs
@@ -73,6 +75,6 @@ func (s *Scheduler) ScheduleReminder(subscriptionID string, scheduledAt time.Tim
 }
 
 func generateJobID(jobType string) string {
-	return fmt.Sprintf("%s-%d", jobType, time.Now().UnixNano())
+	return jobType + "-" + requestid.Generate()
 }
 

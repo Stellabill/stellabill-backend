@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/requestid"
 )
 
 const loggerContextKey = "_audit_logger"
@@ -40,6 +41,12 @@ func LogAction(c *gin.Context, action, target, outcome string, metadata map[stri
 	meta["path"] = c.FullPath()
 	meta["method"] = c.Request.Method
 	meta["client_ip"] = c.ClientIP()
+	// Add request_id from Gin context if present
+	if rid, ok := c.Get(requestid.ContextKey); ok {
+		if ridStr, ok := rid.(string); ok && ridStr != "" {
+			meta[requestid.ContextKey] = ridStr
+		}
+	}
 	actor := ResolveActor(c)
 	logger.Log(c.Request.Context(), actor, action, target, outcome, meta)
 }

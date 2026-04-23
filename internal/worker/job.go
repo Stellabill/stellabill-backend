@@ -8,10 +8,10 @@ import (
 type JobStatus string
 
 const (
-	JobStatusPending   JobStatus = "pending"
-	JobStatusRunning   JobStatus = "running"
-	JobStatusCompleted JobStatus = "completed"
-	JobStatusFailed    JobStatus = "failed"
+	JobStatusPending    JobStatus = "pending"
+	JobStatusRunning    JobStatus = "running"
+	JobStatusCompleted  JobStatus = "completed"
+	JobStatusFailed     JobStatus = "failed"
 	JobStatusDeadLetter JobStatus = "dead_letter"
 )
 
@@ -41,4 +41,7 @@ type JobStore interface {
 	ListDeadLetter() ([]*Job, error)
 	AcquireLock(jobID string, workerID string, ttl time.Duration) (bool, error)
 	ReleaseLock(jobID string, workerID string) error
+
+	QueueDepth() int
+	OldestPending() *Job
 }

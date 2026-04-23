@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
 	"stellarbill-backend/internal/security"
+
+	"go.uber.org/zap"
 )
 
 // Config holds worker configuration
@@ -18,6 +19,10 @@ type Config struct {
 	MaxAttempts     int
 	BatchSize       int
 	ShutdownTimeout time.Duration
+
+	// NEW: Backpressure controls
+	MaxConcurrency int
+	MaxQueueDepth  int
 }
 
 // DefaultConfig returns sensible defaults for the worker
@@ -29,6 +34,10 @@ func DefaultConfig() Config {
 		MaxAttempts:     3,
 		BatchSize:       10,
 		ShutdownTimeout: 30 * time.Second,
+
+		// NEW defaults
+		MaxConcurrency: 10,
+		MaxQueueDepth:  1000,
 	}
 }
 
@@ -46,6 +55,8 @@ type Worker struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	metrics  *Metrics
+
+	sem chan struct{}
 }
 
 // Metrics tracks worker execution statistics
@@ -56,11 +67,15 @@ type Metrics struct {
 	JobsFailed       int64
 	JobsDeadLettered int64
 	LastPollTime     time.Time
+
+	QueueDepth int
+	QueueLag   time.Duration
 }
 
 // NewWorker creates a new billing worker
 func NewWorker(store JobStore, executor JobExecutor, config Config) *Worker {
 	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Worker{
 		config:   config,
 		store:    store,
@@ -68,6 +83,7 @@ func NewWorker(store JobStore, executor JobExecutor, config Config) *Worker {
 		ctx:      ctx,
 		cancel:   cancel,
 		metrics:  &Metrics{},
+		sem:      make(chan struct{}, config.MaxConcurrency), // NEW
 	}
 }
 
@@ -76,12 +92,25 @@ func (w *Worker) GetMetrics() Metrics {
 	w.metrics.mu.RLock()
 	defer w.metrics.mu.RUnlock()
 
+	// NEW: add queue stats
+	depth := w.store.QueueDepth()
+	oldest := w.store.OldestPending()
+
+	var queueLag time.Duration
+
+	if oldest != nil {
+		queueLag = time.Since(oldest.CreatedAt)
+	}
+
 	return Metrics{
 		JobsProcessed:    w.metrics.JobsProcessed,
 		JobsSucceeded:    w.metrics.JobsSucceeded,
 		JobsFailed:       w.metrics.JobsFailed,
 		JobsDeadLettered: w.metrics.JobsDeadLettered,
 		LastPollTime:     w.metrics.LastPollTime,
+
+		QueueDepth: depth,
+		QueueLag:   queueLag,
 	}
 }
 
@@ -117,7 +146,6 @@ func (w *Worker) Stop() error {
 	}
 }
 
-
 // schedulerLoop continuously polls for pending jobs
 func (w *Worker) schedulerLoop() {
 	defer w.wg.Done()
@@ -137,6 +165,14 @@ func (w *Worker) schedulerLoop() {
 
 // pollAndDispatch fetches pending jobs and dispatches them for execution
 func (w *Worker) pollAndDispatch() {
+	// NEW: adaptive throttling based on queue depth
+	if w.store.QueueDepth() > w.config.MaxQueueDepth {
+		security.ProductionLogger().Warn("Backpressure triggered: queue too deep",
+			zap.Int("queue_depth", w.store.QueueDepth()))
+		time.Sleep(w.config.PollInterval * 2)
+		return
+	}
+
 	w.metrics.mu.Lock()
 	w.metrics.LastPollTime = time.Now()
 	w.metrics.mu.Unlock()
@@ -163,15 +199,23 @@ func (w *Worker) pollAndDispatch() {
 			continue
 		}
 
-		// Dispatch job in goroutine
+		// NEW: acquire concurrency slot (blocks if full)
+		w.sem <- struct{}{}
+
 		w.wg.Add(1)
-		go w.executeJob(job)
+		go func(j *Job) {
+			defer func() {
+				<-w.sem // release slot
+				w.wg.Done()
+			}()
+
+			w.executeJob(j)
+		}(job)
 	}
 }
 
 // executeJob runs a single job with retry logic
 func (w *Worker) executeJob(job *Job) {
-	defer w.wg.Done()
 	defer w.store.ReleaseLock(job.ID, w.config.WorkerID)
 
 	w.metrics.mu.Lock()
@@ -238,7 +282,7 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 		w.metrics.mu.Lock()
 		w.metrics.JobsDeadLettered++
 		w.metrics.mu.Unlock()
-		
+
 		security.ProductionLogger().Warn("Job moved to dead-letter queue",
 			zap.String("job_id", job.ID),
 			zap.Int("attempts", job.Attempts),
@@ -252,7 +296,7 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 		w.metrics.mu.Lock()
 		w.metrics.JobsFailed++
 		w.metrics.mu.Unlock()
-		
+
 		security.ProductionLogger().Warn("Job failed, retrying",
 			zap.String("job_id", job.ID),
 			zap.Int("attempt", job.Attempts),
@@ -271,4 +315,3 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 func generateWorkerID() string {
 	return fmt.Sprintf("worker-%d", time.Now().UnixNano())
 }
-

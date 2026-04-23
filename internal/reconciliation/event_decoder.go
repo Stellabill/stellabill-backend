@@ -3,8 +3,6 @@ package reconciliation
 import (
 	"encoding/base64"
 	"encoding/json"
-	"testing"
-	"time"
 )
 
 type ContractEventType string

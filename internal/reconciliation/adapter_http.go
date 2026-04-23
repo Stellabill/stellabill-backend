@@ -6,6 +6,9 @@ import (
     "fmt"
     "io"
     "net/http"
+    "net/url"
+
+    "go.uber.org/zap"
 
     "stellabill-backend/internal/httpclient"
 )
@@ -19,8 +22,13 @@ type HTTPAdapter struct {
 }
 
 // NewHTTPAdapter creates an adapter that will GET snapshots from url.
-func NewHTTPAdapter(url string, authHeader string) *HTTPAdapter {
-    return &HTTPAdapter{Client: httpclient.NewClient(), URL: url, AuthHeader: authHeader}
+func NewHTTPAdapter(urlStr string, authHeader string, logger *zap.Logger) *HTTPAdapter {
+    u, err := url.Parse(urlStr)
+    host := "unknown"
+    if err == nil && u.Host != "" {
+        host = u.Host
+    }
+    return &HTTPAdapter{Client: httpclient.NewClient(host, logger), URL: urlStr, AuthHeader: authHeader}
 }
 
 // FetchSnapshots implements Adapter.

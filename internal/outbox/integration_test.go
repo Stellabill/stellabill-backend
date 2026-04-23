@@ -3,7 +3,6 @@ package outbox
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"testing"
 	"time"
 

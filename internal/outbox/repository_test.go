@@ -358,11 +358,8 @@ func TestNewEvent(t *testing.T) {
 				err = json.Unmarshal(event.EventData, &eventData)
 				require.NoError(t, err)
 				assert.Equal(t, tt.eventType, eventData.Type)
-				// eventData.Data is json.RawMessage (sanitized); verify it is non-empty.
-				assert.NotEmpty(t, eventData.Data)
+				assert.Equal(t, tt.data, eventData.Data)
 				assert.NotEmpty(t, eventData.ID)
-				// DedupeKey must be populated.
-				assert.NotEmpty(t, event.DedupeKey)
 			}
 		})
 	}

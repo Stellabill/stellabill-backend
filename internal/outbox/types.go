@@ -1,7 +1,6 @@
 package outbox
 
 import (
-	"database/sql"
 	"encoding/json"
 	"time"
 
@@ -24,7 +23,6 @@ type Event struct {
 	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 	Version       int        `json:"version" db:"version"`
-	DedupeKey     string     `json:"dedupe_key" db:"dedupe_key"`
 }
 
 // Status represents the status of an outbox event
@@ -59,13 +57,6 @@ type Repository interface {
 	MarkAsProcessing(id uuid.UUID) error
 	IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time, errorMessage *string) error
 	DeleteCompletedEvents(olderThan time.Time) (int64, error)
-
-	// New methods
-	StoreWithTx(tx *sql.Tx, event *Event) error
-	StoreIfNotExists(event *Event) (inserted bool, err error)
-	RecoverStuckEvents(olderThan time.Time) (int64, error)
-	ListDeadLetterEvents(limit int) ([]*Event, error)
-	RequeueEvent(id uuid.UUID) error
 }
 
 // Dispatcher handles the outbox event dispatching

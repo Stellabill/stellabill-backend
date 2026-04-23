@@ -15,6 +15,7 @@ import (
 
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/reconciliation"
+	"stellarbill-backend/internal/security"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -128,7 +129,7 @@ func Register(r *gin.Engine) {
 				if contractURL != "" {
 					// Optional auth header via CONTRACT_SNAPSHOT_AUTH (e.g. "Bearer <token>")
 					authHeader := os.Getenv("CONTRACT_SNAPSHOT_AUTH")
-					adapter = reconciliation.NewHTTPAdapter(contractURL, authHeader)
+					adapter = reconciliation.NewHTTPAdapter(contractURL, authHeader, security.ProductionLogger())
 				} else {
 					// Default to in-memory adapter (empty) — replace or seed as needed in dev.
 					adapter = reconciliation.NewMemoryAdapter()

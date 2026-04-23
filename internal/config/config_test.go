@@ -2,11 +2,11 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
 func TestLoad_DefaultValues(t *testing.T) {
-	// Clear environment variables
 	os.Unsetenv("ENV")
 	os.Unsetenv("PORT")
 	os.Unsetenv("DATABASE_URL")
@@ -33,13 +33,11 @@ func TestLoad_DefaultValues(t *testing.T) {
 }
 
 func TestLoad_CustomValues(t *testing.T) {
-	// Set custom environment variables
 	os.Setenv("ENV", "production")
 	os.Setenv("PORT", "3000")
 	os.Setenv("DATABASE_URL", "postgres://custom/db")
 	os.Setenv("JWT_SECRET", "my-secret")
 
-	// Clear after test
 	defer func() {
 		os.Unsetenv("ENV")
 		os.Unsetenv("PORT")
@@ -67,7 +65,6 @@ func TestLoad_CustomValues(t *testing.T) {
 }
 
 func TestLoad_PORT_Override(t *testing.T) {
-	// Set PORT via environment
 	os.Setenv("PORT", "9090")
 	defer os.Unsetenv("PORT")
 
@@ -76,10 +73,7 @@ func TestLoad_PORT_Override(t *testing.T) {
 	if cfg.Port != "9090" {
 		t.Errorf("Expected Port to be '9090', got %s", cfg.Port)
 	}
-=======
-	"strings"
-	"testing"
-)
+}
 
 const validTestSecret = "MySecureSecret123!@#$%^&*()AbCdEfGh"
 
@@ -110,8 +104,8 @@ func withEnvVars(t *testing.T, vars map[string]string, fn func()) {
 func TestLoad_WithMissingRequiredVars(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "",
-		"JWT_SECRET":   "",
-		"PORT":         "",
+		"JWT_SECRET":  "",
+		"PORT":        "",
 	}, func() {
 		_, err := Load()
 		if err == nil {
@@ -126,9 +120,9 @@ func TestLoad_WithMissingRequiredVars(t *testing.T) {
 func TestLoad_WithValidConfig(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   validTestSecret,
-		"PORT":         "8080",
-		"ENV":          "development",
+		"JWT_SECRET":  validTestSecret,
+		"PORT":        "8080",
+		"ENV":         "development",
 	}, func() {
 		cfg, err := Load()
 		if err != nil {
@@ -149,8 +143,8 @@ func TestLoad_WithValidConfig(t *testing.T) {
 func TestLoad_WithInvalidPort(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   validTestSecret,
-		"PORT":         "invalid",
+		"JWT_SECRET":  validTestSecret,
+		"PORT":        "invalid",
 	}, func() {
 		_, err := Load()
 		if err == nil {
@@ -165,8 +159,8 @@ func TestLoad_WithInvalidPort(t *testing.T) {
 func TestLoad_WithInvalidDatabaseURL(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "://localhost",
-		"JWT_SECRET":   validTestSecret,
-		"PORT":         "8080",
+		"JWT_SECRET":  validTestSecret,
+		"PORT":        "8080",
 	}, func() {
 		_, err := Load()
 		if err == nil {

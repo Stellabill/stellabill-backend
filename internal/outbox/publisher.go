@@ -2,17 +2,15 @@ package outbox
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
-	"time"
 
 	"go.uber.org/zap"
 
-	"stellabill-backend/internal/httpclient"
+	"stellarbill-backend/internal/httpclient"
 )
 
 // HTTPPublisher publishes events via HTTP (placeholder implementation)
@@ -92,7 +90,7 @@ func (p *HTTPPublisher) Publish(event *Event) error {
 		"data":          eventData.Data,
 		"occurred_at":   event.OccurredAt,
 		"aggregate_id":  event.AggregateID,
-		""aggregate_type": event.AggregateType,
+		"aggregate_type": event.AggregateType,
 		"version":       event.Version,
 	}
 
@@ -101,7 +99,7 @@ func (p *HTTPPublisher) Publish(event *Event) error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	statusCode, err := p.client.Post(p.endpoint, "application/json", body, event.ID)
+	statusCode, err := p.client.Post(p.endpoint, "application/json", body, event.ID.String())
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}

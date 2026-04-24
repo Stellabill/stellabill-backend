@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
+	"stellarbill-backend/internal/db"
 )
 
 // Plan represents a subscription plan
@@ -30,16 +31,21 @@ type PlanRepository interface {
 	Update(plan *Plan) error
 	Delete(id string) error
 	GetActivePlansByMerchantID(merchantID string) ([]*Plan, error)
+	WithTx(tx db.DBTX) PlanRepository
 }
 
 // postgresPlanRepository implements PlanRepository
 type postgresPlanRepository struct {
-	db *sql.DB
+	db db.DBTX
 }
 
 // NewPlanRepository creates a new plan repository
-func NewPlanRepository(db *sql.DB) PlanRepository {
-	return &postgresPlanRepository{db: db}
+func NewPlanRepository(executor db.DBTX) PlanRepository {
+	return &postgresPlanRepository{db: executor}
+}
+
+func (r *postgresPlanRepository) WithTx(tx db.DBTX) PlanRepository {
+	return &postgresPlanRepository{db: tx}
 }
 
 // Create creates a new plan

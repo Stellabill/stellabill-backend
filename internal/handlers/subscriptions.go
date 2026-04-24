@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"database/sql"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/db"
+	"stellarbill-backend/internal/repositories"
 	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/subscriptions"
@@ -75,8 +79,8 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 	}
 }
 
-// UpdateSubscriptionStatus handles status updates with validation
-func UpdateSubscriptionStatus(c *gin.Context) {
+// UpdateSubscriptionStatus handles status updates with validation and atomic outbox publishing
+func (h *Handler) UpdateSubscriptionStatus(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
@@ -92,17 +96,53 @@ func UpdateSubscriptionStatus(c *gin.Context) {
 		return
 	}
 
-	// TODO: fetch current subscription from DB
-	currentStatus := "active" // placeholder
+	// Use RunInTransaction for atomicity
+	err := db.RunInTransaction(c.Request.Context(), h.DB, func(tx *sql.Tx) error {
+		// 1. Fetch current subscription to check transition
+		// We use the repository with the transaction
+		subRepo := h.SubRepo.WithTx(tx)
+		sub, err := subRepo.GetByID(id)
+		if err != nil {
+			return err
+		}
 
-	if err := subscriptions.CanTransition(currentStatus, payload.Status); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"error": err.Error(),
-		})
+		// 2. Validate transition
+		if err := subscriptions.CanTransition(sub.Status, payload.Status); err != nil {
+			return err // Will be handled outside to return 422
+		}
+
+		// 3. Update status
+		if err := subRepo.UpdateStatus(id, payload.Status); err != nil {
+			return err
+		}
+
+		// 4. Publish outbox event
+		eventData := map[string]interface{}{
+			"subscription_id": id,
+			"old_status":      sub.Status,
+			"new_status":      payload.Status,
+		}
+		
+		// Use a deterministic deduplication ID for idempotency if provided in headers (optional)
+		// For now, we'll generate one based on ID and Status to prevent duplicate transitions to same status
+		dedupID := fmt.Sprintf("sub_status_update_%s_%s", id, payload.Status)
+		
+		_, err = h.Outbox.PublishEventWithTx(tx, "subscription.status_updated", eventData, &id, nil, &dedupID)
+		return err
+	})
+
+	if err != nil {
+		// Handle specific errors
+		if err.Error() == "subscription not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		
+		// Check if it's a transition error (this is a bit hacky since we lose type info in RunInTransaction)
+		// In a real app, we'd use custom error types
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
-
-	// TODO: persist update
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":     id,

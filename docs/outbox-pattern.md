@@ -96,28 +96,25 @@ err := outboxManager.PublishDomainEvent(ctx, event)
 
 ### Transactional Publishing
 
+For atomic writes involving both domain data and outbox events, use the `db.RunInTransaction` helper. This ensures that either both are persisted or neither is.
+
 ```go
-tx, err := db.BeginTx(ctx, nil)
-if err != nil {
-    return err
-}
-defer tx.Rollback()
+err := db.RunInTransaction(ctx, dbConn, func(tx *sql.Tx) error {
+    // 1. Update domain data using a transaction-aware repository
+    repo := repositories.NewSubscriptionRepository(tx)
+    if err := repo.UpdateStatus(id, "active"); err != nil {
+        return err
+    }
 
-// Update business data
-_, err = tx.Exec("UPDATE users SET status = $1 WHERE id = $2", "active", userID)
-if err != nil {
+    // 2. Publish event in same transaction
+    // Passing a deduplication_id ensures idempotency on retries
+    dedupID := fmt.Sprintf("sub_activation_%s", id)
+    _, err = outboxService.PublishEventWithTx(tx, "subscription.activated", data, &id, &type, &dedupID)
     return err
-}
-
-// Publish event in same transaction
-event, err := outboxService.PublishEventWithTx(tx, "user.activated", userData, &userID, &userType)
-if err != nil {
-    return err
-}
-
-// Commit transaction (both data and event are saved atomically)
-return tx.Commit()
+})
 ```
+
+Important: Always use the `WithTx(tx)` or `New...(tx)` pattern for repositories inside a transaction to ensure they share the same database connection and transaction state.
 
 ## API Endpoints
 
@@ -173,13 +170,14 @@ The system automatically recovers from crashes:
 3. **Failed events**: Events that haven't reached max retries are retried
 4. **Completed events**: Old completed events are automatically cleaned up
 
-### Idempotency
-
-The system ensures idempotency through:
-
-1. **Unique event IDs**: Each event has a unique identifier
-2. **Status tracking**: Events are marked as `processing` to prevent duplicate processing
-3. **Version control**: Event versions prevent concurrent modifications
+### Idempotency and Deduplication
+ 
+ The system ensures idempotency through:
+ 
+ 1. **Deduplication ID**: Events can be stored with a `deduplication_id`. A unique constraint in the database prevents storing duplicate events for the same operation if a handler is retried.
+ 2. **Unique event IDs**: Each event has a unique primary key UUID.
+ 3. **Status tracking**: Events are marked as `processing` to prevent duplicate processing by the dispatcher.
+ 4. **Version control**: Event versions prevent concurrent modifications during the dispatch cycle.
 
 ## Testing
 
@@ -217,6 +215,14 @@ go test -cover ./internal/outbox/...
 1. **HTTPS**: Always use HTTPS for HTTP publishers
 2. **Authentication**: Implement proper authentication for external endpoints
 3. **Rate Limiting**: Implement rate limiting for event publishing
+
+### Security Assumptions and Transaction Guarantees
+ 
+ 1. **Atomicity**: The `db.RunInTransaction` helper ensures that domain state changes and outbox event writes are atomic. Either both succeed, or both are rolled back.
+ 2. **Visibility (Isolation)**: Transactions are executed at the `Read Committed` isolation level by default. No partial or invalid states (e.g., status updated but no event) are visible to concurrent transactions.
+ 3. **Idempotency**: By using a deterministic `deduplication_id`, the system prevents duplicate events from being published if a transaction is retried at the application/handler level due to a timeout or network failure.
+ 4. **No Side Effects in TX**: Business logic inside the transaction should be restricted to database operations. External side effects (like sending emails) must be handled via outbox events to maintain atomicity.
+ 5. **Crash Resilience**: If the system crashes after a transaction is committed but before the dispatcher processes the event, the event remains in the `pending` state and will be picked up by another dispatcher instance once it times out.
 
 ### Operational Security
 

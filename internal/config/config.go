@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"stellarbill-backend/internal/secrets"
@@ -59,6 +60,52 @@ type Config struct {
 	// Tracing configuration
 	TracingExporter string
 	TracingServiceName string
+	Outbox          OutboxConfig
+}
+
+// OutboxConfig holds configuration for the outbox system
+type OutboxConfig struct {
+	PollInterval       string
+	BatchSize          int
+	MaxRetries         int
+	RetryBackoffFactor float64
+	CleanupInterval    string
+	CompletedEventTTL  string
+	ProcessingTimeout  string
+	PublisherType      string
+	HTTPEndpoint       string
+}
+
+func (c OutboxConfig) GetPollInterval() time.Duration {
+	d, err := time.ParseDuration(c.PollInterval)
+	if err != nil {
+		return 5 * time.Second
+	}
+	return d
+}
+
+func (c OutboxConfig) GetCleanupInterval() time.Duration {
+	d, err := time.ParseDuration(c.CleanupInterval)
+	if err != nil {
+		return 1 * time.Hour
+	}
+	return d
+}
+
+func (c OutboxConfig) GetCompletedEventTTL() time.Duration {
+	d, err := time.ParseDuration(c.CompletedEventTTL)
+	if err != nil {
+		return 24 * time.Hour
+	}
+	return d
+}
+
+func (c OutboxConfig) GetProcessingTimeout() time.Duration {
+	d, err := time.ParseDuration(c.ProcessingTimeout)
+	if err != nil {
+		return 30 * time.Second
+	}
+	return d
 }
 
 // ValidationResult holds the result of configuration validation
@@ -111,7 +158,7 @@ var optionalEnvVars = map[string]string{
 	"WRITE_TIMEOUT":    "30",
 	"IDLE_TIMEOUT":     "120",
 	"TRACING_EXPORTER": "stdout",
-	"TRACING_SERVICE_NAME": "stellabill-backend",
+	"TRACING_SERVICE_NAME": "stellarbill-backend",
 }
 
 // Option configures the Load function.
@@ -156,7 +203,18 @@ func Load(opts ...Option) (Config, error) {
 		WriteTimeout:   DefaultWriteTimeout,
 		IdleTimeout:    DefaultIdleTimeout,
 		TracingExporter: getEnv("TRACING_EXPORTER", "stdout"),
-		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellarbill-backend"),
+		Outbox: OutboxConfig{
+			PollInterval:       getEnv("OUTBOX_POLL_INTERVAL", "5s"),
+			BatchSize:          getEnvInt("OUTBOX_BATCH_SIZE", 10),
+			MaxRetries:         getEnvInt("OUTBOX_MAX_RETRIES", 3),
+			RetryBackoffFactor: 2.0, // Default
+			CleanupInterval:    getEnv("OUTBOX_CLEANUP_INTERVAL", "1h"),
+			CompletedEventTTL:  getEnv("OUTBOX_COMPLETED_EVENT_TTL", "24h"),
+			ProcessingTimeout:  getEnv("OUTBOX_PROCESSING_TIMEOUT", "30s"),
+			PublisherType:      getEnv("OUTBOX_PUBLISHER_TYPE", "console"),
+			HTTPEndpoint:       getEnv("OUTBOX_HTTP_ENDPOINT", ""),
+		},
 	}
 
 	// Resolve secrets through the provider

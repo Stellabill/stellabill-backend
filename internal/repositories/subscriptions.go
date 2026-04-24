@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
+	"stellarbill-backend/internal/db"
 )
 
 // Subscription represents a customer subscription
@@ -42,16 +43,21 @@ type SubscriptionRepository interface {
 	Cancel(id string, cancelAtPeriodEnd bool) error
 	GetActiveSubscriptionsByMerchantID(merchantID string) ([]*Subscription, error)
 	GetSubscriptionsDueForBilling(limit int) ([]*Subscription, error)
+	WithTx(tx db.DBTX) SubscriptionRepository
 }
 
 // postgresSubscriptionRepository implements SubscriptionRepository
 type postgresSubscriptionRepository struct {
-	db *sql.DB
+	db db.DBTX
 }
 
 // NewSubscriptionRepository creates a new subscription repository
-func NewSubscriptionRepository(db *sql.DB) SubscriptionRepository {
-	return &postgresSubscriptionRepository{db: db}
+func NewSubscriptionRepository(executor db.DBTX) SubscriptionRepository {
+	return &postgresSubscriptionRepository{db: executor}
+}
+
+func (r *postgresSubscriptionRepository) WithTx(tx db.DBTX) SubscriptionRepository {
+	return &postgresSubscriptionRepository{db: tx}
 }
 
 // Create creates a new subscription

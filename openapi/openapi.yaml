@@ -8,7 +8,7 @@ info:
 
     Notes:
       - Preflight CORS requests (`OPTIONS`) are handled by middleware and return `204`.
-  version: 0.1.0
+  version: 0.2.0
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -16,6 +16,8 @@ tags:
   - name: Health
   - name: Plans
   - name: Subscriptions
+  - name: Statements
+  - name: Admin
 paths:
   /api/health:
     get:
@@ -34,6 +36,9 @@ paths:
       tags: [Plans]
       summary: List billing plans
       operationId: listPlans
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
         "200":
           description: Plans list
@@ -46,6 +51,9 @@ paths:
       tags: [Subscriptions]
       summary: List subscriptions
       operationId: listSubscriptions
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
         "200":
           description: Subscriptions list
@@ -72,7 +80,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+  /api/statements:
+    get:
+      tags: [Statements]
+      summary: List statements
+      operationId: listStatements
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Statements list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementsResponse"
+  /api/admin/reports:
+    get:
+      tags: [Admin]
+      summary: List reconciliation reports
+      operationId: listReports
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Reports list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportsResponse"
 components:
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor for pagination
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return
+      schema:
+        type: integer
+        default: 10
+        maximum: 100
   schemas:
     HealthResponse:
       type: object
@@ -85,6 +138,19 @@ components:
         service:
           type: string
           example: stellarbill-backend
+    Pagination:
+      type: object
+      required: [limit, has_more]
+      properties:
+        next_cursor:
+          type: string
+          example: eyJpZCI6InBsYW5fMiIsInNvcnRfdmFsdWUiOiJQbGFuIDIifQ==
+        limit:
+          type: integer
+          example: 10
+        has_more:
+          type: boolean
+          example: true
     Plan:
       type: object
       additionalProperties: false
@@ -98,7 +164,6 @@ components:
           example: Basic
         amount:
           type: string
-          description: Amount as string (placeholder until DB integration).
           example: "1000"
         currency:
           type: string
@@ -112,12 +177,18 @@ components:
     PlansResponse:
       type: object
       additionalProperties: false
-      required: [plans]
+      required: [plans, limit, has_more]
       properties:
         plans:
           type: array
           items:
             $ref: "#/components/schemas/Plan"
+        next_cursor:
+          type: string
+        limit:
+          type: integer
+        has_more:
+          type: boolean
     Subscription:
       type: object
       additionalProperties: false
@@ -143,14 +214,66 @@ components:
           example: monthly
         next_billing:
           type: string
-          description: Next billing datetime (string placeholder).
           example: "2026-04-01T00:00:00Z"
     SubscriptionsResponse:
       type: object
       additionalProperties: false
-      required: [subscriptions]
+      required: [subscriptions, limit, has_more]
       properties:
         subscriptions:
           type: array
           items:
             $ref: "#/components/schemas/Subscription"
+        next_cursor:
+          type: string
+        limit:
+          type: integer
+        has_more:
+          type: boolean
+    Statement:
+      type: object
+      properties:
+        id:
+          type: string
+        subscription_id:
+          type: string
+        customer:
+          type: string
+        total_amount:
+          type: string
+        currency:
+          type: string
+        status:
+          type: string
+    StatementsResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            statements:
+              type: array
+              items:
+                $ref: "#/components/schemas/Statement"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    Report:
+      type: object
+      properties:
+        subscription_id:
+          type: string
+        matched:
+          type: boolean
+    ReportsResponse:
+      type: object
+      properties:
+        reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/Report"
+        next_cursor:
+          type: string
+        limit:
+          type: integer
+        has_more:
+          type: boolean

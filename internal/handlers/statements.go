@@ -80,16 +80,15 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 			EndBefore:      c.Query("end_before"),
 		}
 
-		if ps := c.Query("page_size"); ps != "" {
-			if v, err := strconv.Atoi(ps); err == nil {
-				q.PageSize = v
-			}
+		limitStr := c.DefaultQuery("limit", "10")
+		limit, _ := strconv.Atoi(limitStr)
+		if limit <= 0 {
+			limit = 10
 		}
-		if p := c.Query("page"); p != "" {
-			if v, err := strconv.Atoi(p); err == nil {
-				q.Page = v
-			}
-		}
+		q.PageSize = limit // Reuse PageSize as Limit for now in repo
+
+		cursorStr := c.Query("cursor")
+		q.StartAfter = cursorStr // Standardize on StartAfter as the cursor field
 
 		// 3. Call service.
 		detail, count, warnings, err := svc.ListByCustomer(c.Request.Context(), callerID.(string), callerID.(string), q)
@@ -104,17 +103,14 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 			return
 		}
 
-		// 4. Normalise pagination values for response.
-		page := q.Page
-		if page <= 0 {
-			page = 1
-		}
-		pageSize := q.PageSize
-		if pageSize <= 0 {
-			pageSize = 10
+		// 4. Build response envelope with cursor pagination.
+		// Since we don't have a real cursor implementation in the service yet, we'll simulate.
+		hasMore := count > limit
+		nextCursor := ""
+		if hasMore && len(detail.Statements) > 0 {
+			nextCursor = detail.Statements[len(detail.Statements)-1].ID
 		}
 
-		// 5. Build response envelope with pagination.
 		resp := service.ResponseEnvelopeWithPagination{
 			ResponseEnvelope: service.ResponseEnvelope{
 				APIVersion: "2025-01-01",
@@ -122,9 +118,9 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 				Warnings:   warnings,
 			},
 			Pagination: service.PaginationMetadata{
-				Page:     page,
-				PageSize: pageSize,
-				Count:    count,
+				NextCursor: nextCursor,
+				Limit:      limit,
+				HasMore:    hasMore,
 			},
 		}
 
@@ -132,3 +128,4 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		c.JSON(http.StatusOK, resp)
 	}
 }
+

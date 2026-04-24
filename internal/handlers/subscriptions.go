@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/subscriptions"
@@ -19,15 +20,38 @@ type Subscription struct {
 	NextBilling string `json:"next_billing,omitempty"`
 }
 
+func (s Subscription) GetID() string        { return s.ID }
+func (s Subscription) GetSortValue() string { return s.Customer } // Sort by customer for now
+
 func (h *Handler) ListSubscriptions(c *gin.Context) {
-	// Delegate to the injected service/repo. Keep behavior minimal and compatible with tests.
-	subs, err := h.Subscriptions.ListSubscriptions(c)
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 {
+		limit = 10
+	}
+
+	cursorStr := c.Query("cursor")
+	cursor, err := pagination.Decode(cursorStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor format"})
+		return
+	}
+
+	allSubs, err := h.Subscriptions.ListSubscriptions(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"subscriptions": subs})
+
+	page := pagination.PaginateSlice(allSubs, cursor, limit)
+
+	c.JSON(http.StatusOK, gin.H{
+		"subscriptions": page.Items,
+		"next_cursor":   page.NextCursor,
+		"has_more":      page.HasMore,
+	})
 }
+
 
 func (h *Handler) GetSubscription(c *gin.Context) {
 	id := c.Param("id")

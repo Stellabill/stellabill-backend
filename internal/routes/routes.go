@@ -15,6 +15,8 @@ import (
 
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/reconciliation"
+	"stellarbill-backend/internal/pagination"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -138,13 +140,34 @@ func Register(r *gin.Engine) {
 				admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
 				// List persisted reports
 				admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
+					limitStr := c.DefaultQuery("limit", "10")
+					limit, _ := strconv.Atoi(limitStr)
+					if limit <= 0 {
+						limit = 10
+					}
+
+					cursorStr := c.Query("cursor")
+					cursor, err := pagination.Decode(cursorStr)
+					if err != nil {
+						c.JSON(400, gin.H{"error": "invalid cursor format"})
+						return
+					}
+
 					reports, err := reconStore.ListReports()
 					if err != nil {
 						c.JSON(500, gin.H{"error": "failed to load reports"})
 						return
 					}
-					c.JSON(200, gin.H{"reports": reports})
+
+					page := pagination.PaginateSlice(reports, cursor, limit)
+
+					c.JSON(200, gin.H{
+						"reports":     page.Items,
+						"next_cursor": page.NextCursor,
+						"has_more":    page.HasMore,
+					})
 				})
+
 		}
 	}
 }

@@ -44,6 +44,10 @@ type Report struct {
     Contract       Snapshot            `json:"contract"`
 }
 
+func (r Report) GetID() string        { return r.SubscriptionID }
+func (r Report) GetSortValue() string { return r.SubscriptionID } // Sort by ID for now
+
+
 // Adapter defines how to fetch contract snapshots from an integration layer.
 type Adapter interface {
     // FetchSnapshots returns current contract snapshots. Implementations may return

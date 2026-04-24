@@ -17,6 +17,8 @@ jobs:
         run: go test ./...
       - name: OpenAPI validation
         run: go run ./cmd/openapi-validate
+      - name: Migration Safety Validation
+        run: go run ./cmd/validate-migrations
       - name: Coverage (>= 95% for non-cmd packages)
         shell: bash
         run: |

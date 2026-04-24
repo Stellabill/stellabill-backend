@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
+	"stellarbill-backend/internal/structuredlog"
 )
 
 // Service provides the main outbox functionality
@@ -66,7 +66,16 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 		return fmt.Errorf("failed to store event: %w", err)
 	}
 	
-	log.Printf("Event %s stored in outbox: %s", event.ID, eventType)
+	defaultLogger.Info("stored outbox event", structuredlog.Fields{
+		structuredlog.FieldRequestID: "",
+		structuredlog.FieldActor:     "system",
+		structuredlog.FieldTenant:    "system",
+		structuredlog.FieldRoute:     "outbox.service.publish",
+		structuredlog.FieldStatus:    StatusPending,
+		structuredlog.FieldDuration:  0,
+		"event_id":                   event.ID.String(),
+		"event_type":                 eventType,
+	})
 	return nil
 }
 

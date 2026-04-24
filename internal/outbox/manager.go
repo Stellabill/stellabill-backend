@@ -3,7 +3,6 @@ package outbox
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 
 	"stellarbill-backend/internal/config"
@@ -45,7 +44,7 @@ func NewManager(db *sql.DB, cfg config.Config) (*Manager, error) {
 
 // Start starts the outbox system
 func (m *Manager) Start() error {
-	log.Println("Starting outbox manager...")
+	defaultLogger.Info("starting outbox manager", outboxFields("outbox.manager", "starting"))
 	
 	// Run database migrations
 	if err := m.runMigrations(); err != nil {
@@ -57,19 +56,19 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to start outbox service: %w", err)
 	}
 	
-	log.Println("Outbox manager started successfully")
+	defaultLogger.Info("outbox manager started", outboxFields("outbox.manager", "started"))
 	return nil
 }
 
 // Stop stops the outbox system
 func (m *Manager) Stop() error {
-	log.Println("Stopping outbox manager...")
+	defaultLogger.Info("stopping outbox manager", outboxFields("outbox.manager", "stopping"))
 	
 	if err := m.service.Stop(); err != nil {
 		return fmt.Errorf("failed to stop outbox service: %w", err)
 	}
 	
-	log.Println("Outbox manager stopped")
+	defaultLogger.Info("outbox manager stopped", outboxFields("outbox.manager", "stopped"))
 	return nil
 }
 
@@ -90,7 +89,7 @@ func (m *Manager) Health() error {
 
 // runMigrations runs the necessary database migrations
 func (m *Manager) runMigrations() error {
-	log.Println("Running outbox migrations...")
+	defaultLogger.Info("running outbox migrations", outboxFields("outbox.manager.migrations", "running"))
 	
 	// Check if outbox table exists
 	var exists bool
@@ -106,7 +105,7 @@ func (m *Manager) runMigrations() error {
 	}
 	
 	if !exists {
-		log.Println("Creating outbox table...")
+		defaultLogger.Info("creating outbox table", outboxFields("outbox.manager.migrations", "creating"))
 		if err := m.createOutboxTable(); err != nil {
 			return fmt.Errorf("failed to create outbox table: %w", err)
 		}
@@ -162,7 +161,7 @@ func (m *Manager) createOutboxTable() error {
 		return fmt.Errorf("failed to create outbox table: %w", err)
 	}
 	
-	log.Println("Outbox table created successfully")
+	defaultLogger.Info("outbox table created", outboxFields("outbox.manager.migrations", "created"))
 	return nil
 }
 

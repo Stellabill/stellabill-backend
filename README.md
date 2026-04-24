@@ -422,13 +422,68 @@ Security notes:
 
 ---
 
+## Structured logging
+
+Application logs now use newline-delimited JSON with a consistent schema for both HTTP middleware and outbox/retry paths.
+
+- **Canonical fields:** `request_id`, `actor`, `tenant`, `route`, `status`, `duration_ms`
+- **Standard envelope:** every entry also includes `ts`, `level`, and `message`
+- **Redaction rules:** bearer/basic credentials, JWTs, emails, and fields such as `authorization`, `password`, `secret`, `token`, `cookie`, `payload`, `body`, and `event_data` are redacted before write
+- **Retry throttling:** repeated outbox failures are emitted once per throttle window, with `suppressed_count` on the next summary log so partial outages do not spam logs or inflate ingest costs
+- **Safe payload handling:** publishers log metadata like `payload_bytes`, `event_id`, and `event_type` instead of raw request/event bodies
+
+Example request log:
+
+```json
+{
+  "ts": "2026-04-24T12:00:00Z",
+  "level": "info",
+  "message": "request completed",
+  "request_id": "req-123",
+  "actor": "api-client",
+  "tenant": "tenant-42",
+  "route": "/protected",
+  "status": 200,
+  "duration_ms": 14,
+  "method": "GET"
+}
+```
+
+Example throttled retry log:
+
+```json
+{
+  "ts": "2026-04-24T12:00:30Z",
+  "level": "warn",
+  "message": "outbox event scheduled for retry",
+  "request_id": "",
+  "actor": "system",
+  "tenant": "system",
+  "route": "outbox.dispatcher.retry",
+  "status": "retry_scheduled",
+  "duration_ms": 0,
+  "event_type": "subscription.created",
+  "retry_count": 2,
+  "suppressed_count": 17,
+  "error": "db down"
+}
+```
+
+Security assumptions:
+
+- Request logs never include Authorization headers, cookies, request bodies, raw event payloads, or client IPs.
+- If actor-like values contain emails or bearer-style tokens, the logger redacts them before serialization.
+- Retry-loop logs are bounded by time window, which reduces noisy duplicate writes during downstream outages.
+
+---
+
 ## Testing
 
 ```
 go test ./... -cover
 ```
 
-Tests include redaction coverage, hash chaining, admin action logging, and middleware auth-failure logging. Coverage currently exceeds 95%.
+Tests include redaction coverage, hash chaining, admin action logging, middleware logging, and outbox log throttling behaviour. Coverage currently exceeds 95% in CI for `./internal/...`.
 
 ---
 

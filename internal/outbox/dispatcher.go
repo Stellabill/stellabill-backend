@@ -2,10 +2,11 @@ package outbox
 
 import (
 	"context"
-	"log"
 	"math"
 	"sync"
 	"time"
+
+	"stellabill-backend/internal/structuredlog"
 )
 
 // DispatcherConfig holds configuration for the dispatcher
@@ -14,6 +15,7 @@ type DispatcherConfig struct {
 	BatchSize           int
 	MaxRetries          int
 	RetryBackoffFactor  float64
+	FailureLogWindow    time.Duration
 	CleanupInterval     time.Duration
 	CompletedEventTTL   time.Duration
 	ProcessingTimeout   time.Duration
@@ -26,6 +28,7 @@ func DefaultDispatcherConfig() DispatcherConfig {
 		BatchSize:          10,
 		MaxRetries:         3,
 		RetryBackoffFactor: 2.0,
+		FailureLogWindow:   30 * time.Second,
 		CleanupInterval:    1 * time.Hour,
 		CompletedEventTTL:  24 * time.Hour,
 		ProcessingTimeout:  30 * time.Second,
@@ -43,14 +46,23 @@ type dispatcher struct {
 	wg         sync.WaitGroup
 	running    bool
 	mu         sync.RWMutex
+	logger     *structuredlog.Logger
+	throttler  *structuredlog.Throttler
+	now        func() time.Time
 }
 
 // NewDispatcher creates a new outbox dispatcher
 func NewDispatcher(repository Repository, publisher Publisher, config DispatcherConfig) Dispatcher {
+	if config.FailureLogWindow <= 0 {
+		config.FailureLogWindow = 30 * time.Second
+	}
 	return &dispatcher{
 		repository: repository,
 		publisher:  publisher,
 		config:     config,
+		logger:     defaultLogger,
+		throttler:  structuredlog.NewThrottler(config.FailureLogWindow),
+		now:        time.Now,
 	}
 }
 
@@ -74,7 +86,7 @@ func (d *dispatcher) Start() error {
 	d.wg.Add(1)
 	go d.cleanupLoop()
 	
-	log.Println("Outbox dispatcher started")
+	d.logger.Info("outbox dispatcher started", outboxFields("outbox.dispatcher", "started"))
 	return nil
 }
 
@@ -91,7 +103,7 @@ func (d *dispatcher) Stop() error {
 	d.wg.Wait()
 	d.running = false
 	
-	log.Println("Outbox dispatcher stopped")
+	d.logger.Info("outbox dispatcher stopped", outboxFields("outbox.dispatcher", "stopped"))
 	return nil
 }
 
@@ -138,9 +150,10 @@ func (d *dispatcher) cleanupLoop() {
 
 // processPendingEvents processes a batch of pending events
 func (d *dispatcher) processPendingEvents() {
+	started := d.now()
 	events, err := d.repository.GetPendingEvents(d.config.BatchSize)
 	if err != nil {
-		log.Printf("Failed to get pending events: %v", err)
+		d.logFailure("pending_events", "failed to fetch pending outbox events", err, addDuration(outboxFields("outbox.dispatcher.poll", "repository_error"), started))
 		return
 	}
 	
@@ -148,20 +161,43 @@ func (d *dispatcher) processPendingEvents() {
 		return // No events to process
 	}
 	
-	log.Printf("Processing %d pending events", len(events))
+	fields := addDuration(outboxFields("outbox.dispatcher.poll", "processing"), started)
+	fields["batch_size"] = len(events)
+	d.logger.Info("processing pending outbox events", fields)
 	
 	for _, event := range events {
 		if err := d.processEvent(event); err != nil {
-			log.Printf("Failed to process event %s: %v", event.ID, err)
+			d.logFailure("process_event:"+event.ID.String(), "failed to process outbox event", err, structuredlog.Fields{
+				structuredlog.FieldRequestID: "",
+				structuredlog.FieldActor:     "system",
+				structuredlog.FieldTenant:    "system",
+				structuredlog.FieldRoute:     "outbox.dispatcher.process",
+				structuredlog.FieldStatus:    "event_failed",
+				structuredlog.FieldDuration:  0,
+				"event_id":                   event.ID.String(),
+				"event_type":                 event.EventType,
+				"retry_count":                event.RetryCount,
+			})
 		}
 	}
 }
 
 // processEvent processes a single event
 func (d *dispatcher) processEvent(event *Event) error {
+	started := d.now()
+
 	// Mark as processing to prevent other dispatchers from picking it up
 	if err := d.repository.MarkAsProcessing(event.ID); err != nil {
-		log.Printf("Failed to mark event %s as processing: %v", event.ID, err)
+		d.logFailure("mark_processing:"+event.ID.String(), "failed to mark outbox event as processing", err, structuredlog.Fields{
+			structuredlog.FieldRequestID: "",
+			structuredlog.FieldActor:     "system",
+			structuredlog.FieldTenant:    "system",
+			structuredlog.FieldRoute:     "outbox.dispatcher.process",
+			structuredlog.FieldStatus:    "mark_processing_failed",
+			structuredlog.FieldDuration:  d.now().Sub(started).Milliseconds(),
+			"event_id":                   event.ID.String(),
+			"event_type":                 event.EventType,
+		})
 		return err
 	}
 	
@@ -183,11 +219,29 @@ func (d *dispatcher) processEvent(event *Event) error {
 		
 		// Mark as completed
 		if err := d.repository.UpdateStatus(event.ID, StatusCompleted, nil); err != nil {
-			log.Printf("Failed to mark event %s as completed: %v", event.ID, err)
+			d.logFailure("mark_completed:"+event.ID.String(), "failed to mark outbox event as completed", err, structuredlog.Fields{
+				structuredlog.FieldRequestID: "",
+				structuredlog.FieldActor:     "system",
+				structuredlog.FieldTenant:    "system",
+				structuredlog.FieldRoute:     "outbox.dispatcher.process",
+				structuredlog.FieldStatus:    "mark_completed_failed",
+				structuredlog.FieldDuration:  d.now().Sub(started).Milliseconds(),
+				"event_id":                   event.ID.String(),
+				"event_type":                 event.EventType,
+			})
 			return err
 		}
 		
-		log.Printf("Successfully published event %s", event.ID)
+		d.logger.Info("outbox event published", structuredlog.Fields{
+			structuredlog.FieldRequestID: "",
+			structuredlog.FieldActor:     "system",
+			structuredlog.FieldTenant:    "system",
+			structuredlog.FieldRoute:     "outbox.dispatcher.process",
+			structuredlog.FieldStatus:    StatusCompleted,
+			structuredlog.FieldDuration:  d.now().Sub(started).Milliseconds(),
+			"event_id":                   event.ID.String(),
+			"event_type":                 event.EventType,
+		})
 		return nil
 		
 	case <-ctx.Done():
@@ -205,40 +259,101 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 		// Max retries reached, mark as failed
 		errorMsg := err.Error()
 		if updateErr := d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg); updateErr != nil {
-			log.Printf("Failed to mark event %s as failed: %v", event.ID, updateErr)
+			d.logFailure("mark_failed:"+event.ID.String(), "failed to mark outbox event as terminally failed", updateErr, structuredlog.Fields{
+				structuredlog.FieldRequestID: "",
+				structuredlog.FieldActor:     "system",
+				structuredlog.FieldTenant:    "system",
+				structuredlog.FieldRoute:     "outbox.dispatcher.retry",
+				structuredlog.FieldStatus:    "terminal_update_failed",
+				structuredlog.FieldDuration:  0,
+				"event_id":                   event.ID.String(),
+				"event_type":                 event.EventType,
+				"retry_count":                event.RetryCount,
+			})
 			return updateErr
 		}
 		
-		log.Printf("Event %s failed after %d retries: %v", event.ID, event.RetryCount, err)
+		d.logFailure("terminal:"+event.ID.String(), "outbox event exhausted retries", err, structuredlog.Fields{
+			structuredlog.FieldRequestID: "",
+			structuredlog.FieldActor:     "system",
+			structuredlog.FieldTenant:    "system",
+			structuredlog.FieldRoute:     "outbox.dispatcher.retry",
+			structuredlog.FieldStatus:    StatusFailed,
+			structuredlog.FieldDuration:  0,
+			"event_id":                   event.ID.String(),
+			"event_type":                 event.EventType,
+			"retry_count":                event.RetryCount,
+			"max_retries":                d.config.MaxRetries,
+		})
 		return err
 	}
 	
 	// Calculate next retry time with exponential backoff
 	backoffSeconds := math.Pow(d.config.RetryBackoffFactor, float64(event.RetryCount))
-	nextRetryAt := time.Now().Add(time.Duration(backoffSeconds) * time.Second)
+	nextRetryAt := d.now().Add(time.Duration(backoffSeconds) * time.Second)
 	
 	errorMsg := err.Error()
 	if updateErr := d.repository.IncrementRetryCount(event.ID, nextRetryAt, &errorMsg); updateErr != nil {
-		log.Printf("Failed to increment retry count for event %s: %v", event.ID, updateErr)
+		d.logFailure("increment_retry:"+event.ID.String(), "failed to schedule outbox retry", updateErr, structuredlog.Fields{
+			structuredlog.FieldRequestID: "",
+			structuredlog.FieldActor:     "system",
+			structuredlog.FieldTenant:    "system",
+			structuredlog.FieldRoute:     "outbox.dispatcher.retry",
+			structuredlog.FieldStatus:    "retry_schedule_failed",
+			structuredlog.FieldDuration:  0,
+			"event_id":                   event.ID.String(),
+			"event_type":                 event.EventType,
+			"retry_count":                event.RetryCount,
+		})
 		return updateErr
 	}
 	
-	log.Printf("Event %s retry %d scheduled for %v: %v", event.ID, event.RetryCount, nextRetryAt, err)
+	d.logFailure("retry:"+event.EventType+":"+err.Error(), "outbox event scheduled for retry", err, structuredlog.Fields{
+		structuredlog.FieldRequestID: "",
+		structuredlog.FieldActor:     "system",
+		structuredlog.FieldTenant:    "system",
+		structuredlog.FieldRoute:     "outbox.dispatcher.retry",
+		structuredlog.FieldStatus:    "retry_scheduled",
+		structuredlog.FieldDuration:  0,
+		"event_id":                   event.ID.String(),
+		"event_type":                 event.EventType,
+		"retry_count":                event.RetryCount,
+		"next_retry_at":              nextRetryAt.UTC().Format(time.RFC3339Nano),
+	})
 	return err
 }
 
 // cleanupCompletedEvents removes old completed events
 func (d *dispatcher) cleanupCompletedEvents() {
-	cutoff := time.Now().Add(-d.config.CompletedEventTTL)
+	started := d.now()
+	cutoff := d.now().Add(-d.config.CompletedEventTTL)
 	deleted, err := d.repository.DeleteCompletedEvents(cutoff)
 	if err != nil {
-		log.Printf("Failed to cleanup completed events: %v", err)
+		d.logFailure("cleanup_completed", "failed to cleanup completed outbox events", err, addDuration(outboxFields("outbox.dispatcher.cleanup", "cleanup_failed"), started))
 		return
 	}
 	
 	if deleted > 0 {
-		log.Printf("Cleaned up %d completed events older than %v", deleted, cutoff)
+		fields := addDuration(outboxFields("outbox.dispatcher.cleanup", "cleanup_complete"), started)
+		fields["deleted"] = deleted
+		fields["cutoff"] = cutoff.UTC().Format(time.RFC3339Nano)
+		d.logger.Info("cleaned up completed outbox events", fields)
 	}
+}
+
+func (d *dispatcher) logFailure(key, message string, err error, fields structuredlog.Fields) {
+	decision := d.throttler.Decide(key)
+	if !decision.Allow {
+		return
+	}
+	if fields == nil {
+		fields = structuredlog.Fields{}
+	}
+	fields["error"] = err
+	if decision.Suppressed > 0 {
+		fields["suppressed_count"] = decision.Suppressed
+	}
+	d.logger.Warn(message, fields)
 }
 
 // TimeoutError represents a processing timeout error

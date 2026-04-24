@@ -1,11 +1,10 @@
 package outbox
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"time"
+
+	"stellarbill-backend/internal/structuredlog"
 )
 
 // HTTPPublisher publishes events via HTTP (placeholder implementation)
@@ -23,9 +22,17 @@ type HTTPClient interface {
 type DefaultHTTPClient struct{}
 
 func (c *DefaultHTTPClient) Post(url string, contentType string, body []byte) (int, error) {
-	// This is a placeholder implementation
-	// In a real implementation, you would use http.Client
-	log.Printf("Would send POST to %s with content-type %s and body: %s", url, contentType, string(body))
+	defaultLogger.Info("publishing outbox event over HTTP", structuredlog.Fields{
+		structuredlog.FieldRequestID: "",
+		structuredlog.FieldActor:     "system",
+		structuredlog.FieldTenant:    "system",
+		structuredlog.FieldRoute:     "outbox.publisher.http",
+		structuredlog.FieldStatus:    "attempt",
+		structuredlog.FieldDuration:  0,
+		"endpoint":                   url,
+		"content_type":               contentType,
+		"payload_bytes":              len(body),
+	})
 	return 200, nil
 }
 
@@ -50,7 +57,7 @@ func (p *HTTPPublisher) Publish(event *Event) error {
 		"data":          eventData.Data,
 		"occurred_at":   event.OccurredAt,
 		"aggregate_id":  event.AggregateID,
-		""aggregate_type": event.AggregateType,
+		"aggregate_type": event.AggregateType,
 		"version":       event.Version,
 	}
 
@@ -86,13 +93,18 @@ func (p *ConsolePublisher) Publish(event *Event) error {
 		return fmt.Errorf("failed to unmarshal event data: %w", err)
 	}
 
-	log.Printf("Publishing event: ID=%s, Type=%s, Data=%+v, AggregateID=%s, AggregateType=%s",
-		event.ID,
-		event.EventType,
-		eventData.Data,
-		safeString(event.AggregateID),
-		safeString(event.AggregateType),
-	)
+	defaultLogger.Info("publishing outbox event to console", structuredlog.Fields{
+		structuredlog.FieldRequestID: "",
+		structuredlog.FieldActor:     "system",
+		structuredlog.FieldTenant:    "system",
+		structuredlog.FieldRoute:     "outbox.publisher.console",
+		structuredlog.FieldStatus:    "attempt",
+		structuredlog.FieldDuration:  0,
+		"event_id":                   event.ID.String(),
+		"event_type":                 event.EventType,
+		"aggregate_id":               safeString(event.AggregateID),
+		"aggregate_type":             safeString(event.AggregateType),
+	})
 
 	return nil
 }
@@ -114,7 +126,18 @@ func (p *MultiPublisher) Publish(event *Event) error {
 	for i, publisher := range p.publishers {
 		if err := publisher.Publish(event); err != nil {
 			lastError = fmt.Errorf("publisher %d failed: %w", i, err)
-			log.Printf("Publisher %d failed: %v", i, err)
+			defaultLogger.Warn("one outbox publisher failed", structuredlog.Fields{
+				structuredlog.FieldRequestID: "",
+				structuredlog.FieldActor:     "system",
+				structuredlog.FieldTenant:    "system",
+				structuredlog.FieldRoute:     "outbox.publisher.multi",
+				structuredlog.FieldStatus:    "publisher_failed",
+				structuredlog.FieldDuration:  0,
+				"publisher_index":            i,
+				"event_id":                   event.ID.String(),
+				"event_type":                 event.EventType,
+				"error":                      err,
+			})
 		}
 	}
 	

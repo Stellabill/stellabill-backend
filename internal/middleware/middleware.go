@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"stellabill-backend/internal/structuredlog"
 )
 
 const (
@@ -54,9 +55,19 @@ func RequestID() gin.HandlerFunc {
 }
 
 func Recovery(logger *log.Logger) gin.HandlerFunc {
+	structured := structuredFromStandardLogger(logger)
+
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
 		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf("panic recovered request_id=%v err=%v", requestID, recovered)
+		structured.Error("panic recovered", structuredlog.Fields{
+			structuredlog.FieldRequestID: requestID,
+			structuredlog.FieldActor:     actorFromContext(c),
+			structuredlog.FieldTenant:    tenantFromContext(c),
+			structuredlog.FieldRoute:     requestRoute(c),
+			structuredlog.FieldStatus:    http.StatusInternalServerError,
+			structuredlog.FieldDuration:  0,
+			"error":                      recovered,
+		})
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 			"error":      "internal server error",
 			"request_id": requestID,
@@ -65,19 +76,22 @@ func Recovery(logger *log.Logger) gin.HandlerFunc {
 }
 
 func Logging(logger *log.Logger) gin.HandlerFunc {
+	structured := structuredFromStandardLogger(logger)
+
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 
 		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf(
-			"method=%s path=%s status=%d request_id=%v duration=%s",
-			c.Request.Method,
-			c.FullPath(),
-			c.Writer.Status(),
-			requestID,
-			time.Since(start).Round(time.Millisecond),
-		)
+		structured.Info("request completed", structuredlog.Fields{
+			structuredlog.FieldRequestID: requestID,
+			structuredlog.FieldActor:     actorFromContext(c),
+			structuredlog.FieldTenant:    tenantFromContext(c),
+			structuredlog.FieldRoute:     requestRoute(c),
+			structuredlog.FieldStatus:    c.Writer.Status(),
+			structuredlog.FieldDuration:  time.Since(start).Milliseconds(),
+			"method":                     c.Request.Method,
+		})
 	}
 }
 
@@ -198,6 +212,60 @@ func newRequestID() string {
 		return hex.EncodeToString([]byte(time.Now().Format("150405.000000000")))
 	}
 	return hex.EncodeToString(buf)
+}
+
+func structuredFromStandardLogger(logger *log.Logger) *structuredlog.Logger {
+	if logger == nil {
+		return structuredlog.New(nil)
+	}
+	return structuredlog.New(logger.Writer())
+}
+
+func requestRoute(c *gin.Context) string {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return "unknown"
+	}
+	if route := strings.TrimSpace(c.FullPath()); route != "" {
+		return route
+	}
+	return c.Request.URL.Path
+}
+
+func actorFromContext(c *gin.Context) string {
+	if c == nil {
+		return "anonymous"
+	}
+
+	for _, key := range []string{"actor", "callerID", AuthSubjectKey} {
+		if value, ok := c.Get(key); ok {
+			if actor, ok := value.(string); ok && strings.TrimSpace(actor) != "" {
+				return actor
+			}
+		}
+	}
+
+	for _, header := range []string{"X-Actor", "X-User"} {
+		if actor := strings.TrimSpace(c.GetHeader(header)); actor != "" {
+			return actor
+		}
+	}
+
+	return "anonymous"
+}
+
+func tenantFromContext(c *gin.Context) string {
+	if c == nil {
+		return "unknown"
+	}
+	if value, ok := c.Get("tenantID"); ok {
+		if tenant, ok := value.(string); ok && strings.TrimSpace(tenant) != "" {
+			return tenant
+		}
+	}
+	if tenant := strings.TrimSpace(c.GetHeader("X-Tenant-ID")); tenant != "" {
+		return tenant
+	}
+	return "unknown"
 }
 
 func DeprecationHeaders() gin.HandlerFunc {

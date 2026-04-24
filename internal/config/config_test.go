@@ -73,13 +73,10 @@ func TestLoad_PORT_Override(t *testing.T) {
 
 	cfg := Load()
 
-	if cfg.Port != "9090" {
+if cfg.Port != "9090" {
 		t.Errorf("Expected Port to be '9090', got %s", cfg.Port)
 	}
-=======
-	"strings"
-	"testing"
-)
+}
 
 const validTestSecret = "MySecureSecret123!@#$%^&*()AbCdEfGh"
 

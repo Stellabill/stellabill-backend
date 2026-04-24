@@ -162,5 +162,3 @@ func (gs *GracefulShutdown) IsShuttingDown() bool {
 		return false
 	}
 }
-
-

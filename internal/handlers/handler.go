@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/outbox"
-	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/repositories"
 )
 
 // PlanService defines the interface for plan-related operations
@@ -24,8 +24,8 @@ type Handler struct {
 	Subscriptions SubscriptionService
 	DB            *sql.DB
 	Outbox        *outbox.Service
-	SubRepo       repository.SubscriptionRepository
-	PlanRepo      repository.PlanRepository
+	SubRepo       repositories.SubscriptionRepository
+	PlanRepo      repositories.PlanRepository
 }
 
 // NewHandler creates a new Handler with the given dependencies

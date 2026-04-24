@@ -60,7 +60,9 @@ type Config struct {
 	// Tracing configuration
 	TracingExporter string
 	TracingServiceName string
-	Outbox          OutboxConfig
+	SecurityFrameOpt   string
+	SecurityHSTSMaxAge string
+	Outbox             OutboxConfig
 }
 
 // OutboxConfig holds configuration for the outbox system
@@ -204,6 +206,8 @@ func Load(opts ...Option) (Config, error) {
 		IdleTimeout:    DefaultIdleTimeout,
 		TracingExporter: getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellarbill-backend"),
+		SecurityFrameOpt:   getEnv("SECURITY_FRAME_OPT", "DENY"),
+		SecurityHSTSMaxAge: getEnv("SECURITY_HSTS_MAX_AGE", "31536000"),
 		Outbox: OutboxConfig{
 			PollInterval:       getEnv("OUTBOX_POLL_INTERVAL", "5s"),
 			BatchSize:          getEnvInt("OUTBOX_BATCH_SIZE", 10),

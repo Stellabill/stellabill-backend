@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -33,8 +32,8 @@ func TestUpdateSubscriptionStatus_Atomicity(t *testing.T) {
 			Outbox:  outboxSvc,
 		}
 
-		subID := "sub-123"
-		newStatus := "canceled"
+		subID := "550e8400-e29b-41d4-a716-446655440000"
+		newStatus := "cancelled"
 
 		// Expectations
 		mock.ExpectBegin()
@@ -77,8 +76,8 @@ func TestUpdateSubscriptionStatus_Atomicity(t *testing.T) {
 			Outbox:  outboxSvc,
 		}
 
-		subID := "sub-456"
-		newStatus := "canceled"
+		subID := "660e8400-e29b-41d4-a716-446655440000"
+		newStatus := "cancelled"
 
 		// Expectations
 		mock.ExpectBegin()
@@ -95,7 +94,6 @@ func TestUpdateSubscriptionStatus_Atomicity(t *testing.T) {
 		
 		// 4. Commit - FAIL HERE
 		mock.ExpectCommit().WillReturnError(fmt.Errorf("commit failed"))
-		mock.ExpectRollback() // sql.Tx Rollback is called on error in RunInTransaction
 
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
@@ -104,6 +102,7 @@ func TestUpdateSubscriptionStatus_Atomicity(t *testing.T) {
 		payload := map[string]string{"status": newStatus}
 		jsonPayload, _ := json.Marshal(payload)
 		c.Request, _ = http.NewRequest(http.MethodPost, "/", bytes.NewBuffer(jsonPayload))
+		c.Request.Header.Set("Content-Type", "application/json")
 		
 		h.UpdateSubscriptionStatus(c)
 

@@ -9,7 +9,7 @@ func TestNewHandler(t *testing.T) {
 	mockPlans := new(MockPlanService)
 	mockSubs := new(MockSubscriptionService)
 	
-	h := NewHandler(mockPlans, mockSubs)
+	h := NewHandler(mockPlans, mockSubs, nil, nil)
 	
 	assert.NotNil(t, h)
 	assert.Equal(t, mockPlans, h.Plans)

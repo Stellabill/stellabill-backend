@@ -125,25 +125,30 @@ components:
       properties:
         id:
           type: string
-          example: sub_123
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
         plan_id:
           type: string
-          example: plan_basic
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440001
         customer:
           type: string
           example: customer_123
         status:
           type: string
+          enum: [active, cancelled, expired, pending]
           example: active
         amount:
           type: string
+          pattern: '^\d+(\.\d{1,2})?$'
           example: "1000"
         interval:
           type: string
+          enum: [monthly, yearly]
           example: monthly
         next_billing:
           type: string
-          description: Next billing datetime (string placeholder).
+          format: date-time
           example: "2026-04-01T00:00:00Z"
     SubscriptionsResponse:
       type: object
@@ -154,3 +159,26 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Subscription"
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: Validation failed
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          example: status
+        message:
+          type: string
+          example: status is required

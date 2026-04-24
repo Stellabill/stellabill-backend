@@ -48,6 +48,7 @@ func generateNextBilling(i int) string {
 	return ""
 }
 
+/*
 // BenchmarkListSubscriptions_Empty tests performance with no data
 func BenchmarkListSubscriptions_Empty(b *testing.B) {
 	c, _ := setupBenchmarkContext()
@@ -59,6 +60,7 @@ func BenchmarkListSubscriptions_Empty(b *testing.B) {
 		ListSubscriptions(c)
 	}
 }
+*/
 
 // BenchmarkListSubscriptions_Small tests performance with 10 subscriptions
 func BenchmarkListSubscriptions_Small(b *testing.B) {

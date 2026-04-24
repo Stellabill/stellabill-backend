@@ -4,13 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/db"
-	"stellarbill-backend/internal/repositories"
-	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/subscriptions"
+	"stellarbill-backend/internal/validation"
 )
 
 type Subscription struct {
@@ -52,47 +52,57 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		// Minimal, safe handler that validates caller and path, then delegates to the service.
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RespondWithAuthError(c, "unauthorized")
 			return
 		}
 
-		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// 0. Reject unexpected query params for strict alignment with OpenAPI
+		if len(c.Request.URL.Query()) > 0 {
+			RespondWithValidationFields(c, "Unexpected query parameters", nil)
 			return
 		}
 
-		id, err := requestparams.NormalizePathID("id", c.Param("id"))
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		id := c.Param("id")
+		id = strings.TrimSpace(id)
+		id = validation.NormalizeString(id)
+		if err := validation.ValidateUUID(id); err != nil {
+			RespondWithValidationFields(c, "Invalid subscription ID", validation.ValidateVar(id, "required,uuid"))
 			return
 		}
+		tenantID, _ := c.Get("tenantID")
 
 		// Delegate to service (note: real implementation may include ownership checks)
-		_, _, err = svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		detail, warnings, err := svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id)
 		if err != nil {
-			// Simplified error handling to keep compilation and behavior predictable during tests.
-			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+			statusCode, errorCode, msg := MapServiceErrorToResponse(err)
+			RespondWithError(c, statusCode, errorCode, msg)
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"id": id})
+		c.JSON(http.StatusOK, service.ResponseEnvelope{
+			APIVersion: "1",
+			Data:       detail,
+			Warnings:   warnings,
+		})
 	}
 }
 
 // UpdateSubscriptionStatus handles status updates with validation and atomic outbox publishing
 func (h *Handler) UpdateSubscriptionStatus(c *gin.Context) {
 	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
+	if err := validation.ValidateUUID(id); err != nil {
+		RespondWithValidationFields(c, "Invalid subscription ID", []validation.FieldError{
+			{Field: "id", Message: "ID must be a valid UUID"},
+		})
 		return
 	}
 
 	var payload struct {
-		Status string `json:"status" binding:"required"`
+		Status string `json:"status" validate:"required,oneof=active cancelled expired pending"`
 	}
 
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if fieldErrors := validation.BindAndValidateJSON(c, &payload); len(fieldErrors) > 0 {
+		RespondWithValidationFields(c, "Validation failed", fieldErrors)
 		return
 	}
 

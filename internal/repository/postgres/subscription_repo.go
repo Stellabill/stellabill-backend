@@ -11,9 +11,9 @@ import (
 	"stellarbill-backend/internal/repository"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
-var tracer = otel.Tracer("repository/postgres")
 
 // SubscriptionRepo implements repository.SubscriptionRepository against a live Postgres database.
 type SubscriptionRepo struct {
@@ -37,7 +37,7 @@ func (r *SubscriptionRepo) FindByID(ctx context.Context, id string) (*repository
 	var deletedAt *time.Time
 
 	ctx, span := tracer.Start(ctx, "SubscriptionRepo.FindByID",
-		otel.WithAttributes(attribute.String("subscription.id", id)))
+		trace.WithAttributes(attribute.String("subscription.id", id)))
 	defer span.End()
 
 	err := r.pool.QueryRow(ctx, q, id).Scan(

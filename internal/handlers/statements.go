@@ -2,12 +2,11 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/validation"
 )
 
 // NewGetStatementHandler returns a gin.HandlerFunc that retrieves a full
@@ -17,33 +16,23 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 		// 1. Read callerID from context (set by AuthMiddleware).
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RespondWithAuthError(c, "unauthorized")
 			return
 		}
 
 		// 2. Validate :id path param.
 		id := c.Param("id")
-		if strings.TrimSpace(id) == "" {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "statement id required"})
+		id = validation.NormalizeString(id)
+		if err := validation.ValidateUUID(id); err != nil {
+			RespondWithValidationFields(c, "Invalid statement ID", validation.ValidateVar(id, "required,uuid"))
 			return
 		}
 
 		// 3. Call service.
 		detail, warnings, err := svc.GetDetail(c.Request.Context(), callerID.(string), id)
 		if err != nil {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			switch err {
-			case service.ErrNotFound:
-				c.JSON(http.StatusNotFound, gin.H{"error": "statement not found"})
-			case service.ErrDeleted:
-				c.JSON(http.StatusGone, gin.H{"error": "statement has been deleted"})
-			case service.ErrForbidden:
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			}
+			statusCode, errorCode, msg := MapServiceErrorToResponse(err)
+			RespondWithError(c, statusCode, errorCode, msg)
 			return
 		}
 
@@ -66,41 +55,48 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		// 1. Read callerID from context (set by AuthMiddleware).
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RespondWithAuthError(c, "unauthorized")
 			return
 		}
 
-		// 2. Build query from optional filters.
-		q := repository.StatementQuery{
-			SubscriptionID: c.Query("subscription_id"),
-			Kind:           c.Query("kind"),
-			Status:         c.Query("status"),
-			StartAfter:     c.Query("start_after"),
-			EndBefore:      c.Query("end_before"),
+		// 2. Build and validate query from optional filters.
+		var reqQuery struct {
+			SubscriptionID string `form:"subscription_id" validate:"omitempty,uuid"`
+			Kind           string `form:"kind" validate:"omitempty,oneof=invoice credit_note payment"`
+			Status         string `form:"status" validate:"omitempty,oneof=open paid void"`
+			StartAfter     string `form:"start_after" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
+			EndBefore      string `form:"end_before" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
+			Page           int    `form:"page" validate:"omitempty,min=1"`
+			PageSize       int    `form:"page_size" validate:"omitempty,min=1,max=100"`
 		}
 
-		if ps := c.Query("page_size"); ps != "" {
-			if v, err := strconv.Atoi(ps); err == nil {
-				q.PageSize = v
-			}
+		if err := c.ShouldBindQuery(&reqQuery); err != nil {
+			RespondWithValidationFields(c, "Invalid query parameters", []validation.FieldError{
+				{Field: "query", Message: "Invalid query parameter format"},
+			})
+			return
 		}
-		if p := c.Query("page"); p != "" {
-			if v, err := strconv.Atoi(p); err == nil {
-				q.Page = v
-			}
+
+		if fieldErrors := validation.ValidateStruct(reqQuery); len(fieldErrors) > 0 {
+			RespondWithValidationFields(c, "Validation failed", fieldErrors)
+			return
+		}
+
+		q := repository.StatementQuery{
+			SubscriptionID: reqQuery.SubscriptionID,
+			Kind:           reqQuery.Kind,
+			Status:         reqQuery.Status,
+			StartAfter:     reqQuery.StartAfter,
+			EndBefore:      reqQuery.EndBefore,
+			Page:           reqQuery.Page,
+			PageSize:       reqQuery.PageSize,
 		}
 
 		// 3. Call service.
 		detail, count, warnings, err := svc.ListByCustomer(c.Request.Context(), callerID.(string), callerID.(string), q)
 		if err != nil {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			switch err {
-			case service.ErrForbidden:
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			}
+			statusCode, errorCode, msg := MapServiceErrorToResponse(err)
+			RespondWithError(c, statusCode, errorCode, msg)
 			return
 		}
 

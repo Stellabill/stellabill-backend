@@ -1,36 +1,39 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
-	"strconv"
-
-	"stellarbill-backend/internal/pagination"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/repositories"
 )
 
-func (h *Handler) ListPlans(c *gin.Context) {
-	ctx := context.Background()
-	if c.Request != nil {
-		ctx = c.Request.Context()
-	}
+type Plan struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Amount      string `json:"amount"`
+	Currency    string `json:"currency"`
+	Interval    string `json:"interval"`
+	Description string `json:"description,omitempty"`
+}
 
-	plans, err := h.planService.ListPlans(ctx)
+func (h *Handler) ListPlans(c *gin.Context) {
+	plans, err := h.Plans.ListPlans(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
 		return
 	}
 
 	if plans == nil {
-		plans = []services.Plan{}
+		plans = []Plan{}
 	}
 
-var planRepo repository.PlanRepository
+	c.JSON(http.StatusOK, gin.H{"plans": plans})
+}
+
+var planRepo repositories.PlanRepository
 
 // SetPlanRepository allows wiring a PlanRepository (used by routes.Register).
-func SetPlanRepository(r repository.PlanRepository) {
+func SetPlanRepository(r repositories.PlanRepository) {
 	planRepo = r
 }
 
@@ -49,14 +52,17 @@ func ListPlans(c *gin.Context) {
 	}
 	out := make([]Plan, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Plan{
-			ID:          r.ID,
-			Name:        r.Name,
-			Amount:      r.Amount,
-			Currency:    r.Currency,
-			Interval:    r.Interval,
-			Description: r.Description,
-		})
+		p := Plan{
+			ID:       r.ID,
+			Name:     r.Name,
+			Amount:   r.Amount,
+			Currency: r.Currency,
+			Interval: r.Interval,
+		}
+		if r.Description != nil {
+			p.Description = *r.Description
+		}
+		out = append(out, p)
 	}
 	c.JSON(http.StatusOK, gin.H{"plans": out})
 }

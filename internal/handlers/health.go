@@ -8,93 +8,64 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/outbox"
 )
 
+const (
+	StatusReady       = "ready"
+	StatusDegraded    = "degraded"
+	StatusUnavailable = "unavailable"
+	ServiceName       = "stellarbill-backend"
+)
+
+type HealthResponse struct {
+	Status       string            `json:"status"`
+	Service      string            `json:"service"`
+	Timestamp    string            `json:"timestamp"`
+	Dependencies map[string]string `json:"dependencies,omitempty"`
+}
+
+const (
+	MaxRetries         = 3
+	MaxDatabaseTimeout = 2 * time.Second
+	InitialBackoff     = 100 * time.Millisecond
+)
+
+// DBPinger is an interface for database pinging
+type DBPinger interface {
+	PingContext(ctx context.Context) error
+}
+
 func (h *Handler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+	status := gin.H{
 		"status":  "ok",
 		"service": "stellarbill-backend",
 	}
 
 	// Check outbox health if available
-	if globalOutboxManager != nil {
-		if err := globalOutboxManager.Health(); err != nil {
+	if h.Outbox != nil {
+		if err := h.Outbox.Health(); err != nil {
 			status["status"] = "degraded"
 			status["outbox"] = gin.H{
 				"status": "unhealthy",
 				"error":  err.Error(),
 			}
 		} else {
-			stats, err := globalOutboxManager.GetStats()
-			if err == nil {
-				status["outbox"] = stats
-			}
+			// stats, err := h.Outbox.GetStats()
+			// if err == nil {
+			// 	status["outbox"] = stats
+			// }
 		}
 	}
 
 	c.JSON(http.StatusOK, status)
 }
 
+/*
 // OutboxStats returns detailed outbox statistics
 func OutboxStats(c *gin.Context) {
-	if globalOutboxManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "Outbox manager not available",
-		})
-		return
-	}
-
-	stats, err := globalOutboxManager.GetStats()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, stats)
+...
 }
-
-// PublishTestEvent publishes a test event for development/testing
-func PublishTestEvent(c *gin.Context) {
-	if globalOutboxManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "Outbox manager not available",
-		})
-		return
-	}
-
-	// Get event type from query parameter
-	eventType := c.Query("type")
-	if eventType == "" {
-		eventType = "test.event"
-	}
-
-	// Create test event data
-	eventData := gin.H{
-		"message":     "This is a test event",
-		"timestamp":   gin.H{"$date": gin.H{"$numberLong": strconv.FormatInt(c.Request.Context().Value("timestamp").(int64), 10)}},
-		"request_id":  c.GetHeader("X-Request-ID"),
-		"user_agent":  c.GetHeader("User-Agent"),
-		"ip_address": c.ClientIP(),
-	}
-
-	// Publish the event
-	service := globalOutboxManager.GetService()
-	err := service.PublishEvent(c.Request.Context(), eventType, eventData, nil, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":    "Test event published successfully",
-		"event_type": eventType,
-	})
-}
+*/
 
 // ReadinessHandler checks if the service is ready
 func ReadinessHandler(db DBPinger) gin.HandlerFunc {

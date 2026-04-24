@@ -19,12 +19,12 @@ type Snapshot struct {
 
 // BackendSubscription represents the subscription as stored in the backend DB.
 type BackendSubscription struct {
-    SubscriptionID string           `json:"subscription_id"`
-    Status         string           `json:"status"`
-    Amount         int64            `json:"amount"`
-    Currency       string           `json:"currency"`
-    Interval       string           `json:"interval"`
-    Balances       map[string]int64 `json:"balances"`
+    SubscriptionID string           `json:"subscription_id" validate:"required,uuid"`
+    Status         string           `json:"status" validate:"required,oneof=active cancelled expired pending"`
+    Amount         int64            `json:"amount" validate:"required,min=0"`
+    Currency       string           `json:"currency" validate:"required,len=3"`
+    Interval       string           `json:"interval" validate:"required,oneof=monthly yearly"`
+    Balances       map[string]int64 `json:"balances" validate:"required"`
     UpdatedAt      time.Time        `json:"updated_at"`
 }
 

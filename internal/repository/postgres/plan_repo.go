@@ -10,9 +10,9 @@ import (
 	"stellarbill-backend/internal/repository"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
-var tracer = otel.Tracer("repository/postgres")
 
 // PlanRepo implements repository.PlanRepository against a live Postgres database.
 type PlanRepo struct {
@@ -34,7 +34,7 @@ func (r *PlanRepo) FindByID(ctx context.Context, id string) (*repository.PlanRow
 
 	var p repository.PlanRow
 	ctx, span := tracer.Start(ctx, "PlanRepo.FindByID",
-		otel.WithAttributes(attribute.String("plan.id", id)))
+		trace.WithAttributes(attribute.String("plan.id", id)))
 	defer span.End()
 
 	err := r.pool.QueryRow(ctx, q, id).

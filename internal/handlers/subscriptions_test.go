@@ -19,14 +19,18 @@ type mockSubscriptionService struct {
 	id       string
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerID, id string) (*service.SubscriptionDetail, []string, error) {
 	m.callerID = callerID
 	m.id = id
 	return m.detail, m.warnings, m.err
 }
 
-func (m *mockSubscriptionService) ListSubscriptions(_ context.Context) ([]Subscription, error) {
+func (m *mockSubscriptionService) ListSubscriptions(_ *gin.Context) ([]Subscription, error) {
 	return nil, nil
+}
+
+func (m *mockSubscriptionService) GetSubscription(_ *gin.Context, id string) (*Subscription, error) {
+	return &Subscription{ID: id}, nil
 }
 
 // setupRouter builds a minimal Gin router with the Handler wired up.
@@ -41,15 +45,14 @@ func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 			c.Next()
 		})
 	}
-	h := &Handler{Subscriptions: svc}
-	r.GET("/api/subscriptions/:id", h.GetSubscription)
+	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(svc))
 	return r
 }
 
 func TestListSubscriptions_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &mockSubscriptionService{}
-	h := &Handler{Subscriptions: svc}
+	h := NewHandler(nil, svc, nil, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -65,7 +68,7 @@ func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 	r := setupRouter(svc, false)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
@@ -99,10 +102,16 @@ func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
-	var body ErrorEnvelope
-	json.NewDecoder(w.Body).Decode(&body)
-	if body.Code != string(ErrorCodeValidationFailed) {
-		t.Errorf("expected validation error code, got %s", body.Code)
+	var resp struct {
+		Error  string `json:"error"`
+		Fields []struct {
+			Field   string `json:"field"`
+			Message string `json:"message"`
+		} `json:"fields"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error == "" {
+		t.Errorf("expected error message, got empty")
 	}
 }
 
@@ -111,7 +120,7 @@ func TestGetSubscription_RejectsUnexpectedQueryParams_Returns400(t *testing.T) {
 	r := setupRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1?expand=plan", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001?expand=plan", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -141,8 +150,8 @@ func TestGetSubscription_RejectsEncodedPayloadID_Returns400(t *testing.T) {
 func TestGetSubscription_NormalizesUnicodeID_BeforeServiceCall(t *testing.T) {
 	svc := &mockSubscriptionService{
 		detail: &service.SubscriptionDetail{
-			ID:       "sub-1",
-			PlanID:   "plan-1",
+			ID:       "550e8400-e29b-41d4-a716-446655440001",
+			PlanID:   "550e8400-e29b-41d4-a716-446655440002",
 			Customer: "caller-123",
 			Status:   "active",
 			Interval: "monthly",
@@ -151,14 +160,14 @@ func TestGetSubscription_NormalizesUnicodeID_BeforeServiceCall(t *testing.T) {
 	r := setupRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%EF%BD%93%EF%BD%95%EF%BD%82%EF%BC%8D%EF%BC%91", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%EF%BC%95%EF%BC%95%EF%BC%90%EF%BD%85%EF%BC%98%EF%BC%94%EF%BC%90%EF%BC%90%EF%BC%8D%EF%BD%85%EF%BC%92%EF%BC%99%EF%BD%82%EF%BC%8D%EF%BC%94%EF%BC%91%EF%BD%84%EF%BC%94%EF%BC%8D%EF%BD%81%EF%BC%97%EF%BC%91%EF%BC%96%EF%BC%8D%EF%BC%94%EF%BC%94%EF%BC%96%EF%BC%96%EF%BC%95%EF%BC%95%EF%BC%94%EF%BC%94%EF%BC%90%EF%BC%90%EF%BC%90%EF%BC%91", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
 	}
-	if svc.id != "sub-1" {
-		t.Fatalf("expected normalized id sub-1, got %q", svc.id)
+	if svc.id != "550e8400-e29b-41d4-a716-446655440001" {
+		t.Fatalf("expected normalized id 550e8400-e29b-41d4-a716-446655440001, got %q", svc.id)
 	}
 	if svc.callerID != "caller-123" {
 		t.Fatalf("expected callerID caller-123, got %q", svc.callerID)
@@ -170,7 +179,7 @@ func TestGetSubscription_ErrNotFound_Returns404(t *testing.T) {
 	r := setupRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/unknown-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -188,7 +197,7 @@ func TestGetSubscription_ErrDeleted_Returns410(t *testing.T) {
 	r := setupRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/deleted-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusGone {
@@ -206,7 +215,7 @@ func TestGetSubscription_ErrForbidden_Returns403(t *testing.T) {
 	r := setupRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
@@ -224,7 +233,7 @@ func TestGetSubscription_ErrBillingParse_Returns500(t *testing.T) {
 	r := setupRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusInternalServerError {
@@ -240,13 +249,13 @@ func TestGetSubscription_ErrBillingParse_Returns500(t *testing.T) {
 func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 	nextBilling := "2024-02-01T00:00:00Z"
 	detail := &service.SubscriptionDetail{
-		ID:       "sub-1",
-		PlanID:   "plan-1",
+		ID:       "550e8400-e29b-41d4-a716-446655440001",
+		PlanID:   "550e8400-e29b-41d4-a716-446655440002",
 		Customer: "caller-123",
 		Status:   "active",
 		Interval: "monthly",
 		Plan: &service.PlanMetadata{
-			PlanID:   "plan-1",
+			PlanID:   "550e8400-e29b-41d4-a716-446655440002",
 			Name:     "Pro",
 			Amount:   "1999",
 			Currency: "USD",
@@ -262,7 +271,7 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 	r := setupRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -286,11 +295,11 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 	if !ok {
 		t.Fatal("expected data field to be an object")
 	}
-	if data["id"] != "sub-1" {
-		t.Errorf("expected data.id=sub-1, got %v", data["id"])
+	if data["id"] != "550e8400-e29b-41d4-a716-446655440001" {
+		t.Errorf("expected data.id=550e8400-e29b-41d4-a716-446655440001, got %v", data["id"])
 	}
-	if data["plan_id"] != "plan-1" {
-		t.Errorf("expected data.plan_id=plan-1, got %v", data["plan_id"])
+	if data["plan_id"] != "550e8400-e29b-41d4-a716-446655440002" {
+		t.Errorf("expected data.plan_id=550e8400-e29b-41d4-a716-446655440002, got %v", data["plan_id"])
 	}
 	if data["customer"] != "caller-123" {
 		t.Errorf("expected data.customer=caller-123, got %v", data["customer"])
@@ -306,8 +315,8 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 	if !ok {
 		t.Fatal("expected data.plan to be an object")
 	}
-	if plan["plan_id"] != "plan-1" {
-		t.Errorf("expected plan.plan_id=plan-1, got %v", plan["plan_id"])
+	if plan["plan_id"] != "550e8400-e29b-41d4-a716-446655440002" {
+		t.Errorf("expected plan.plan_id=550e8400-e29b-41d4-a716-446655440002, got %v", plan["plan_id"])
 	}
 
 	billing, ok := data["billing_summary"].(map[string]interface{})

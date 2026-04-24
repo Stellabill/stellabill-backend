@@ -45,8 +45,8 @@ func buildIntegrationRouter(subRepo repository.SubscriptionRepository, planRepo 
 
 func TestIntegration_GetSubscription_HappyPath(t *testing.T) {
 	const customerID = "cust-abc"
-	const subID = "sub-xyz"
-	const planID = "plan-pro"
+	const subID = "550e8400-e29b-41d4-a716-446655440001"
+	const planID = "550e8400-e29b-41d4-a716-446655440002"
 
 	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{
 		ID:          subID,
@@ -160,7 +160,7 @@ func TestIntegration_GetSubscription_MissingTenant_Returns401(t *testing.T) {
 	r := buildIntegrationRouter(subRepo, planRepo)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
 	tokenStr := makeTestJWT("cust-1", "")
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
 	// no X-Tenant-ID header and no tenant claim
@@ -172,12 +172,12 @@ func TestIntegration_GetSubscription_MissingTenant_Returns401(t *testing.T) {
 }
 
 func TestIntegration_GetSubscription_SpoofedTenant_Returns401(t *testing.T) {
-	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{ID: "sub-1", TenantID: "tenant-1", CustomerID: "cust-1"})
+	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{ID: "550e8400-e29b-41d4-a716-446655440001", TenantID: "tenant-1", CustomerID: "cust-1"})
 	planRepo := repository.NewMockPlanRepo()
 	r := buildIntegrationRouter(subRepo, planRepo)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
 	tokenStr := makeTestJWT("cust-1", "tenant-1")
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
 	req.Header.Set("X-Tenant-ID", "tenant-2")
@@ -194,7 +194,7 @@ func TestIntegration_GetSubscription_MissingAuthHeader_Returns401(t *testing.T) 
 	r := buildIntegrationRouter(subRepo, planRepo)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
@@ -208,7 +208,7 @@ func TestIntegration_GetSubscription_InvalidToken_Returns401(t *testing.T) {
 	r := buildIntegrationRouter(subRepo, planRepo)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
 	req.Header.Set("Authorization", "Bearer not-a-valid-jwt")
 	r.ServeHTTP(w, req)
 
@@ -219,7 +219,7 @@ func TestIntegration_GetSubscription_InvalidToken_Returns401(t *testing.T) {
 
 func TestIntegration_GetSubscription_WrongCaller_Returns403(t *testing.T) {
 	const ownerID = "owner-1"
-	const subID = "sub-1"
+	const subID = "550e8400-e29b-41d4-a716-446655440001"
 
 	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{
 		ID:         subID,
@@ -250,12 +250,12 @@ func TestIntegration_GetSubscription_WrongCaller_Returns403(t *testing.T) {
 
 func TestIntegration_GetSubscription_SoftDeleted_Returns410(t *testing.T) {
 	const customerID = "cust-del"
-	const subID = "sub-del"
+	const subID = "550e8400-e29b-41d4-a716-446655440001"
 	now := time.Now()
 
 	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{
 		ID:         subID,
-		PlanID:     "plan-1",
+		PlanID:     "550e8400-e29b-41d4-a716-446655440002",
 		TenantID:   "tenant-1",
 		CustomerID: customerID,
 		Status:     "cancelled",

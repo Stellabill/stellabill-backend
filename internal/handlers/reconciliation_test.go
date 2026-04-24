@@ -17,7 +17,7 @@ func TestReconcileHandler(t *testing.T) {
 
     // prepare adapter with a snapshot that will mismatch status and balances
     snap := reconciliation.Snapshot{
-        SubscriptionID: "sub-1",
+        SubscriptionID: "550e8400-e29b-41d4-a716-446655440000",
         Status: "cancelled",
         Amount: 1000,
         Currency: "USD",
@@ -29,7 +29,7 @@ func TestReconcileHandler(t *testing.T) {
 
     // backend submission with differing status and due balance
     backend := reconciliation.BackendSubscription{
-        SubscriptionID: "sub-1",
+        SubscriptionID: "550e8400-e29b-41d4-a716-446655440000",
         Status: "active",
         Amount: 1000,
         Currency: "USD",
@@ -77,7 +77,7 @@ func TestReconcileHandler(t *testing.T) {
     if err != nil {
         t.Fatalf("store.ListReports error: %v", err)
     }
-    if len(saved) != 1 || saved[0].SubscriptionID != "sub-1" {
+    if len(saved) != 1 || saved[0].SubscriptionID != "550e8400-e29b-41d4-a716-446655440000" {
         t.Fatalf("unexpected saved reports: %#v", saved)
     }
 }

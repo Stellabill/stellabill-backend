@@ -34,6 +34,9 @@ paths:
       tags: [Plans]
       summary: List billing plans
       operationId: listPlans
+      description: |
+        Returns all billing plans sorted stably by `id` (ascending).
+        The sort order is deterministic across requests, making it safe to paginate.
       responses:
         "200":
           description: Plans list
@@ -46,6 +49,9 @@ paths:
       tags: [Subscriptions]
       summary: List subscriptions
       operationId: listSubscriptions
+      description: |
+        Returns all subscriptions sorted stably by `id` (ascending).
+        The sort order is deterministic across requests, making it safe to paginate.
       responses:
         "200":
           description: Subscriptions list

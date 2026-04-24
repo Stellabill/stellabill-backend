@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/requestparams"
@@ -26,6 +27,11 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if subs == nil {
+		subs = []Subscription{}
+	}
+	// Stable sort by ID guarantees deterministic ordering for pagination.
+	sort.SliceStable(subs, func(i, j int) bool { return subs[i].ID < subs[j].ID })
 	c.JSON(http.StatusOK, gin.H{"subscriptions": subs})
 }
 

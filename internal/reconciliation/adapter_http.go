@@ -7,7 +7,7 @@ import (
     "io"
     "net/http"
 
-    "stellabill-backend/internal/httpclient"
+	"stellarbill-backend/internal/httpclient"
 )
 
 // HTTPAdapter fetches snapshots from a configured HTTP endpoint.

@@ -9,6 +9,9 @@ on:
     - cron: '0 0 * * 0'  # Weekly scan
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   govulncheck:
     runs-on: ubuntu-latest
@@ -45,16 +48,18 @@ jobs:
       
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
-        
+        with:
+          config-file: './.github/dependency-review-config.yml'
+          
   osv-scanner:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
       - name: Run OSV Scanner
-        uses: golang-org/osv-scanner-action@v1
+        uses: google/osv-scanner-action@v1
         with:
-          scan-args: '-r'
+          args: '-r ./'
           
   license-check:
     runs-on: ubuntu-latest
@@ -66,7 +71,7 @@ jobs:
           go install github.com/awslabs/go-licenses@latest
           go-licenses check ./...
         continue-on-error: true
-          
+           
   publish-results:
     needs: [govulncheck, sec-lint, dependency-review, osv-scanner, license-check]
     if: always()

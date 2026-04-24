@@ -5,6 +5,11 @@ import (
 )
 
 // Claims represents the JWT claims structure
+// Security notes:
+// - UserID is extracted from either Subject or custom user_id claim
+// - Role and Roles support both single-role (legacy) and multi-role (RBAC) patterns
+// - MerchantID provides tenant isolation
+// - All claims are validated by middleware before reaching handlers
 type Claims struct {
 	UserID     string   `json:"user_id"`
 	Email      string   `json:"email"`
@@ -27,6 +32,7 @@ func AllRoles() []string {
 }
 
 // HasRole checks if claims contain the specified role
+// Supports both single-role (Role field) and multi-role (Roles slice) patterns
 func (c *Claims) HasRole(role string) bool {
 	if c.Role == role {
 		return true

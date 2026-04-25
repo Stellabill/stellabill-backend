@@ -11,12 +11,12 @@ import (
 
 // PIIFields maps regex patterns to masking functions for log fields
 var PIIFields = map[string]func(string) string{
-	`^(customer|cust)_?`:  maskCustomerID,  // cust_xxx, customer123 -> cust_***
+	`^(customer|cust)_?`:    maskCustomerID,     // cust_xxx, customer123 -> cust_***
 	`^(subscription|sub)_?`: maskSubscriptionID, // sub_xxx -> sub_***
-	`^(job)_?`:           maskJobID,        // job_xxx -> job_***
-	`^amount$`:           maskAmount,       // 19.99 -> $*.**
-	`^(jwt|token|secret)$`: func(s string) string { return "***REDACTED***" },
-	`password`:           func(s string) string { return "***REDACTED***" },
+	`^(job)_?`:              maskJobID,          // job_xxx -> job_***
+	`^amount$`:              maskAmount,         // 19.99 -> $*.**
+	`^(jwt|token|secret)$`:  func(s string) string { return "***REDACTED***" },
+	`password`:              func(s string) string { return "***REDACTED***" },
 }
 
 // MaskPII scans a string or log message for PII patterns and masks them
@@ -97,6 +97,3 @@ func DevLogger() *zap.Logger {
 	logger, _ := config.Build(zap.Hooks(ZapRedactHook))
 	return logger.WithOptions(zap.AddCaller())
 }
-
-
-

@@ -51,13 +51,13 @@ type Config struct {
 	WriteTimeout   int
 	IdleTimeout    int
 	// Rate limiting configuration
-	RateLimitEnabled    bool
-	RateLimitMode       string
-	RateLimitRPS        int
-	RateLimitBurst      int
-	RateLimitWhitelist  []string
+	RateLimitEnabled   bool
+	RateLimitMode      string
+	RateLimitRPS       int
+	RateLimitBurst     int
+	RateLimitWhitelist []string
 	// Tracing configuration
-	TracingExporter string
+	TracingExporter    string
 	TracingServiceName string
 }
 
@@ -104,13 +104,13 @@ var requiredEnvVars = []string{
 
 // Optional environment variables with defaults
 var optionalEnvVars = map[string]string{
-	"PORT":             "8080",
-	"ENV":              "development",
-	"MAX_HEADER_BYTES": "1048576",
-	"READ_TIMEOUT":     "30",
-	"WRITE_TIMEOUT":    "30",
-	"IDLE_TIMEOUT":     "120",
-	"TRACING_EXPORTER": "stdout",
+	"PORT":                 "8080",
+	"ENV":                  "development",
+	"MAX_HEADER_BYTES":     "1048576",
+	"READ_TIMEOUT":         "30",
+	"WRITE_TIMEOUT":        "30",
+	"IDLE_TIMEOUT":         "120",
+	"TRACING_EXPORTER":     "stdout",
 	"TRACING_SERVICE_NAME": "stellabill-backend",
 }
 
@@ -147,15 +147,15 @@ func Load(opts ...Option) (Config, error) {
 	}
 
 	cfg := Config{
-		Env:            getEnv("ENV", "development"),
-		Port:           DefaultPort,
-		DBConn:         "",
-		JWTSecret:      "",
-		MaxHeaderBytes: MaxHeaderBytes,
-		ReadTimeout:    DefaultReadTimeout,
-		WriteTimeout:   DefaultWriteTimeout,
-		IdleTimeout:    DefaultIdleTimeout,
-		TracingExporter: getEnv("TRACING_EXPORTER", "stdout"),
+		Env:                getEnv("ENV", "development"),
+		Port:               DefaultPort,
+		DBConn:             "",
+		JWTSecret:          "",
+		MaxHeaderBytes:     MaxHeaderBytes,
+		ReadTimeout:        DefaultReadTimeout,
+		WriteTimeout:       DefaultWriteTimeout,
+		IdleTimeout:        DefaultIdleTimeout,
+		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 	}
 

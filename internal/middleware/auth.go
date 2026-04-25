@@ -20,7 +20,7 @@ type ErrorEnvelope struct {
 // respondAuthError is a helper to respond with auth errors in the standard envelope format
 func respondAuthError(c *gin.Context, message string) {
 	c.Header("Content-Type", "application/json; charset=utf-8")
-	
+
 	traceID := c.GetString("traceID")
 	if traceID == "" {
 		traceID = uuid.New().String()

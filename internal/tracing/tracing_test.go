@@ -34,11 +34,11 @@ func TestTraceContextPropagation(t *testing.T) {
 		// Use the request context to start a new child span
 		_, span := otel.Tracer("test").Start(c.Request.Context(), "child-span")
 		defer span.End()
-		
+
 		// Verify that the child span has the same trace ID as the parent (HTTP) span
 		parentSpan := trace.SpanFromContext(c.Request.Context())
 		assert.Equal(t, parentSpan.SpanContext().TraceID(), span.SpanContext().TraceID())
-		
+
 		c.Status(http.StatusOK)
 	})
 
@@ -49,10 +49,10 @@ func TestTraceContextPropagation(t *testing.T) {
 
 	// 5. Assertions
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	spans := sr.Ended()
 	assert.Len(t, spans, 2) // child-span and the HTTP span
-	
+
 	// Ensure they share the same TraceID
 	assert.Equal(t, spans[0].SpanContext().TraceID(), spans[1].SpanContext().TraceID())
 }
@@ -60,7 +60,7 @@ func TestTraceContextPropagation(t *testing.T) {
 func TestTracerExporterConfiguration(t *testing.T) {
 	// Test that InitTracer doesn't panic with different configurations
 	// We use "none" or "stdout" for tests to avoid external dependencies
-	
+
 	t.Run("stdout exporter", func(t *testing.T) {
 		t.Setenv("TRACING_EXPORTER", "stdout")
 		shutdown, err := tracing.InitTracer("test-stdout")

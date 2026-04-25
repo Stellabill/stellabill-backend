@@ -3,11 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/http/httptest"
-	"testing"
-	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/service"
+	"testing"
 )
 
 // mockSubscriptionService is a test double for service.SubscriptionService.

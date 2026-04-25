@@ -10,9 +10,9 @@ const (
 type Permission string
 
 const (
-	PermReadPlans          Permission = "read:plans"
-	PermReadSubscriptions  Permission = "read:subscriptions"
-	PermManagePlans        Permission = "manage:plans"
+	PermReadPlans           Permission = "read:plans"
+	PermReadSubscriptions   Permission = "read:subscriptions"
+	PermManagePlans         Permission = "manage:plans"
 	PermManageSubscriptions Permission = "manage:subscriptions"
 )
 

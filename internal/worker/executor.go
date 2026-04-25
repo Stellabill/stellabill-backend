@@ -46,7 +46,7 @@ func (e *BillingExecutor) executeCharge(ctx context.Context, job *Job) error {
 	// 4. Update subscription status
 	security.ProductionLogger().Info("Processing charge",
 		zap.String("subscription_id", job.SubscriptionID))
-	
+
 	// Simulate work
 	select {
 	case <-ctx.Done():
@@ -54,7 +54,7 @@ func (e *BillingExecutor) executeCharge(ctx context.Context, job *Job) error {
 	case <-time.After(100 * time.Millisecond):
 		// Success
 	}
-	
+
 	return nil
 }
 
@@ -66,14 +66,14 @@ func (e *BillingExecutor) executeInvoice(ctx context.Context, job *Job) error {
 	// 4. Store invoice record
 	security.ProductionLogger().Info("Generating invoice",
 		zap.String("subscription_id", job.SubscriptionID))
-	
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(100 * time.Millisecond):
 		// Success
 	}
-	
+
 	return nil
 }
 
@@ -84,14 +84,13 @@ func (e *BillingExecutor) executeReminder(ctx context.Context, job *Job) error {
 	// 3. Send reminder notification
 	security.ProductionLogger().Info("Sending reminder",
 		zap.String("subscription_id", job.SubscriptionID))
-	
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(100 * time.Millisecond):
 		// Success
 	}
-	
+
 	return nil
 }
-

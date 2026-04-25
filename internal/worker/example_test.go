@@ -22,15 +22,15 @@ func ExampleCustomExecutor() {
 	store := NewMemoryStore()
 	executor := &CustomExecutor{}
 	config := DefaultConfig()
-	
+
 	// Create and start worker
 	w := NewWorker(store, executor, config)
 	w.Start()
-	
+
 	// Schedule billing jobs
 	scheduler := NewScheduler(store)
 	scheduler.ScheduleCharge("sub-123", time.Now(), 3)
-	
+
 	// Stop worker
 	w.Stop()
 }
@@ -39,26 +39,25 @@ func ExampleConcurrentWorkers() {
 	// Shared store
 	store := NewMemoryStore()
 	executor := NewBillingExecutor()
-	
+
 	config1 := DefaultConfig()
 	config1.WorkerID = "worker-1"
 	config2 := DefaultConfig()
 	config2.WorkerID = "worker-2"
-	
+
 	worker1 := NewWorker(store, executor, config1)
 	worker2 := NewWorker(store, executor, config2)
-	
+
 	worker1.Start()
 	worker2.Start()
-	
+
 	// Schedule jobs
 	scheduler := NewScheduler(store)
 	for i := 0; i < 10; i++ {
 		scheduler.ScheduleCharge("sub-"+fmt.Sprint(i), time.Now(), 3)
 	}
-	
+
 	// Stop workers
 	worker1.Stop()
 	worker2.Stop()
 }
-

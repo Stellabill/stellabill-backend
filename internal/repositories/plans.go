@@ -11,15 +11,15 @@ import (
 
 // Plan represents a subscription plan
 type Plan struct {
-	ID          string     `json:"id" db:"id"`
-	Name        string     `json:"name" db:"name"`
-	Amount      string     `json:"amount" db:"amount"`
-	Currency    string     `json:"currency" db:"currency"`
-	Interval    string     `json:"interval" db:"interval"`
-	Description *string    `json:"description,omitempty" db:"description"`
-	MerchantID  string     `json:"merchant_id" db:"merchant_id"`
-	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at" db:"updated_at"`
+	ID          string    `json:"id" db:"id"`
+	Name        string    `json:"name" db:"name"`
+	Amount      string    `json:"amount" db:"amount"`
+	Currency    string    `json:"currency" db:"currency"`
+	Interval    string    `json:"interval" db:"interval"`
+	Description *string   `json:"description,omitempty" db:"description"`
+	MerchantID  string    `json:"merchant_id" db:"merchant_id"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // PlanRepository interface for plan operations
@@ -47,17 +47,17 @@ func (r *postgresPlanRepository) Create(plan *Plan) error {
 	if plan.ID == "" {
 		plan.ID = uuid.New().String()
 	}
-	
+
 	query := `
 		INSERT INTO plans (id, name, amount, currency, interval, description, merchant_id, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id
 	`
-	
+
 	now := time.Now()
 	plan.CreatedAt = now
 	plan.UpdatedAt = now
-	
+
 	err := r.db.QueryRow(query,
 		plan.ID,
 		plan.Name,
@@ -69,11 +69,11 @@ func (r *postgresPlanRepository) Create(plan *Plan) error {
 		plan.CreatedAt,
 		plan.UpdatedAt,
 	).Scan(&plan.ID)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to create plan: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -84,10 +84,10 @@ func (r *postgresPlanRepository) GetByID(id string) (*Plan, error) {
 		FROM plans
 		WHERE id = $1
 	`
-	
+
 	var plan Plan
 	var description sql.NullString
-	
+
 	err := r.db.QueryRow(query, id).Scan(
 		&plan.ID,
 		&plan.Name,
@@ -99,18 +99,18 @@ func (r *postgresPlanRepository) GetByID(id string) (*Plan, error) {
 		&plan.CreatedAt,
 		&plan.UpdatedAt,
 	)
-	
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("plan not found")
 		}
 		return nil, fmt.Errorf("failed to get plan: %w", err)
 	}
-	
+
 	if description.Valid {
 		plan.Description = &description.String
 	}
-	
+
 	return &plan, nil
 }
 
@@ -123,13 +123,13 @@ func (r *postgresPlanRepository) GetByMerchantID(merchantID string, limit, offse
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
-	
+
 	rows, err := r.db.Query(query, merchantID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get plans: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var plans []*Plan
 	for rows.Next() {
 		plan, err := r.scanPlan(rows)
@@ -138,11 +138,11 @@ func (r *postgresPlanRepository) GetByMerchantID(merchantID string, limit, offse
 		}
 		plans = append(plans, plan)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating plans: %w", err)
 	}
-	
+
 	return plans, nil
 }
 
@@ -153,9 +153,9 @@ func (r *postgresPlanRepository) Update(plan *Plan) error {
 		SET name = $1, amount = $2, currency = $3, interval = $4, description = $5, updated_at = $6
 		WHERE id = $7
 	`
-	
+
 	plan.UpdatedAt = time.Now()
-	
+
 	result, err := r.db.Exec(query,
 		plan.Name,
 		plan.Amount,
@@ -165,41 +165,41 @@ func (r *postgresPlanRepository) Update(plan *Plan) error {
 		plan.UpdatedAt,
 		plan.ID,
 	)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to update plan: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return fmt.Errorf("plan not found")
 	}
-	
+
 	return nil
 }
 
 // Delete deletes a plan
 func (r *postgresPlanRepository) Delete(id string) error {
 	query := `DELETE FROM plans WHERE id = $1`
-	
+
 	result, err := r.db.Exec(query, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete plan: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return fmt.Errorf("plan not found")
 	}
-	
+
 	return nil
 }
 
@@ -211,13 +211,13 @@ func (r *postgresPlanRepository) GetActivePlansByMerchantID(merchantID string) (
 		WHERE merchant_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC
 	`
-	
+
 	rows, err := r.db.Query(query, merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active plans: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var plans []*Plan
 	for rows.Next() {
 		plan, err := r.scanPlan(rows)
@@ -226,11 +226,11 @@ func (r *postgresPlanRepository) GetActivePlansByMerchantID(merchantID string) (
 		}
 		plans = append(plans, plan)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating active plans: %w", err)
 	}
-	
+
 	return plans, nil
 }
 
@@ -238,7 +238,7 @@ func (r *postgresPlanRepository) GetActivePlansByMerchantID(merchantID string) (
 func (r *postgresPlanRepository) scanPlan(scanner interface{ Scan(...interface{}) error }) (*Plan, error) {
 	var plan Plan
 	var description sql.NullString
-	
+
 	err := scanner.Scan(
 		&plan.ID,
 		&plan.Name,
@@ -250,14 +250,14 @@ func (r *postgresPlanRepository) scanPlan(scanner interface{ Scan(...interface{}
 		&plan.CreatedAt,
 		&plan.UpdatedAt,
 	)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan plan: %w", err)
 	}
-	
+
 	if description.Valid {
 		plan.Description = &description.String
 	}
-	
+
 	return &plan, nil
 }

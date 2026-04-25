@@ -12,7 +12,7 @@ import (
 func TestGetInstance(t *testing.T) {
 	manager1 := GetInstance()
 	manager2 := GetInstance()
-	
+
 	if manager1 != manager2 {
 		t.Error("GetInstance should return the same singleton instance")
 	}
@@ -20,7 +20,7 @@ func TestGetInstance(t *testing.T) {
 
 func TestDefaultFlags(t *testing.T) {
 	manager := GetInstance()
-	
+
 	tests := []struct {
 		flagName string
 		expected bool
@@ -30,7 +30,7 @@ func TestDefaultFlags(t *testing.T) {
 		{"new_billing_flow", false},
 		{"advanced_analytics", false},
 	}
-	
+
 	for _, test := range tests {
 		t.Run(test.flagName, func(t *testing.T) {
 			if enabled := manager.IsEnabled(test.flagName); enabled != test.expected {
@@ -42,11 +42,11 @@ func TestDefaultFlags(t *testing.T) {
 
 func TestIsEnabledWithDefault(t *testing.T) {
 	manager := GetInstance()
-	
+
 	if enabled := manager.IsEnabledWithDefault("nonexistent_flag", true); !enabled {
 		t.Error("IsEnabledWithDefault should return default value for nonexistent flag")
 	}
-	
+
 	if enabled := manager.IsEnabledWithDefault("nonexistent_flag", false); enabled {
 		t.Error("IsEnabledWithDefault should return default value for nonexistent flag")
 	}
@@ -54,9 +54,9 @@ func TestIsEnabledWithDefault(t *testing.T) {
 
 func TestSetFlag(t *testing.T) {
 	manager := GetInstance()
-	
+
 	manager.SetFlag("test_flag", true, "Test flag for unit testing")
-	
+
 	if flag, exists := manager.GetFlag("test_flag"); !exists {
 		t.Error("Flag should exist after setting")
 	} else {
@@ -67,7 +67,7 @@ func TestSetFlag(t *testing.T) {
 			t.Error("Flag description should match")
 		}
 	}
-	
+
 	manager.SetFlag("test_flag", false, "")
 	if flag, exists := manager.GetFlag("test_flag"); !exists {
 		t.Error("Flag should still exist")
@@ -78,20 +78,20 @@ func TestSetFlag(t *testing.T) {
 
 func TestGetAllFlags(t *testing.T) {
 	manager := GetInstance()
-	
+
 	flags := manager.GetAllFlags()
 	if len(flags) == 0 {
 		t.Error("Should have default flags")
 	}
-	
+
 	originalCount := len(flags)
 	manager.SetFlag("another_test_flag", true, "Another test")
-	
+
 	flags = manager.GetAllFlags()
 	if len(flags) != originalCount+1 {
 		t.Error("Should have one more flag")
 	}
-	
+
 	flags["another_test_flag"].Enabled = false
 	originalFlags := manager.GetAllFlags()
 	if originalFlags["another_test_flag"].Enabled {
@@ -103,16 +103,16 @@ func TestLoadFromEnvironment_JSON(t *testing.T) {
 	jsonData := `{"test_env_flag": true, "another_env_flag": false}`
 	os.Setenv("FEATURE_FLAGS", jsonData)
 	defer os.Unsetenv("FEATURE_FLAGS")
-	
+
 	manager := &Manager{
 		flags: make(map[string]*Flag),
 	}
 	manager.loadFromEnvironment()
-	
+
 	if !manager.IsEnabled("test_env_flag") {
 		t.Error("JSON flag should be enabled")
 	}
-	
+
 	if manager.IsEnabled("another_env_flag") {
 		t.Error("JSON flag should be disabled")
 	}
@@ -131,12 +131,12 @@ func TestLoadFromEnvironment_FF_Prefix(t *testing.T) {
 		os.Unsetenv("FF_TEST_INT_0")
 		os.Unsetenv("FF_TEST_INVALID")
 	}()
-	
+
 	manager := &Manager{
 		flags: make(map[string]*Flag),
 	}
 	manager.loadFromEnvironment()
-	
+
 	tests := []struct {
 		flagName string
 		expected bool
@@ -146,7 +146,7 @@ func TestLoadFromEnvironment_FF_Prefix(t *testing.T) {
 		{"test_int_1", true},
 		{"test_int_0", false},
 	}
-	
+
 	for _, test := range tests {
 		if enabled := manager.IsEnabled(test.flagName); enabled != test.expected {
 			t.Errorf("Expected flag %s to be %v, got %v", test.flagName, test.expected, enabled)
@@ -156,28 +156,28 @@ func TestLoadFromEnvironment_FF_Prefix(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	manager := GetInstance()
-	
+
 	var wg sync.WaitGroup
 	numGoroutines := 100
-	
+
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(2)
-		
+
 		go func(id int) {
 			defer wg.Done()
 			flagName := fmt.Sprintf("concurrent_flag_%d", id)
 			manager.SetFlag(flagName, true, "")
 		}(i)
-		
+
 		go func(id int) {
 			defer wg.Done()
 			flagName := fmt.Sprintf("concurrent_flag_%d", id)
 			manager.IsEnabled(flagName)
 		}(i)
 	}
-	
+
 	wg.Wait()
-	
+
 	flags := manager.GetAllFlags()
 	for i := 0; i < numGoroutines; i++ {
 		flagName := fmt.Sprintf("concurrent_flag_%d", i)
@@ -191,14 +191,14 @@ func TestConcurrentAccess(t *testing.T) {
 
 func TestReloadFromEnvironment(t *testing.T) {
 	manager := GetInstance()
-	
+
 	manager.SetFlag("reload_test", false, "")
-	
+
 	os.Setenv("FF_RELOAD_TEST", "true")
 	defer os.Unsetenv("FF_RELOAD_TEST")
-	
+
 	manager.ReloadFromEnvironment()
-	
+
 	if !manager.IsEnabled("reload_test") {
 		t.Error("Flag should be reloaded from environment")
 	}
@@ -206,19 +206,19 @@ func TestReloadFromEnvironment(t *testing.T) {
 
 func TestGlobalFunctions(t *testing.T) {
 	SetFlag("global_test", true, "")
-	
+
 	if !IsEnabled("global_test") {
 		t.Error("Global IsEnabled should work")
 	}
-	
+
 	if !IsEnabledWithDefault("global_test", false) {
 		t.Error("Global IsEnabledWithDefault should work")
 	}
-	
+
 	if IsEnabledWithDefault("nonexistent_global", false) {
 		t.Error("Global IsEnabledWithDefault should return default for nonexistent flag")
 	}
-	
+
 	if !IsEnabledWithDefault("nonexistent_global", true) {
 		t.Error("Global IsEnabledWithDefault should return default for nonexistent flag")
 	}

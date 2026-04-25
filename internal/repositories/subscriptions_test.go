@@ -20,10 +20,10 @@ func TestSubscriptionRepository_Create(t *testing.T) {
 	repo := NewSubscriptionRepository(db)
 
 	tests := []struct {
-		name              string
-		subscription      *Subscription
-		expectedError     string
-		setupMock         func()
+		name          string
+		subscription  *Subscription
+		expectedError string
+		setupMock     func()
 	}{
 		{
 			name: "successful subscription creation",
@@ -71,9 +71,9 @@ func TestSubscriptionRepository_Create(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
-			
+
 			err := repo.Create(tt.subscription)
-			
+
 			if tt.expectedError != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
@@ -83,7 +83,7 @@ func TestSubscriptionRepository_Create(t *testing.T) {
 				assert.NotZero(t, tt.subscription.CreatedAt)
 				assert.NotZero(t, tt.subscription.UpdatedAt)
 			}
-			
+
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -97,11 +97,11 @@ func TestSubscriptionRepository_GetByID(t *testing.T) {
 	repo := NewSubscriptionRepository(db)
 
 	tests := []struct {
-		name               string
-		subscriptionID     string
+		name                 string
+		subscriptionID       string
 		expectedSubscription *Subscription
-		expectedError      string
-		setupMock          func()
+		expectedError        string
+		setupMock            func()
 	}{
 		{
 			name:           "successful subscription retrieval",
@@ -152,9 +152,9 @@ func TestSubscriptionRepository_GetByID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
-			
+
 			subscription, err := repo.GetByID(tt.subscriptionID)
-			
+
 			if tt.expectedError != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
@@ -171,7 +171,7 @@ func TestSubscriptionRepository_GetByID(t *testing.T) {
 				assert.Equal(t, tt.expectedSubscription.Interval, subscription.Interval)
 				assert.Equal(t, tt.expectedSubscription.CancelAtPeriodEnd, subscription.CancelAtPeriodEnd)
 			}
-			
+
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -185,11 +185,11 @@ func TestSubscriptionRepository_UpdateStatus(t *testing.T) {
 	repo := NewSubscriptionRepository(db)
 
 	tests := []struct {
-		name          string
+		name           string
 		subscriptionID string
-		status        string
-		expectedError string
-		setupMock     func()
+		status         string
+		expectedError  string
+		setupMock      func()
 	}{
 		{
 			name:           "successful status update",
@@ -228,16 +228,16 @@ func TestSubscriptionRepository_UpdateStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
-			
+
 			err := repo.UpdateStatus(tt.subscriptionID, tt.status)
-			
+
 			if tt.expectedError != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
 			} else {
 				assert.NoError(t, err)
 			}
-			
+
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -251,16 +251,16 @@ func TestSubscriptionRepository_Cancel(t *testing.T) {
 	repo := NewSubscriptionRepository(db)
 
 	tests := []struct {
-		name               string
-		subscriptionID     string
+		name              string
+		subscriptionID    string
 		cancelAtPeriodEnd bool
-		expectedError      string
-		setupMock          func()
+		expectedError     string
+		setupMock         func()
 	}{
 		{
-			name:               "successful immediate cancellation",
-			subscriptionID:     "sub-123",
-			cancelAtPeriodEnd:  false,
+			name:              "successful immediate cancellation",
+			subscriptionID:    "sub-123",
+			cancelAtPeriodEnd: false,
 			setupMock: func() {
 				mock.ExpectExec(`UPDATE subscriptions SET cancel_at_period_end = \$1, canceled_at = \$2, updated_at = \$3 WHERE id = \$4`).
 					WithArgs(false, sqlmock.AnyArg(), sqlmock.AnyArg(), "sub-123").
@@ -268,9 +268,9 @@ func TestSubscriptionRepository_Cancel(t *testing.T) {
 			},
 		},
 		{
-			name:               "successful cancellation at period end",
-			subscriptionID:     "sub-456",
-			cancelAtPeriodEnd:  true,
+			name:              "successful cancellation at period end",
+			subscriptionID:    "sub-456",
+			cancelAtPeriodEnd: true,
 			setupMock: func() {
 				mock.ExpectExec(`UPDATE subscriptions SET cancel_at_period_end = \$1, canceled_at = \$2, updated_at = \$3 WHERE id = \$4`).
 					WithArgs(true, sqlmock.AnyArg(), sqlmock.AnyArg(), "sub-456").
@@ -302,16 +302,16 @@ func TestSubscriptionRepository_Cancel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
-			
+
 			err := repo.Cancel(tt.subscriptionID, tt.cancelAtPeriodEnd)
-			
+
 			if tt.expectedError != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
 			} else {
 				assert.NoError(t, err)
 			}
-			
+
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -327,14 +327,14 @@ func TestSubscriptionRepository_ScanError(t *testing.T) {
 	t.Run("scan error with invalid data type", func(t *testing.T) {
 		rows := sqlmock.NewRows([]string{"id", "plan_id", "customer_id", "merchant_id", "status", "amount", "currency", "interval", "current_period_start", "current_period_end", "cancel_at_period_end", "canceled_at", "ended_at", "trial_start", "trial_end", "created_at", "updated_at"}).
 			AddRow(123, "plan-123", "customer-123", "merchant-123", "active", "29.99", "USD", "month", time.Now().Add(-30*24*time.Hour), time.Now().Add(30*24*time.Hour), false, nil, nil, nil, nil, time.Now(), time.Now())
-		
+
 		mock.ExpectQuery(`SELECT`).WillReturnRows(rows)
-		
+
 		subscriptions, err := repo.GetByCustomerID("customer-123", 10, 0)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to scan subscription")
 		assert.Nil(t, subscriptions)
-		
+
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

@@ -115,11 +115,11 @@ func TestClient_CircuitBreakerOpens(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient()
-	client.MaxRetries = 0 
+	client.MaxRetries = 0
 	client.Breaker = NewCircuitBreaker(2, time.Second)
 
 	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-	
+
 	// 1
 	client.Do(req)
 	// 2 (Opens breaker)
@@ -185,11 +185,11 @@ func TestClient_PartialReads(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
 	resp, err := client.Do(req)
-	
+
 	if err != nil {
 		t.Fatalf("Do should succeed to get headers... %v", err)
 	}
-	
+
 	_, readErr := io.ReadAll(resp.Body)
 	if readErr == nil || !strings.Contains(readErr.Error(), "simulated") {
 		t.Fatalf("expected simulated error, got %v", readErr)

@@ -216,7 +216,7 @@ func TestMetricsMiddleware_MultipleRequests(t *testing.T) {
 	}
 
 	if testutil.ToFloat64(HTTPRequestTotal.WithLabelValues("/count", "GET", "200")) != 5 {
-		t.Errorf("Expected HTTPRequestTotal to be 5, got %f", 
+		t.Errorf("Expected HTTPRequestTotal to be 5, got %f",
 			testutil.ToFloat64(HTTPRequestTotal.WithLabelValues("/count", "GET", "200")))
 	}
 }
@@ -276,7 +276,7 @@ func TestMetricsEndpoint(t *testing.T) {
 
 func TestDBTimer_DifferentOperations(t *testing.T) {
 	resetMetrics()
-	
+
 	operations := []struct {
 		op    string
 		table string

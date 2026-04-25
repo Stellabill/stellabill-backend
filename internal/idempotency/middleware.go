@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	headerKey     = "Idempotency-Key"
-	maxKeyLength  = 255
-	inflightWait  = 10 * time.Second
+	headerKey    = "Idempotency-Key"
+	maxKeyLength = 255
+	inflightWait = 10 * time.Second
 )
 
 // responseRecorder captures the status code and body written by downstream handlers.

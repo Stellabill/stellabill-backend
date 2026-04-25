@@ -1,0 +1,9 @@
+{
+    "0001_init.down.sql":  "4a9b9bb6cfca5f019dda1ca712133da24f4440ecc905bcc91873b3296d5e8180",
+    "0001_init.up.sql":  "c31da43975f392381a6b3e3acaa9d5345d5026b088f8e3fff71bec96af9b3d12",
+    "001_create_outbox_table.sql":  "d3ef8e267fee43cc7da7cfc4d57e7855a036e4b999ef3b0eeee194f716ff006c",
+    "001_create_plans.sql":  "9995737295a5ae27d24f5dbb695a9c6c75ee93fe925531a5fcb22e0f451f0b8a",
+    "002_create_subscriptions.sql":  "eb42d024e87575c1598bd81134505e806d1e3be529d5c85235a08ce105cfd6a2",
+    "003_create_contract_events.down.sql":  "a947a7f510532c4ac458b13db6826370531aea8b102ebd302c71e91934d99b11",
+    "003_create_contract_events.up.sql":  "61b07a805bd7f0c528a5ee9fe5a9238b1abe248c1e71814947066692b9faf3c6"
+}

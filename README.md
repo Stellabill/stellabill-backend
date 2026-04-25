@@ -319,6 +319,7 @@ Every push and pull request runs the following checks automatically via GitHub A
 
 | Step | Command |
 |------|---------|
+| Migration guardrails | `go run ./scripts/check-migrations.go` |
 | Build | `go build ./...` |
 | Vet | `go vet ./...` |
 | Test + coverage | `go test ./internal/... -covermode=atomic -coverpkg=./internal/...` |

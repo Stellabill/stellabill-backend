@@ -8,14 +8,14 @@ import (
 func TestScheduler_ScheduleCharge(t *testing.T) {
 	store := NewMemoryStore()
 	scheduler := NewScheduler(store)
-	
+
 	scheduledAt := time.Now().Add(1 * time.Hour)
 	job, err := scheduler.ScheduleCharge("sub-1", scheduledAt, 3)
-	
+
 	if err != nil {
 		t.Fatalf("Failed to schedule charge: %v", err)
 	}
-	
+
 	if job.Type != "charge" {
 		t.Errorf("Expected type 'charge', got %s", job.Type)
 	}
@@ -28,7 +28,7 @@ func TestScheduler_ScheduleCharge(t *testing.T) {
 	if job.MaxAttempts != 3 {
 		t.Errorf("Expected max attempts 3, got %d", job.MaxAttempts)
 	}
-	
+
 	// Verify job was stored
 	retrieved, err := store.Get(job.ID)
 	if err != nil {
@@ -42,14 +42,14 @@ func TestScheduler_ScheduleCharge(t *testing.T) {
 func TestScheduler_ScheduleInvoice(t *testing.T) {
 	store := NewMemoryStore()
 	scheduler := NewScheduler(store)
-	
+
 	scheduledAt := time.Now().Add(1 * time.Hour)
 	job, err := scheduler.ScheduleInvoice("sub-2", scheduledAt, 3)
-	
+
 	if err != nil {
 		t.Fatalf("Failed to schedule invoice: %v", err)
 	}
-	
+
 	if job.Type != "invoice" {
 		t.Errorf("Expected type 'invoice', got %s", job.Type)
 	}
@@ -61,14 +61,14 @@ func TestScheduler_ScheduleInvoice(t *testing.T) {
 func TestScheduler_ScheduleReminder(t *testing.T) {
 	store := NewMemoryStore()
 	scheduler := NewScheduler(store)
-	
+
 	scheduledAt := time.Now().Add(1 * time.Hour)
 	job, err := scheduler.ScheduleReminder("sub-3", scheduledAt, 3)
-	
+
 	if err != nil {
 		t.Fatalf("Failed to schedule reminder: %v", err)
 	}
-	
+
 	if job.Type != "reminder" {
 		t.Errorf("Expected type 'reminder', got %s", job.Type)
 	}

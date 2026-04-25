@@ -13,6 +13,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Verify migration checksums
+        run: go run ./scripts/check-migrations.go
       - name: Unit + contract tests
         run: go test ./...
       - name: OpenAPI validation
@@ -21,12 +23,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pkgs=$(go list ./... | grep -v '^stellarbill-backend/cmd/')
+          pkgs=$(go list ./... | grep -v '^stellarbill-backend/cmd/' | grep -v '^stellarbill-backend/scripts')
           coverpkgs=$(echo "$pkgs" | paste -sd, -)
           go test -count=1 -coverpkg="$coverpkgs" -coverprofile=coverage.out $pkgs
           total=$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,"",$3); print $3}')
           python3 - <<PY
           total=float("$total")
-          print(f"Total coverage (non-cmd): {total:.1f}%")
+          print(f"Total coverage (non-cmd, non-scripts): {total:.1f}%")
           raise SystemExit(0 if total >= 95.0 else 1)
           PY

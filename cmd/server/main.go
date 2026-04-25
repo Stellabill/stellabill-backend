@@ -171,4 +171,3 @@ func newRouter() *gin.Engine {
 	routes.Register(router)
 	return router
 }
-

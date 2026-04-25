@@ -22,10 +22,10 @@ const (
 
 // CheckResult holds the outcome of one startup check.
 type CheckResult struct {
-	Name       string        `json:"name"`
-	Status     Status        `json:"status"`
-	Message    string        `json:"message"`
-	DurationMs int64         `json:"duration_ms"`
+	Name       string `json:"name"`
+	Status     Status `json:"status"`
+	Message    string `json:"message"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 // DiagnosticsResponse is the machine-readable diagnostics payload.

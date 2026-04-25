@@ -62,7 +62,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
 			router.Use(RequestID())
-			
+
 			router.GET("/test", func(c *gin.Context) {
 				requestID := GetRequestID(c)
 				c.JSON(http.StatusOK, gin.H{"request_id": requestID})
@@ -81,7 +81,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 			if tt.expectHeader {
 				responseHeader := w.Header().Get(RequestIDHeader)
 				assert.NotEmpty(t, responseHeader)
-				
+
 				matched, err := regexp.MatchString(tt.headerPattern, responseHeader)
 				assert.NoError(t, err)
 				assert.True(t, matched, "Response header %q does not match pattern %q", responseHeader, tt.headerPattern)
@@ -154,7 +154,7 @@ func TestGenerateRequestID(t *testing.T) {
 	t.Run("Generated ID has correct format", func(t *testing.T) {
 		id := generateRequestID()
 		assert.Len(t, id, 16)
-		
+
 		matched, err := regexp.MatchString(`^[a-f0-9]{16}$`, id)
 		assert.NoError(t, err)
 		assert.True(t, matched)
@@ -162,7 +162,7 @@ func TestGenerateRequestID(t *testing.T) {
 
 	t.Run("Generated IDs are unique", func(t *testing.T) {
 		ids := make(map[string]bool)
-		
+
 		// Generate 100 IDs and ensure they're all unique
 		for i := 0; i < 100; i++ {
 			id := generateRequestID()
@@ -177,14 +177,14 @@ func TestMiddlewareOrdering(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	executionOrder := []string{}
-	
+
 	router := gin.New()
 	router.Use(RequestID())
 	router.Use(func(c *gin.Context) {
 		executionOrder = append(executionOrder, "second-middleware")
 		c.Next()
 	})
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		requestID := GetRequestID(c)
 		executionOrder = append(executionOrder, "handler")
@@ -199,15 +199,15 @@ func TestMiddlewareOrdering(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
-	
+
 	order := response["order"].([]interface{})
 	assert.Equal(t, "second-middleware", order[0])
 	assert.Equal(t, "handler", order[1])
-	
+
 	// Request ID should be set before second middleware runs
 	assert.NotEmpty(t, response["request_id"])
 }
@@ -216,11 +216,11 @@ func TestNestedMiddlewareComposition(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	
+
 	// First level group with request ID
 	v1 := router.Group("/api/v1")
 	v1.Use(RequestID())
-	
+
 	// Second level group with additional middleware
 	users := v1.Group("/users")
 	users.Use(func(c *gin.Context) {
@@ -228,7 +228,7 @@ func TestNestedMiddlewareComposition(t *testing.T) {
 		c.Header("X-User-Middleware-ID", requestID)
 		c.Next()
 	})
-	
+
 	users.GET("/:id", func(c *gin.Context) {
 		requestID := GetRequestID(c)
 		c.JSON(http.StatusOK, gin.H{
@@ -242,15 +242,15 @@ func TestNestedMiddlewareComposition(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	// Verify request ID is in response header
 	responseHeader := w.Header().Get(RequestIDHeader)
 	assert.NotEmpty(t, responseHeader)
-	
+
 	// Verify request ID is passed to nested middleware
 	userMiddlewareID := w.Header().Get("X-User-Middleware-ID")
 	assert.Equal(t, responseHeader, userMiddlewareID)
-	
+
 	// Verify request ID is available in handler
 	var response map[string]string
 	err := json.Unmarshal(w.Body.Bytes(), &response)
@@ -264,12 +264,12 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("Multiple calls to GetRequestID return same value", func(t *testing.T) {
 		router := gin.New()
 		router.Use(RequestID())
-		
+
 		router.GET("/test", func(c *gin.Context) {
 			id1 := GetRequestID(c)
 			id2 := GetRequestID(c)
 			id3 := GetRequestID(c)
-			
+
 			c.JSON(http.StatusOK, gin.H{
 				"id1": id1,
 				"id2": id2,
@@ -284,7 +284,7 @@ func TestEdgeCases(t *testing.T) {
 		var response map[string]string
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		
+
 		assert.Equal(t, response["id1"], response["id2"])
 		assert.Equal(t, response["id2"], response["id3"])
 		assert.NotEmpty(t, response["id1"])
@@ -298,14 +298,14 @@ func TestEdgeCases(t *testing.T) {
 			c.Set("some_other_key", "some_value")
 			c.Next()
 		})
-		
+
 		router.GET("/test", func(c *gin.Context) {
 			requestID := GetRequestID(c)
 			otherValue := c.MustGet("some_other_key")
-			
+
 			c.JSON(http.StatusOK, gin.H{
-				"request_id":     requestID,
-				"other_value":    otherValue,
+				"request_id":  requestID,
+				"other_value": otherValue,
 			})
 		})
 
@@ -316,7 +316,7 @@ func TestEdgeCases(t *testing.T) {
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		
+
 		assert.NotEmpty(t, response["request_id"])
 		assert.Equal(t, "some_value", response["other_value"])
 	})

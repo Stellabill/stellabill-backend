@@ -77,7 +77,7 @@ func (m *Manager) loadFromEnvironment() {
 		if err := json.Unmarshal([]byte(flagsJSON), &envFlags); err == nil {
 			m.mutex.Lock()
 			defer m.mutex.Unlock()
-			
+
 			for name, enabled := range envFlags {
 				if flag, exists := m.flags[name]; exists {
 					flag.Enabled = enabled
@@ -100,10 +100,10 @@ func (m *Manager) loadFromEnvironment() {
 			if len(parts) == 2 {
 				flagName := strings.ToLower(strings.TrimPrefix(parts[0], "FF_"))
 				flagValue := parts[1]
-				
+
 				var enabled bool
 				var err error
-				
+
 				if strings.ToLower(flagValue) == "true" || flagValue == "1" {
 					enabled = true
 				} else if strings.ToLower(flagValue) == "false" || flagValue == "0" {
@@ -114,7 +114,7 @@ func (m *Manager) loadFromEnvironment() {
 						continue
 					}
 				}
-				
+
 				m.mutex.Lock()
 				if flag, exists := m.flags[flagName]; exists {
 					flag.Enabled = enabled
@@ -136,29 +136,29 @@ func (m *Manager) loadFromEnvironment() {
 func (m *Manager) IsEnabled(flagName string) bool {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	
+
 	if flag, exists := m.flags[flagName]; exists {
 		return flag.Enabled
 	}
-	
+
 	return false
 }
 
 func (m *Manager) IsEnabledWithDefault(flagName string, defaultValue bool) bool {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	
+
 	if flag, exists := m.flags[flagName]; exists {
 		return flag.Enabled
 	}
-	
+
 	return defaultValue
 }
 
 func (m *Manager) GetFlag(flagName string) (*Flag, bool) {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	
+
 	flag, exists := m.flags[flagName]
 	return flag, exists
 }
@@ -166,7 +166,7 @@ func (m *Manager) GetFlag(flagName string) (*Flag, bool) {
 func (m *Manager) SetFlag(flagName string, enabled bool, description string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	
+
 	if flag, exists := m.flags[flagName]; exists {
 		flag.Enabled = enabled
 		flag.UpdatedAt = time.Now()
@@ -186,7 +186,7 @@ func (m *Manager) SetFlag(flagName string, enabled bool, description string) {
 func (m *Manager) GetAllFlags() map[string]*Flag {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	
+
 	result := make(map[string]*Flag)
 	for name, flag := range m.flags {
 		flagCopy := *flag
@@ -198,7 +198,7 @@ func (m *Manager) GetAllFlags() map[string]*Flag {
 func (m *Manager) ReloadFromEnvironment() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	
+
 	m.loadFromEnvironment()
 }
 
@@ -206,7 +206,7 @@ func (m *Manager) ReloadFromEnvironment() {
 func (m *Manager) LoadDefaultFlags() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	
+
 	m.loadDefaultFlags()
 }
 
@@ -214,7 +214,7 @@ func (m *Manager) LoadDefaultFlags() {
 func (m *Manager) LoadFromEnvironment() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	
+
 	m.loadFromEnvironment()
 }
 

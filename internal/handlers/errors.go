@@ -15,23 +15,23 @@ type ErrorCode string
 
 const (
 	// Client errors
-	ErrorCodeBadRequest     ErrorCode = "BAD_REQUEST"
-	ErrorCodeUnauthorized   ErrorCode = "UNAUTHORIZED"
-	ErrorCodeForbidden      ErrorCode = "FORBIDDEN"
-	ErrorCodeNotFound       ErrorCode = "NOT_FOUND"
-	ErrorCodeConflict       ErrorCode = "CONFLICT"
+	ErrorCodeBadRequest       ErrorCode = "BAD_REQUEST"
+	ErrorCodeUnauthorized     ErrorCode = "UNAUTHORIZED"
+	ErrorCodeForbidden        ErrorCode = "FORBIDDEN"
+	ErrorCodeNotFound         ErrorCode = "NOT_FOUND"
+	ErrorCodeConflict         ErrorCode = "CONFLICT"
 	ErrorCodeValidationFailed ErrorCode = "VALIDATION_FAILED"
 
 	// Server errors
-	ErrorCodeInternalError ErrorCode = "INTERNAL_ERROR"
+	ErrorCodeInternalError      ErrorCode = "INTERNAL_ERROR"
 	ErrorCodeServiceUnavailable ErrorCode = "SERVICE_UNAVAILABLE"
 )
 
 // ErrorEnvelope represents a standardized error response
 type ErrorEnvelope struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	TraceID string `json:"trace_id"`
+	Code    string                 `json:"code"`
+	Message string                 `json:"message"`
+	TraceID string                 `json:"trace_id"`
 	Details map[string]interface{} `json:"details,omitempty"`
 }
 

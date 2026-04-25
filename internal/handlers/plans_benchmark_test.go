@@ -58,7 +58,7 @@ func itoa(i int) string {
 	if i == 0 {
 		return "0"
 	}
-	
+
 	digits := []byte{}
 	for i > 0 {
 		digits = append([]byte{byte('0' + i%10)}, digits...)
@@ -79,10 +79,10 @@ func setupBenchmarkContext() (*gin.Context, *httptest.ResponseRecorder) {
 // BenchmarkListPlans_Empty tests performance with no data
 func BenchmarkListPlans_Empty(b *testing.B) {
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		ListPlans(c)
 	}
@@ -91,17 +91,17 @@ func BenchmarkListPlans_Empty(b *testing.B) {
 // BenchmarkListPlans_Small tests performance with 10 plans
 func BenchmarkListPlans_Small(b *testing.B) {
 	plans := generatePlans(10)
-	
+
 	// Mock handler with data
 	handler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	}
-	
+
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		handler(c)
 	}
@@ -110,16 +110,16 @@ func BenchmarkListPlans_Small(b *testing.B) {
 // BenchmarkListPlans_Medium tests performance with 100 plans
 func BenchmarkListPlans_Medium(b *testing.B) {
 	plans := generatePlans(100)
-	
+
 	handler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	}
-	
+
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		handler(c)
 	}
@@ -128,16 +128,16 @@ func BenchmarkListPlans_Medium(b *testing.B) {
 // BenchmarkListPlans_Large tests performance with 1000 plans
 func BenchmarkListPlans_Large(b *testing.B) {
 	plans := generatePlans(1000)
-	
+
 	handler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	}
-	
+
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		handler(c)
 	}
@@ -146,16 +146,16 @@ func BenchmarkListPlans_Large(b *testing.B) {
 // BenchmarkListPlans_ExtraLarge tests performance with 10000 plans
 func BenchmarkListPlans_ExtraLarge(b *testing.B) {
 	plans := generatePlans(10000)
-	
+
 	handler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	}
-	
+
 	c, _ := setupBenchmarkContext()
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		handler(c)
 	}
@@ -164,10 +164,10 @@ func BenchmarkListPlans_ExtraLarge(b *testing.B) {
 // BenchmarkListPlans_JSONEncoding tests JSON encoding performance
 func BenchmarkListPlans_JSONEncoding_Small(b *testing.B) {
 	plans := generatePlans(10)
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(gin.H{"plans": plans})
 		if err != nil {
@@ -178,10 +178,10 @@ func BenchmarkListPlans_JSONEncoding_Small(b *testing.B) {
 
 func BenchmarkListPlans_JSONEncoding_Medium(b *testing.B) {
 	plans := generatePlans(100)
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(gin.H{"plans": plans})
 		if err != nil {
@@ -192,10 +192,10 @@ func BenchmarkListPlans_JSONEncoding_Medium(b *testing.B) {
 
 func BenchmarkListPlans_JSONEncoding_Large(b *testing.B) {
 	plans := generatePlans(1000)
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(gin.H{"plans": plans})
 		if err != nil {
@@ -208,15 +208,15 @@ func BenchmarkListPlans_JSONEncoding_Large(b *testing.B) {
 func BenchmarkListPlans_FullHTTP_Small(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	plans := generatePlans(10)
 	router.GET("/api/plans", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/plans", nil)
@@ -227,15 +227,15 @@ func BenchmarkListPlans_FullHTTP_Small(b *testing.B) {
 func BenchmarkListPlans_FullHTTP_Medium(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	plans := generatePlans(100)
 	router.GET("/api/plans", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/plans", nil)
@@ -246,15 +246,15 @@ func BenchmarkListPlans_FullHTTP_Medium(b *testing.B) {
 func BenchmarkListPlans_FullHTTP_Large(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	plans := generatePlans(1000)
 	router.GET("/api/plans", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/plans", nil)
@@ -266,15 +266,15 @@ func BenchmarkListPlans_FullHTTP_Large(b *testing.B) {
 func BenchmarkListPlans_Parallel_Small(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	plans := generatePlans(10)
 	router.GET("/api/plans", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			w := httptest.NewRecorder()
@@ -287,15 +287,15 @@ func BenchmarkListPlans_Parallel_Small(b *testing.B) {
 func BenchmarkListPlans_Parallel_Medium(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	plans := generatePlans(100)
 	router.GET("/api/plans", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plans": plans})
 	})
-	
+
 	b.ResetTimer()
 	b.ReportAllocs()
-	
+
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			w := httptest.NewRecorder()

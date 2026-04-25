@@ -56,6 +56,26 @@ go run ./cmd/migrate --dry-run up
 3. Monitor logs and fail the deploy if migrations fail.
 4. If rollback is required, run `down` **only if** the latest migration is safe to roll back.
 
+## Migration immutability
+
+This repository enforces a migration immutability policy for SQL files that have already been merged.
+The `scripts/check-migrations.go` script computes SHA256 checksums for every `*.sql` file in `migrations/` and validates them against a registry stored at `migrations/checksums.json`.
+
+- Existing migration files must never be edited once merged.
+- New migrations may be added, but `migrations/checksums.json` must be updated with their checksums.
+- If `migrations/checksums.json` does not yet exist, the script will generate it and prompt you to commit the new file.
+
+### Adding a new migration
+
+1. Add the new `NNNN_name.up.sql` and `NNNN_name.down.sql` files to `migrations/`.
+2. Run:
+
+```bash
+go run ./scripts/check-migrations.go
+```
+
+3. Commit both the new migration files and the updated `migrations/checksums.json`.
+
 ## Safety notes
 
 - Migrations run inside a single transaction per command.

@@ -24,13 +24,13 @@ var (
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := extractOrGenerateRequestID(c)
-		
+
 		// Store in context for downstream handlers
 		c.Set(RequestIDKey, requestID)
-		
+
 		// Add to response header
 		c.Header(RequestIDHeader, requestID)
-		
+
 		c.Next()
 	}
 }
@@ -53,7 +53,7 @@ func extractOrGenerateRequestID(c *gin.Context) string {
 			return incomingID
 		}
 	}
-	
+
 	// Generate new secure random ID
 	return generateRequestID()
 }

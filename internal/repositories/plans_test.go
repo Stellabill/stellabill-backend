@@ -77,9 +77,9 @@ func TestPlanRepository_Create(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
-			
+
 			err := repo.Create(tt.plan)
-			
+
 			if tt.expectedError != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
@@ -89,7 +89,7 @@ func TestPlanRepository_Create(t *testing.T) {
 				assert.NotZero(t, tt.plan.CreatedAt)
 				assert.NotZero(t, tt.plan.UpdatedAt)
 			}
-			
+
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -173,9 +173,9 @@ func TestPlanRepository_GetByID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
-			
+
 			plan, err := repo.GetByID(tt.planID)
-			
+
 			if tt.expectedError != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
@@ -195,7 +195,7 @@ func TestPlanRepository_GetByID(t *testing.T) {
 					assert.Nil(t, plan.Description)
 				}
 			}
-			
+
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -270,9 +270,9 @@ func TestPlanRepository_Update(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
-			
+
 			err := repo.Update(tt.plan)
-			
+
 			if tt.expectedError != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
@@ -280,7 +280,7 @@ func TestPlanRepository_Update(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotZero(t, tt.plan.UpdatedAt)
 			}
-			
+
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -333,16 +333,16 @@ func TestPlanRepository_Delete(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
-			
+
 			err := repo.Delete(tt.planID)
-			
+
 			if tt.expectedError != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
 			} else {
 				assert.NoError(t, err)
 			}
-			
+
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -358,14 +358,14 @@ func TestPlanRepository_ScanError(t *testing.T) {
 	t.Run("scan error with invalid data type", func(t *testing.T) {
 		rows := sqlmock.NewRows([]string{"id", "name", "amount", "currency", "interval", "description", "merchant_id", "created_at", "updated_at"}).
 			AddRow(123, "Invalid Plan", "29.99", "USD", "month", "Description", "merchant-123", time.Now(), time.Now())
-		
+
 		mock.ExpectQuery(`SELECT`).WillReturnRows(rows)
-		
+
 		plans, err := repo.GetByMerchantID("merchant-123", 10, 0)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to scan plan")
 		assert.Nil(t, plans)
-		
+
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

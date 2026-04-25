@@ -19,7 +19,7 @@ func assertHeader(t *testing.T, rec *httptest.ResponseRecorder, key, expected st
 
 func TestSecurityHeaders_Production(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	cfg := &config.Config{
 		Env:                "production",
 		SecurityHSTSMaxAge: "31536000",
@@ -43,7 +43,7 @@ func TestSecurityHeaders_Production(t *testing.T) {
 
 func TestSecurityHeaders_Development(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	cfg := &config.Config{
 		Env:                "development",
 		SecurityHSTSMaxAge: "31536000",
@@ -67,7 +67,7 @@ func TestSecurityHeaders_Development(t *testing.T) {
 
 func TestSecurityHeaders_PreventInsecureFrameOptions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	// ALLOW-FROM is insecure/deprecated, should default to DENY
 	cfg := &config.Config{
 		Env:                "production",
@@ -90,7 +90,7 @@ func TestSecurityHeaders_PreventInsecureFrameOptions(t *testing.T) {
 
 func TestSecurityHeaders_ProxyLayerConflicts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	cfg := &config.Config{
 		Env:                "production",
 		SecurityHSTSMaxAge: "31536000",

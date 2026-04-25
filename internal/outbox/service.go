@@ -27,7 +27,7 @@ type ServiceConfig struct {
 // NewService creates a new outbox service
 func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 	repo := NewPostgresRepository(db)
-	
+
 	// Create publisher based on configuration
 	var publisher Publisher
 	switch config.PublisherType {
@@ -43,9 +43,9 @@ func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 	default:
 		publisher = NewConsolePublisher() // Default to console
 	}
-	
+
 	dispatcher := NewDispatcher(repo, publisher, config.DispatcherConfig)
-	
+
 	return &Service{
 		repository: repo,
 		dispatcher: dispatcher,
@@ -60,12 +60,12 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 	if err != nil {
 		return fmt.Errorf("failed to create event: %w", err)
 	}
-	
+
 	// Store the event in a transaction
 	if err := s.storeEventInTransaction(ctx, event); err != nil {
 		return fmt.Errorf("failed to store event: %w", err)
 	}
-	
+
 	log.Printf("Event %s stored in outbox: %s", event.ID, eventType)
 	return nil
 }
@@ -77,17 +77,17 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
-	
+
 	// Store the event
 	if err := s.repository.Store(event); err != nil {
 		return fmt.Errorf("failed to store event in transaction: %w", err)
 	}
-	
+
 	// Commit the transaction
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -98,7 +98,7 @@ func (s *Service) PublishEventWithTx(tx *sql.Tx, eventType string, data interfac
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
-	
+
 	// Store the event using the transaction
 	// Note: This requires a transaction-aware repository implementation
 	// For now, we'll use the regular repository (in a real implementation,
@@ -106,7 +106,7 @@ func (s *Service) PublishEventWithTx(tx *sql.Tx, eventType string, data interfac
 	if err := s.repository.Store(event); err != nil {
 		return nil, fmt.Errorf("failed to store event: %w", err)
 	}
-	
+
 	return event, nil
 }
 
@@ -145,12 +145,12 @@ func (s *Service) Health() error {
 	if err := s.db.Ping(); err != nil {
 		return fmt.Errorf("database health check failed: %w", err)
 	}
-	
+
 	// Check dispatcher status
 	if !s.dispatcher.IsRunning() {
 		return fmt.Errorf("dispatcher is not running")
 	}
-	
+
 	return nil
 }
 
@@ -182,11 +182,11 @@ type DomainEvent interface {
 
 // SubscriptionCreated represents a subscription created event
 type SubscriptionCreated struct {
-	ID           string    `json:"id"`
-	CustomerID   string    `json:"customer_id"`
-	PlanID       string    `json:"plan_id"`
-	Status       string    `json:"status"`
-	OccurredAt   time.Time `json:"occurred_at"`
+	ID         string    `json:"id"`
+	CustomerID string    `json:"customer_id"`
+	PlanID     string    `json:"plan_id"`
+	Status     string    `json:"status"`
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 func (e SubscriptionCreated) EventType() string {
@@ -212,12 +212,12 @@ func (e SubscriptionCreated) OccurredAt() time.Time {
 
 // PaymentProcessed represents a payment processed event
 type PaymentProcessed struct {
-	ID           string    `json:"id"`
-	SubscriptionID string   `json:"subscription_id"`
-	Amount       float64   `json:"amount"`
-	Currency     string    `json:"currency"`
-	Status       string    `json:"status"`
-	OccurredAt   time.Time `json:"occurred_at"`
+	ID             string    `json:"id"`
+	SubscriptionID string    `json:"subscription_id"`
+	Amount         float64   `json:"amount"`
+	Currency       string    `json:"currency"`
+	Status         string    `json:"status"`
+	OccurredAt     time.Time `json:"occurred_at"`
 }
 
 func (e PaymentProcessed) EventType() string {

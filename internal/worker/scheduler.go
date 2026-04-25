@@ -26,11 +26,11 @@ func (s *Scheduler) ScheduleCharge(subscriptionID string, scheduledAt time.Time,
 		MaxAttempts:    maxAttempts,
 		Attempts:       0,
 	}
-	
+
 	if err := s.store.Create(job); err != nil {
 		return nil, fmt.Errorf("failed to schedule charge: %w", err)
 	}
-	
+
 	return job, nil
 }
 
@@ -45,11 +45,11 @@ func (s *Scheduler) ScheduleInvoice(subscriptionID string, scheduledAt time.Time
 		MaxAttempts:    maxAttempts,
 		Attempts:       0,
 	}
-	
+
 	if err := s.store.Create(job); err != nil {
 		return nil, fmt.Errorf("failed to schedule invoice: %w", err)
 	}
-	
+
 	return job, nil
 }
 
@@ -64,15 +64,14 @@ func (s *Scheduler) ScheduleReminder(subscriptionID string, scheduledAt time.Tim
 		MaxAttempts:    maxAttempts,
 		Attempts:       0,
 	}
-	
+
 	if err := s.store.Create(job); err != nil {
 		return nil, fmt.Errorf("failed to schedule reminder: %w", err)
 	}
-	
+
 	return job, nil
 }
 
 func generateJobID(jobType string) string {
 	return fmt.Sprintf("%s-%d", jobType, time.Now().UnixNano())
 }
-

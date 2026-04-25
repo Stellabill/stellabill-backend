@@ -117,7 +117,6 @@ func (w *Worker) Stop() error {
 	}
 }
 
-
 // schedulerLoop continuously polls for pending jobs
 func (w *Worker) schedulerLoop() {
 	defer w.wg.Done()
@@ -238,7 +237,7 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 		w.metrics.mu.Lock()
 		w.metrics.JobsDeadLettered++
 		w.metrics.mu.Unlock()
-		
+
 		security.ProductionLogger().Warn("Job moved to dead-letter queue",
 			zap.String("job_id", job.ID),
 			zap.Int("attempts", job.Attempts),
@@ -252,7 +251,7 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 		w.metrics.mu.Lock()
 		w.metrics.JobsFailed++
 		w.metrics.mu.Unlock()
-		
+
 		security.ProductionLogger().Warn("Job failed, retrying",
 			zap.String("job_id", job.ID),
 			zap.Int("attempt", job.Attempts),
@@ -271,4 +270,3 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 func generateWorkerID() string {
 	return fmt.Sprintf("worker-%d", time.Now().UnixNano())
 }
-

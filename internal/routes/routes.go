@@ -82,40 +82,33 @@ func Register(r *gin.Engine) {
 	{
 		// Public health check - no authentication required
 		api.GET("/health", dep, handlers.Health)
-		v1.GET("/health", handlers.Health)
 
-		// Public read (user + admin)
-		api.GET("/plans",
+		// Versioned API endpoints (v1) with authentication
+		// Public read (user + admin) - moved to v1 for consistency
+		v1.GET("/plans",
 			dep,
 			auth.RequirePermission(auth.PermReadPlans),
 			handlers.ListPlans,
 		)
 
-		api.GET("/subscriptions",
+		v1.GET("/subscriptions",
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			handlers.ListSubscriptions,
 		)
 
-		api.GET("/subscriptions/:id",
+		v1.GET("/subscriptions/:id",
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			handlers.GetSubscription,
 		)
 
 		// Example future admin-only endpoints:
-		// api.POST("/plans", auth.RequirePermission(auth.PermManagePlans), ...)
-		api.GET("/subscriptions", dep, handlers.ListSubscriptions)
-		v1.GET("/subscriptions", handlers.ListSubscriptions)
-		api.GET("/subscriptions/:id", dep, middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		v1.GET("/subscriptions/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		api.GET("/plans", dep, handlers.ListPlans)
-		v1.GET("/plans", handlers.ListPlans)
+		// v1.POST("/plans", auth.RequirePermission(auth.PermManagePlans), ...)
+		v1.GET("/statements/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetStatementHandler(stmtSvc))
+		v1.GET("/statements", middleware.AuthMiddleware(jwtSecret), handlers.NewListStatementsHandler(stmtSvc))
 
-			api.GET("/statements/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetStatementHandler(stmtSvc))
-		api.GET("/statements", middleware.AuthMiddleware(jwtSecret), handlers.NewListStatementsHandler(stmtSvc))
-
-		admin := api.Group("/admin")
+		admin := v1.Group("/admin")
 		{
 			admin.POST("/purge", adminHandler.PurgeCache)
 			// Diagnostics endpoint — re-runs startup checks for live triage

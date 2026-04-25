@@ -8,7 +8,9 @@ info:
 
     Notes:
       - Preflight CORS requests (`OPTIONS`) are handled by middleware and return `204`.
-  version: 0.1.0
+      - Authentication uses Bearer token (JWT) for versioned endpoints.
+      - Health endpoint is public and unversioned.
+  version: 0.2.0
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -16,6 +18,14 @@ tags:
   - name: Health
   - name: Plans
   - name: Subscriptions
+  - name: Statements
+  - name: Admin
+securitySchemes:
+  bearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT
+    description: JWT token obtained via authentication
 paths:
   /api/health:
     get:
@@ -29,11 +39,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
-  /api/plans:
+  /api/v1/plans:
     get:
       tags: [Plans]
       summary: List billing plans
-      operationId: listPlans
+      operationId: listPlansV1
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Plans list
@@ -41,11 +53,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlansResponse"
-  /api/subscriptions:
+  /api/v1/subscriptions:
     get:
       tags: [Subscriptions]
       summary: List subscriptions
-      operationId: listSubscriptions
+      operationId: listSubscriptionsV1
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Subscriptions list
@@ -53,11 +67,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubscriptionsResponse"
-  /api/subscriptions/{id}:
+  /api/v1/subscriptions/{id}:
     get:
       tags: [Subscriptions]
       summary: Get one subscription
-      operationId: getSubscription
+      operationId: getSubscriptionV1
+      security:
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -72,6 +88,127 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+  /api/v1/statements:
+    get:
+      tags: [Statements]
+      summary: List statements
+      operationId: listStatementsV1
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Statements list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementsResponse"
+  /api/v1/statements/{id}:
+    get:
+      tags: [Statements]
+      summary: Get one statement
+      operationId: getStatementV1
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Statement identifier
+      responses:
+        "200":
+          description: Statement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Statement"
+  /api/v1/admin/purge:
+    post:
+      tags: [Admin]
+      summary: Purge cache (admin only)
+      operationId: purgeCacheV1
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cache purged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Cache purged successfully"
+  /api/v1/admin/diagnostics:
+    get:
+      tags: [Admin]
+      summary: Run diagnostics (admin only)
+      operationId: runDiagnosticsV1
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Diagnostics results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  checks:
+                    type: object
+  /api/v1/admin/reconcile:
+    post:
+      tags: [Admin]
+      summary: Reconcile subscriptions (admin only)
+      operationId: reconcileV1
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subscriptions:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Reconciliation complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "reconciliation complete"
+  /api/v1/admin/reports:
+    get:
+      tags: [Admin]
+      summary: List reconciliation reports (admin only)
+      operationId: listReportsV1
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Reports list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reports:
+                    type: array
+                    items:
+                      type: object
 components:
   schemas:
     HealthResponse:
@@ -154,3 +291,38 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Subscription"
+    Statement:
+      type: object
+      additionalProperties: false
+      required: [id, subscription_id, amount, currency, status]
+      properties:
+        id:
+          type: string
+          example: stmt_123
+        subscription_id:
+          type: string
+          example: sub_123
+        amount:
+          type: string
+          example: "1000"
+        currency:
+          type: string
+          example: NGN
+        status:
+          type: string
+          example: pending
+        period_start:
+          type: string
+          example: "2026-04-01T00:00:00Z"
+        period_end:
+          type: string
+          example: "2026-05-01T00:00:00Z"
+    StatementsResponse:
+      type: object
+      additionalProperties: false
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items:
+            $ref: "#/components/schemas/Statement"

@@ -16,6 +16,7 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 - [Database migrations](#database-migrations)
 - [Contributing (open source)](#contributing-open-source)
 - [Project layout](#project-layout)
+- [API Contract & OpenAPI](#api-contract--openapi)
 - [License](#license)
 
 ---
@@ -566,6 +567,30 @@ The feature flag system includes comprehensive tests covering:
 - Edge cases and error conditions
 
 Run tests with: `go test ./...`
+
+---
+
+## API Contract & OpenAPI
+
+This project follows a **spec-first** approach using OpenAPI 3.0.3. The specification is maintained in `openapi/openapi.yaml` and serves as the source of truth for all `/api/*` routes.
+
+### Key Points
+- **Contract Tests**: Automatically validate that implementation matches the spec (`go test ./internal/contract/...`).
+- **CI Enforcement**: Pull requests are checked for undocumented endpoints via `go run ./cmd/openapi-validate`.
+- **Versioning**: Versioned endpoints use `/api/v1/` prefix; unversioned public endpoints (like health) stay at `/api/`.
+- **Contributor Checklist**: See `docs/OPENAPI_GUIDE.md` for the full checklist when modifying API endpoints.
+
+### Useful Commands
+```bash
+# Validate OpenAPI spec and check for undocumented routes
+go run ./cmd/openapi-validate
+
+# Run contract tests
+go test ./internal/contract/... -v
+
+# Run all tests with coverage
+go test ./... -cover
+```
 
 ---
 

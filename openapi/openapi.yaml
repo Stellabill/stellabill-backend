@@ -8,6 +8,11 @@ info:
 
     Notes:
       - Preflight CORS requests (`OPTIONS`) are handled by middleware and return `204`.
+      - Mutation endpoints (`POST`/`PUT`/`PATCH`/`DELETE`) accept the
+        `Idempotency-Key` header. See `docs/idempotency.md` for full
+        semantics. Reusing a key with a different payload, method, or path
+        returns `422`. Successful retries within the TTL return the cached
+        response with `Idempotency-Replayed: true`.
   version: 0.1.0
 servers:
   - url: http://localhost:8080
@@ -73,6 +78,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/Subscription"
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Opaque client-supplied value (max 255 characters) that lets the server
+        deduplicate retries of the same logical mutation. Must be unique per
+        request; reuse is bound to the authenticated caller, request method,
+        path, and body hash. See `docs/idempotency.md`.
+      schema:
+        type: string
+        maxLength: 255
+  responses:
+    IdempotencyConflict:
+      description: |
+        The supplied `Idempotency-Key` was previously used with a different
+        request payload, method, or path.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [error]
+            properties:
+              error:
+                type: string
+                example: Idempotency-Key reused with a different request
   schemas:
     HealthResponse:
       type: object

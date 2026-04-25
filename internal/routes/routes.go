@@ -77,8 +77,15 @@ func Register(r *gin.Engine) {
 
 	dep := middleware.DeprecationHeaders()
 
-	api.Use(idempotency.Middleware(store))
+	// Idempotency middleware runs *after* auth on /v1 so the scope can be
+	// derived from the verified caller identity (tenantID + callerID). This
+	// prevents one caller from replaying another caller's cached response by
+	// guessing or reusing an Idempotency-Key value. The legacy /api group
+	// is intentionally not covered: its auth runs per-route, so a group-level
+	// idempotency middleware would execute before authentication and could
+	// not produce a trustworthy scope.
 	v1.Use(middleware.AuthMiddleware(jwtSecret))
+	v1.Use(idempotency.Middleware(store))
 	{
 		// Public health check - no authentication required
 		api.GET("/health", dep, handlers.Health)

@@ -242,6 +242,10 @@ router.GET("/feature", middleware.RequireAnyFeatureFlags("flag1", "flag2"), hand
 
 ## Testing
 
+> See **[docs/dev-test-guide.md](docs/dev-test-guide.md)** for the full local
+> development and test execution guide, including common failure
+> troubleshooting.
+
 ### Unit tests
 
 Unit tests cover config validation, service logic, HTTP handler behaviour,
@@ -249,7 +253,7 @@ circuit breaker, and the background worker. They use in-memory mocks and
 require **no external services**.
 
 ```bash
-go test ./...
+go test ./internal/... -count=1 -timeout 60s
 ```
 
 ### Integration tests
@@ -262,8 +266,7 @@ repository to the database — then tear the container down automatically.
 access). No manual database setup is required.
 
 ```bash
-# Run integration tests
-go test -tags integration -v -race -count=1 ./integration/...
+go test -tags integration -v -race -count=1 -timeout 120s ./integration/...
 ```
 
 The test suite in `integration/` covers:

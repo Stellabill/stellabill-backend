@@ -9,7 +9,7 @@ import (
     "time"
 
     "github.com/gin-gonic/gin"
-    "stellabill-backend/internal/reconciliation"
+    "stellarbill-backend/internal/reconciliation"
 )
 
 func TestReconcileHandler(t *testing.T) {

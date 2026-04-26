@@ -3,8 +3,10 @@ package auth
 type Role string
 
 const (
-	RoleAdmin Role = "admin"
-	RoleUser  Role = "user"
+	RoleAdmin    Role = "admin"
+	RoleMerchant Role = "merchant"
+	RoleCustomer Role = "customer"
+	RoleUser     Role = "user"
 )
 
 type Permission string

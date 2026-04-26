@@ -3,13 +3,15 @@ package middleware
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"log"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/logger"
+	"stellarbill-backend/internal/security"
 )
 
 const (
@@ -53,10 +55,12 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
-func Recovery(logger *log.Logger) gin.HandlerFunc {
+func Recovery(_ *log.Logger) gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
 		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf("panic recovered request_id=%v err=%v", requestID, recovered)
+		msg := fmt.Sprintf("panic recovered request_id=%v err=%v", requestID, recovered)
+		// Use safe logger that redacts PII
+		logger.SafePrintf(msg)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 			"error":      "internal server error",
 			"request_id": requestID,
@@ -64,20 +68,25 @@ func Recovery(logger *log.Logger) gin.HandlerFunc {
 	})
 }
 
-func Logging(logger *log.Logger) gin.HandlerFunc {
+func Logging(_ *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 
 		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf(
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+		msg := fmt.Sprintf(
 			"method=%s path=%s status=%d request_id=%v duration=%s",
 			c.Request.Method,
-			c.FullPath(),
+			security.MaskPII(path),
 			c.Writer.Status(),
 			requestID,
 			time.Since(start).Round(time.Millisecond),
 		)
+		logger.SafePrintf("%s", msg)
 	}
 }
 

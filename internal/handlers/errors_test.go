@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -312,3 +313,61 @@ func TestErrorEnvelope_ContentType(t *testing.T) {
 		t.Errorf("Expected proper content type, got %s", contentType)
 	}
 }
+
+// TestErrorEnvelope_PIIRedaction tests that PII is redacted from error messages and details
+func TestErrorEnvelope_PIIRedaction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("traceID", "test-trace-pii")
+	})
+	r.GET("/test", func(c *gin.Context) {
+		details := map[string]interface{}{
+			"customer_id": "cust_sensitive123",
+			"amount":      1234.56,
+			"safe_field":  "ok",
+		}
+		RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeBadRequest, 
+			"Failed processing customer_cust_sensitive123 with amount 1234.56", details)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	r.ServeHTTP(w, req)
+
+	var envelope ErrorEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	// Message should have PII redacted
+	assertFalse := func(cond bool, msg string) {
+		if cond {
+			t.Errorf("PII leaked in message: %s", envelope.Message)
+		}
+	}
+	assertFalse(strings.Contains(envelope.Message, "cust_sensitive123"))
+	assertFalse(strings.Contains(envelope.Message, "1234.56"))
+	assertTrue := func(cond bool, msg string) {
+		if !cond {
+			t.Errorf(msg)
+		}
+	}
+	assertTrue(strings.Contains(envelope.Message, "cust_***"), "should contain redacted customer")
+	// amount may be masked: but message amount might be masked as $*.**; check that original number not present as digits.
+	assertTrue(strings.Contains(envelope.Message, "$*.**") || !strings.Contains(envelope.Message, "1234"), "amount should be masked")
+
+	// Details map should have values redacted
+	if custDetail, ok := envelope.Details["customer_id"]; ok {
+		assertTrue(custDetail == "***REDACTED***" || custDetail == "cust***", "customer_id in details should be redacted")
+	}
+	if amtDetail, ok := envelope.Details["amount"]; ok {
+		assertTrue(amtDetail == "$*.**", "amount in details should be masked")
+	}
+	// safe_field unchanged
+	if safe, ok := envelope.Details["safe_field"]; ok {
+		assertTrue(safe == "ok", "safe field unchanged")
+	}
+}
+
+import "strings"

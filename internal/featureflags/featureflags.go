@@ -224,3 +224,7 @@ func IsEnabled(flagName string) bool {
 func IsEnabledWithDefault(flagName string, defaultValue bool) bool {
 	return GetInstance().IsEnabledWithDefault(flagName, defaultValue)
 }
+
+func SetFlag(flagName string, enabled bool, description string) {
+	GetInstance().SetFlag(flagName, enabled, description)
+}

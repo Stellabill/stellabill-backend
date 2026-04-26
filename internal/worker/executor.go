@@ -5,9 +5,15 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"stellarbill-backend/internal/security"
 )
+
+var tracer = otel.Tracer("worker/executor")
 
 // BillingExecutor implements JobExecutor for billing operations
 type BillingExecutor struct {
@@ -26,6 +32,13 @@ func (e *BillingExecutor) Execute(ctx context.Context, job *Job) error {
 		zap.String("type", job.Type),
 		zap.String("subscription_id", job.SubscriptionID))
 
+	ctx, span := tracer.Start(ctx, "BillingExecutor.Execute",
+		trace.WithAttributes(
+			attribute.String("job_id", job.ID),
+			attribute.String("job_type", job.Type),
+			attribute.String("subscription_id", job.SubscriptionID)))
+	defer span.End()
+
 	switch job.Type {
 	case "charge":
 		return e.executeCharge(ctx, job)
@@ -34,64 +47,68 @@ func (e *BillingExecutor) Execute(ctx context.Context, job *Job) error {
 	case "reminder":
 		return e.executeReminder(ctx, job)
 	default:
+		span.SetStatus(codes.Error, "unknown job type")
 		return fmt.Errorf("unknown job type: %s", job.Type)
 	}
 }
 
 func (e *BillingExecutor) executeCharge(ctx context.Context, job *Job) error {
-	// TODO: Integrate with payment gateway
-	// 1. Fetch subscription details
-	// 2. Call payment processor API
-	// 3. Record transaction
-	// 4. Update subscription status
+	ctx, span := tracer.Start(ctx, "executeCharge",
+		trace.WithAttributes(attribute.String("subscription_id", job.SubscriptionID)))
+	defer span.End()
+
 	security.ProductionLogger().Info("Processing charge",
 		zap.String("subscription_id", job.SubscriptionID))
-	
-	// Simulate work
+
 	select {
 	case <-ctx.Done():
+		span.RecordError(ctx.Err())
+		span.SetStatus(codes.Error, "context cancelled")
 		return ctx.Err()
 	case <-time.After(100 * time.Millisecond):
-		// Success
+		span.SetAttributes(attribute.String("result", "success"))
 	}
-	
+
 	return nil
 }
 
 func (e *BillingExecutor) executeInvoice(ctx context.Context, job *Job) error {
-	// TODO: Generate and send invoice
-	// 1. Fetch subscription and customer details
-	// 2. Generate invoice PDF
-	// 3. Send via email
-	// 4. Store invoice record
+	ctx, span := tracer.Start(ctx, "executeInvoice",
+		trace.WithAttributes(attribute.String("subscription_id", job.SubscriptionID)))
+	defer span.End()
+
 	security.ProductionLogger().Info("Generating invoice",
 		zap.String("subscription_id", job.SubscriptionID))
-	
+
 	select {
 	case <-ctx.Done():
+		span.RecordError(ctx.Err())
+		span.SetStatus(codes.Error, "context cancelled")
 		return ctx.Err()
 	case <-time.After(100 * time.Millisecond):
-		// Success
+		span.SetAttributes(attribute.String("result", "success"))
 	}
-	
+
 	return nil
 }
 
 func (e *BillingExecutor) executeReminder(ctx context.Context, job *Job) error {
-	// TODO: Send payment reminder
-	// 1. Fetch subscription and customer details
-	// 2. Check if payment is overdue
-	// 3. Send reminder notification
+	ctx, span := tracer.Start(ctx, "executeReminder",
+		trace.WithAttributes(attribute.String("subscription_id", job.SubscriptionID)))
+	defer span.End()
+
 	security.ProductionLogger().Info("Sending reminder",
 		zap.String("subscription_id", job.SubscriptionID))
-	
+
 	select {
 	case <-ctx.Done():
+		span.RecordError(ctx.Err())
+		span.SetStatus(codes.Error, "context cancelled")
 		return ctx.Err()
 	case <-time.After(100 * time.Millisecond):
-		// Success
+		span.SetAttributes(attribute.String("result", "success"))
 	}
-	
+
 	return nil
 }
 

@@ -53,19 +53,22 @@ type Item interface {
 	GetSortValue() string
 }
 
+// Page represents a standardized paginated response envelope.
+type Page[T any] struct {
+	Items      []T    `json:"items"`
+	NextCursor string `json:"next_cursor,omitempty"`
+	HasMore    bool   `json:"has_more"`
+}
+
 // PaginateSlice simulates cursor-based pagination over an in-memory slice.
 // It assumes the slice is ALREADY SORTED by (SortValue ASC, ID ASC).
-// This is used to test cursor continuity, stale records, and duplicate keys.
-func PaginateSlice[T Item](items []T, cursor Cursor, limit int) ([]T, Cursor, bool) {
+func PaginateSlice[T Item](items []T, cursor Cursor, limit int) Page[T] {
 	if limit <= 0 {
 		limit = 10
 	}
 
 	startIdx := 0
 	if cursor.ID != "" || cursor.SortValue != "" {
-		// Find the first item that comes AFTER the cursor.
-		// For ASC sorting:
-		// item.SortValue > cursor.SortValue OR (item.SortValue == cursor.SortValue AND item.ID > cursor.ID)
 		found := false
 		for i, item := range items {
 			sv := item.GetSortValue()
@@ -78,10 +81,11 @@ func PaginateSlice[T Item](items []T, cursor Cursor, limit int) ([]T, Cursor, bo
 			}
 		}
 
-		// If we gave a cursor but couldn't find any items after it (or it was stale and all subsequent were deleted),
-		// we return empty.
 		if !found {
-			return []T{}, Cursor{}, false
+			return Page[T]{
+				Items:   []T{},
+				HasMore: false,
+			}
 		}
 	}
 
@@ -92,16 +96,21 @@ func PaginateSlice[T Item](items []T, cursor Cursor, limit int) ([]T, Cursor, bo
 		hasMore = false
 	}
 
-	page := items[startIdx:endIdx]
+	pageItems := items[startIdx:endIdx]
 
-	var nextCursor Cursor
-	if len(page) > 0 && hasMore {
-		lastItem := page[len(page)-1]
-		nextCursor = Cursor{
+	var nextCursorStr string
+	if len(pageItems) > 0 && hasMore {
+		lastItem := pageItems[len(pageItems)-1]
+		nextCursorStr = Encode(Cursor{
 			ID:        lastItem.GetID(),
 			SortValue: lastItem.GetSortValue(),
-		}
+		})
 	}
 
-	return page, nextCursor, hasMore
+	return Page[T]{
+		Items:      pageItems,
+		NextCursor: nextCursorStr,
+		HasMore:    hasMore,
+	}
 }
+

@@ -1,188 +1,263 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"os"
-	"testing"
-)
-
-func TestLoad_DefaultValues(t *testing.T) {
-	// Clear environment variables
-	os.Unsetenv("ENV")
-	os.Unsetenv("PORT")
-	os.Unsetenv("DATABASE_URL")
-	os.Unsetenv("JWT_SECRET")
-
-	cfg := Load()
-
-	if cfg.Env != "development" {
-		t.Errorf("Expected Env to be 'development', got %s", cfg.Env)
-	}
-
-	if cfg.Port != "8080" {
-		t.Errorf("Expected Port to be '8080', got %s", cfg.Port)
-	}
-
-	expectedDB := "postgres://localhost/stellarbill?sslmode=disable"
-	if cfg.DBConn != expectedDB {
-		t.Errorf("Expected DBConn to be '%s', got %s", expectedDB, cfg.DBConn)
-	}
-
-	if cfg.JWTSecret != "change-me-in-production" {
-		t.Errorf("Expected JWTSecret to be 'change-me-in-production', got %s", cfg.JWTSecret)
-	}
-}
-
-func TestLoad_CustomValues(t *testing.T) {
-	// Set custom environment variables
-	os.Setenv("ENV", "production")
-	os.Setenv("PORT", "3000")
-	os.Setenv("DATABASE_URL", "postgres://custom/db")
-	os.Setenv("JWT_SECRET", "my-secret")
-
-	// Clear after test
-	defer func() {
-		os.Unsetenv("ENV")
-		os.Unsetenv("PORT")
-		os.Unsetenv("DATABASE_URL")
-		os.Unsetenv("JWT_SECRET")
-	}()
-
-	cfg := Load()
-
-	if cfg.Env != "production" {
-		t.Errorf("Expected Env to be 'production', got %s", cfg.Env)
-	}
-
-	if cfg.Port != "3000" {
-		t.Errorf("Expected Port to be '3000', got %s", cfg.Port)
-	}
-
-	if cfg.DBConn != "postgres://custom/db" {
-		t.Errorf("Expected DBConn to be 'postgres://custom/db', got %s", cfg.DBConn)
-	}
-
-	if cfg.JWTSecret != "my-secret" {
-		t.Errorf("Expected JWTSecret to be 'my-secret', got %s", cfg.JWTSecret)
-	}
-}
-
-func TestLoad_PORT_Override(t *testing.T) {
-	// Set PORT via environment
-	os.Setenv("PORT", "9090")
-	defer os.Unsetenv("PORT")
-
-	cfg := Load()
-
-	if cfg.Port != "9090" {
-		t.Errorf("Expected Port to be '9090', got %s", cfg.Port)
-	}
-=======
 	"strings"
 	"testing"
+
+	"stellarbill-backend/internal/secrets"
 )
 
-const validTestSecret = "MySecureSecret123!@#$%^&*()AbCdEfGh"
+const (
+	validDBURL      = "postgres://user:pass@localhost/db"
+	validJWTSecret  = "VerySecureJWTSecret123!"
+	validAdminToken = "VerySecureAdminToken123!"
+)
+
+type stubProvider struct {
+	values map[string]string
+	errs   map[string]error
+}
+
+func (s *stubProvider) GetSecret(_ context.Context, key string) (string, error) {
+	if err, ok := s.errs[key]; ok {
+		return "", err
+	}
+	if v, ok := s.values[key]; ok {
+		return v, nil
+	}
+	return "", secrets.ErrSecretNotFound
+}
+
+func (s *stubProvider) Name() string {
+	return "stub"
+}
 
 func withEnvVars(t *testing.T, vars map[string]string, fn func()) {
-	origEnv := make(map[string]string)
-	for k := range vars {
-		origEnv[k] = os.Getenv(k)
-		if vars[k] == "" {
+	t.Helper()
+	original := make(map[string]*string, len(vars))
+	for k, v := range vars {
+		if old, ok := os.LookupEnv(k); ok {
+			oldCopy := old
+			original[k] = &oldCopy
+		} else {
+			original[k] = nil
+		}
+		if v == "" {
 			os.Unsetenv(k)
 		} else {
-			os.Setenv(k, vars[k])
+			os.Setenv(k, v)
 		}
 	}
-
 	defer func() {
-		for k, v := range origEnv {
-			if v == "" {
+		for k, old := range original {
+			if old == nil {
 				os.Unsetenv(k)
 			} else {
-				os.Setenv(k, v)
+				os.Setenv(k, *old)
 			}
 		}
 	}()
-
 	fn()
 }
 
-func TestLoad_WithMissingRequiredVars(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"DATABASE_URL": "",
-		"JWT_SECRET":   "",
-		"PORT":         "",
-	}, func() {
-		_, err := Load()
-		if err == nil {
-			t.Error("Expected error for missing required env vars, got nil")
-		}
-		if !strings.Contains(err.Error(), "MISSING_ENV_VAR") {
-			t.Errorf("Expected MISSING_ENV_VAR error, got: %s", err.Error())
-		}
-	})
+func newValidProvider() *stubProvider {
+	return &stubProvider{
+		values: map[string]string{
+			"DATABASE_URL": validDBURL,
+			"JWT_SECRET":   validJWTSecret,
+			"ADMIN_TOKEN":  validAdminToken,
+		},
+		errs: map[string]error{},
+	}
 }
 
-func TestLoad_WithValidConfig(t *testing.T) {
+func TestLoadValidConfig(t *testing.T) {
 	withEnvVars(t, map[string]string{
-		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   validTestSecret,
-		"PORT":         "8080",
-		"ENV":          "development",
+		"PORT":               "8080",
+		"ENV":                "development",
+		"RATE_LIMIT_ENABLED": "true",
+		"RATE_LIMIT_MODE":    "ip",
+		"RATE_LIMIT_RPS":     "10",
+		"RATE_LIMIT_BURST":   "20",
 	}, func() {
-		cfg, err := Load()
+		cfg, err := Load(WithSecretsProvider(newValidProvider()))
 		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
+			t.Fatalf("expected no error, got: %v", err)
 		}
 		if cfg.Port != 8080 {
-			t.Errorf("Expected port 8080, got %d", cfg.Port)
+			t.Fatalf("expected port 8080, got %d", cfg.Port)
 		}
-		if cfg.DBConn != "postgres://user:pass@localhost/db" {
-			t.Errorf("Expected DBConn, got %s", cfg.DBConn)
+		if cfg.JWTSecret != validJWTSecret {
+			t.Fatalf("expected JWT secret from provider")
 		}
-		if cfg.JWTSecret != validTestSecret {
-			t.Errorf("Expected JWTSecret, got %s", cfg.JWTSecret)
-		}
-	})
-}
-
-func TestLoad_WithInvalidPort(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   validTestSecret,
-		"PORT":         "invalid",
-	}, func() {
-		_, err := Load()
-		if err == nil {
-			t.Error("Expected error for invalid port, got nil")
-		}
-		if !strings.Contains(err.Error(), "INVALID_PORT") {
-			t.Errorf("Expected INVALID_PORT error, got: %s", err.Error())
+		if cfg.AdminToken != validAdminToken {
+			t.Fatalf("expected admin token from provider")
 		}
 	})
 }
 
-func TestLoad_WithInvalidDatabaseURL(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"DATABASE_URL": "://localhost",
-		"JWT_SECRET":   validTestSecret,
-		"PORT":         "8080",
-	}, func() {
-		_, err := Load()
+func TestLoadMissingRequiredSecrets(t *testing.T) {
+	withEnvVars(t, map[string]string{"ENV": "development"}, func() {
+		provider := &stubProvider{values: map[string]string{}, errs: map[string]error{}}
+		_, err := Load(WithSecretsProvider(provider))
 		if err == nil {
-			t.Error("Expected error for invalid DATABASE_URL, got nil")
+			t.Fatal("expected error for missing required secrets")
+		}
+		msg := err.Error()
+		for _, key := range []string{"DATABASE_URL", "JWT_SECRET", "ADMIN_TOKEN"} {
+			if !strings.Contains(msg, key) {
+				t.Fatalf("expected error to mention %s, got: %s", key, msg)
+			}
+		}
+	})
+}
+
+func TestLoadFailsOnWeakSecrets(t *testing.T) {
+	withEnvVars(t, map[string]string{"ENV": "development"}, func() {
+		provider := &stubProvider{
+			values: map[string]string{
+				"DATABASE_URL": validDBURL,
+				"JWT_SECRET":   "NoSpecial123",
+				"ADMIN_TOKEN":  "NoSpecial456",
+			},
+			errs: map[string]error{},
+		}
+		_, err := Load(WithSecretsProvider(provider))
+		if err == nil {
+			t.Fatal("expected weak secret validation error")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "WEAK_SECRET") {
+			t.Fatalf("expected WEAK_SECRET error, got: %s", msg)
+		}
+	})
+}
+
+func TestLoadProductionRequiresAllowedOrigins(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		"ENV":             "production",
+		"ALLOWED_ORIGINS": "",
+	}, func() {
+		_, err := Load(WithSecretsProvider(newValidProvider()))
+		if err == nil {
+			t.Fatal("expected missing ALLOWED_ORIGINS error")
+		}
+		if !strings.Contains(err.Error(), "ALLOWED_ORIGINS") {
+			t.Fatalf("expected ALLOWED_ORIGINS in error, got: %v", err)
+		}
+	})
+}
+
+func TestLoadProductionRejectsInsecureAllowedOrigins(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		"ENV":             "production",
+		"ALLOWED_ORIGINS": "http://example.com,https://ok.example.com",
+	}, func() {
+		_, err := Load(WithSecretsProvider(newValidProvider()))
+		if err == nil {
+			t.Fatal("expected invalid ALLOWED_ORIGINS error")
 		}
 		if !strings.Contains(err.Error(), "INVALID_URL") {
-			t.Errorf("Expected INVALID_URL error, got: %s", err.Error())
+			t.Fatalf("expected INVALID_URL in error, got: %v", err)
 		}
 	})
 }
 
-func TestIsValidSecret(t *testing.T) {
-	if !isValidSecret(validTestSecret) {
-		t.Fatal("expected validTestSecret to pass")
+func TestLoadRejectsInvalidRateLimitCombination(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		"ENV":              "development",
+		"RATE_LIMIT_MODE":  "invalid",
+		"RATE_LIMIT_RPS":   "100",
+		"RATE_LIMIT_BURST": "10",
+	}, func() {
+		_, err := Load(WithSecretsProvider(newValidProvider()))
+		if err == nil {
+			t.Fatal("expected rate limit validation error")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "RATE_LIMIT_MODE") || !strings.Contains(msg, "RATE_LIMIT_BURST") {
+			t.Fatalf("expected RATE_LIMIT_MODE and RATE_LIMIT_BURST errors, got: %s", msg)
+		}
+	})
+}
+
+func TestLoadRejectsTimeoutOutOfRange(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		"ENV":          "development",
+		"READ_TIMEOUT": "0",
+	}, func() {
+		_, err := Load(WithSecretsProvider(newValidProvider()))
+		if err == nil {
+			t.Fatal("expected invalid timeout error")
+		}
+		if !strings.Contains(err.Error(), "READ_TIMEOUT") {
+			t.Fatalf("expected READ_TIMEOUT in error, got: %v", err)
+		}
+	})
+}
+
+func TestLoadAccumulatesMultipleErrors(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		"ENV":              "production",
+		"PORT":             "70000",
+		"ALLOWED_ORIGINS":  "http://insecure.example.com",
+		"RATE_LIMIT_BURST": "0",
+	}, func() {
+		provider := &stubProvider{
+			values: map[string]string{
+				"DATABASE_URL": "://bad",
+				"JWT_SECRET":   "weak",
+				"ADMIN_TOKEN":  "weak",
+			},
+			errs: map[string]error{},
+		}
+		_, err := Load(WithSecretsProvider(provider))
+		if err == nil {
+			t.Fatal("expected validation errors")
+		}
+		msg := err.Error()
+		checks := []string{"INVALID_PORT", "INVALID_URL", "WEAK_SECRET", "RATE_LIMIT_BURST", "ALLOWED_ORIGINS"}
+		for _, c := range checks {
+			if !strings.Contains(msg, c) {
+				t.Fatalf("expected error to include %s, got: %s", c, msg)
+			}
+		}
+	})
+}
+
+func TestLoadProviderErrorsAreClassified(t *testing.T) {
+	withEnvVars(t, map[string]string{"ENV": "development"}, func() {
+		provider := &stubProvider{
+			values: map[string]string{
+				"DATABASE_URL": validDBURL,
+			},
+			errs: map[string]error{
+				"JWT_SECRET":  errors.New("vault unavailable"),
+				"ADMIN_TOKEN": secrets.ErrSecretNotFound,
+			},
+		}
+		_, err := Load(WithSecretsProvider(provider))
+		if err == nil {
+			t.Fatal("expected provider errors")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "VALIDATION_FAILED") {
+			t.Fatalf("expected VALIDATION_FAILED for provider issue, got: %s", msg)
+		}
+		if !strings.Contains(msg, "MISSING_ENV_VAR") {
+			t.Fatalf("expected MISSING_ENV_VAR for not found secret, got: %s", msg)
+		}
+	})
+}
+
+func TestIsValidSecretRequiresSpecialCharacter(t *testing.T) {
+	if isValidSecret("NoSpecialChars123") {
+		t.Fatal("expected secret without special char to fail")
 	}
-	if isValidSecret("short") {
-		t.Fatal("expected short secret to fail")
+	if !isValidSecret(validJWTSecret) {
+		t.Fatal("expected strong secret to pass")
 	}
 }

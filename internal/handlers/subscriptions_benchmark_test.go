@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -361,5 +363,31 @@ func BenchmarkListSubscriptions_FilteredByStatus_Large(b *testing.B) {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/subscriptions?status=active", nil)
 		router.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkListSubscriptions_LargeDataset(b *testing.B) {
+	// simulate large dataset
+	size := 10000
+
+	data := make([]Subscription, size)
+	for i := 0; i < size; i++ {
+		data[i] = Subscription{
+			ID:       fmt.Sprintf("sub-%d", i),
+			Customer: "cust-1",
+			Status:   "active",
+		}
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		start := time.Now()
+
+		_ = filterSubscriptions(data, "cust-1")
+
+		if time.Since(start) > 50*time.Millisecond {
+			b.Fatalf("query too slow: %v", time.Since(start))
+		}
 	}
 }

@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var tracer = otel.Tracer("repository/postgres")
+var planTracer = otel.Tracer("repository/postgres")
 
 // PlanRepo implements repository.PlanRepository against a live Postgres database.
 type PlanRepo struct {
@@ -35,7 +35,7 @@ func (r *PlanRepo) FindByID(ctx context.Context, id string) (*repository.PlanRow
 		WHERE id = $1`
 
 	var p repository.PlanRow
-	ctx, span := tracer.Start(ctx, "PlanRepo.FindByID",
+	ctx, span := planTracer.Start(ctx, "PlanRepo.FindByID",
 		trace.WithAttributes(attribute.String("plan.id", id)))
 	defer span.End()
 

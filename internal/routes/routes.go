@@ -62,6 +62,16 @@ func Register(r *gin.Engine) {
 
 	r.Use(cors.Middleware(corsProfile))
 
+	// Request size limit - enforced BEFORE body parsing to prevent memory abuse
+	// Global default from config, per-route overrides via inline middleware
+	r.Use(middleware.RequestSizeLimit(cfg.MaxRequestSize))
+
+	// Gzip policy - accept only gzip, reject decompression bombs
+	r.Use(middleware.GzipPolicy(middleware.GzipPolicyConfig{
+		MaxUncompressedBytes: cfg.MaxGzipUncompressed,
+		MaxRatio:             cfg.MaxGzipRatio,
+	}))
+
 	store := idempotency.NewStore(idempotency.DefaultTTL)
 	jwtSecret := cfg.JWTSecret
 

@@ -16,6 +16,7 @@ tags:
   - name: Health
   - name: Plans
   - name: Subscriptions
+  - name: ContractEvents
 paths:
   /api/health:
     get:

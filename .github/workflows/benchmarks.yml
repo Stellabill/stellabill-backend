@@ -7,27 +7,35 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  BENCHMARK_THRESHOLD_PERCENT: 20
+
 jobs:
   benchmark:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache: true
       
       - name: Download dependencies
         run: go mod download
       
-      - name: Run benchmarks
+      - name: Run handlers benchmarks
         run: |
-          go test ./internal/handlers/... -bench=. -benchmem -benchtime=3s | tee new.txt
+          go test ./internal/handlers/... -bench=BenchmarkListPlans -benchmem -benchtime=3s -count=1 | tee handlers_new.txt
+      
+      - name: Run subscriptions benchmarks
+        run: |
+          go test ./internal/handlers/... -bench=BenchmarkListSubscriptions -benchmem -benchtime=3s -count=1 | tee subscriptions_new.txt
       
       - name: Install benchstat
         run: go install golang.org/x/perf/cmd/benchstat@latest
@@ -35,25 +43,37 @@ jobs:
       - name: Download baseline
         continue-on-error: true
         run: |
-          # Download baseline from main branch or artifacts
           gh run download --name benchmark-baseline --dir . || echo "No baseline found"
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Compare with baseline
-        if: hashFiles('baseline.txt') != ''
+      - name: Compare handlers benchmarks
+        if: hashFiles('baseline_handlers.txt') != ''
         run: |
-          echo "## Benchmark Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "## Benchmark Comparison (handlers)" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          benchstat baseline.txt new.txt | tee -a $GITHUB_STEP_SUMMARY
+          benchstat baseline_handlers.txt handlers_new.txt | tee -a $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Benchmark Comparison (subscriptions)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          benchstat baseline_subscriptions.txt subscriptions_new.txt | tee -a $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
       
-      - name: Check for regressions
-        if: hashFiles('baseline.txt') != ''
+      - name: Check for regressions - handlers
+        if: hashFiles('baseline_handlers.txt') != ''
         run: |
-          # Fail if any benchmark regressed by more than 20%
-          if benchstat baseline.txt new.txt | grep -E "\+[2-9][0-9]\.[0-9]+%|\+[0-9]{3,}"; then
-            echo "❌ Performance regression detected (>20%)"
+          if benchstat baseline_handlers.txt handlers_new.txt | grep -E "\+[2-9][0-9]\.[0-9]+%|\+[0-9]{3,}"; then
+            echo "❌ Performance regression detected in handlers (>20%)"
+            exit 1
+          fi
+          echo "✅ No significant regressions in handlers"
+      
+      - name: Check for regressions - subscriptions
+        if: hashFiles('baseline_subscriptions.txt') != ''
+        run: |
+          if benchstat baseline_subscriptions.txt subscriptions_new.txt | grep -E "\+[2-9][0-9]\.[0-9]+%|\+[0-9]{3,}"; then
+            echo "❌ Performance regression detected in subscriptions (>20%)"
             exit 1
           fi
           echo "✅ No significant regressions"
@@ -98,14 +118,16 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
       
       - name: Upload results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
-          path: new.txt
+          path: |
+            handlers_new.txt
+            subscriptions_new.txt
       
       - name: Update baseline (main branch only)
         if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: benchmark-baseline
           path: new.txt

@@ -30,7 +30,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
-  /api/plans:
+  /api/v1/plans:
     get:
       tags: [Plans]
       summary: List billing plans
@@ -94,7 +94,9 @@ paths:
     get:
       tags: [Subscriptions]
       summary: Get one subscription
-      operationId: getSubscription
+      operationId: getSubscriptionV1
+      security:
+        - bearerAuth: []
       parameters:
         - name: id
           in: path

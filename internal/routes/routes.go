@@ -110,22 +110,22 @@ func Register(r *gin.Engine) {
 	{
 		// Public health check - no authentication required
 		api.GET("/health", dep, handlers.Health)
-		v1.GET("/health", handlers.Health)
 
-		// Public read (user + admin)
-		api.GET("/plans",
+		// Versioned API endpoints (v1) with authentication
+		// Public read (user + admin) - moved to v1 for consistency
+		v1.GET("/plans",
 			dep,
 			auth.RequirePermission(auth.PermReadPlans),
 			handlers.ListPlans,
 		)
 
-		api.GET("/subscriptions",
+		v1.GET("/subscriptions",
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			handlers.ListSubscriptions,
 		)
 
-		api.GET("/subscriptions/:id",
+		v1.GET("/subscriptions/:id",
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			handlers.GetSubscription,

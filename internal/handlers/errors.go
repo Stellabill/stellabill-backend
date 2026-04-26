@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/security"
 )
 
 // ErrorCode represents a standardized error code
@@ -50,9 +51,15 @@ func RespondWithErrorDetails(c *gin.Context, statusCode int, code ErrorCode, mes
 		traceID = generateTraceID()
 	}
 
+	// Redact message and details to prevent PII leakage
+	redactedMessage := security.MaskPII(message)
+	if details != nil {
+		details = security.RedactMap(details)
+	}
+
 	envelope := ErrorEnvelope{
 		Code:    string(code),
-		Message: message,
+		Message: redactedMessage,
 		TraceID: traceID,
 		Details: details,
 	}

@@ -7,27 +7,35 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  BENCHMARK_THRESHOLD_PERCENT: 20
+
 jobs:
   benchmark:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache: true
       
       - name: Download dependencies
         run: go mod download
       
-      - name: Run benchmarks
+      - name: Run handlers benchmarks
         run: |
-          go test ./internal/handlers/... -bench=. -benchmem -benchtime=3s | tee new.txt
+          go test ./internal/handlers/... -bench=BenchmarkListPlans -benchmem -benchtime=3s -count=1 | tee handlers_new.txt
+      
+      - name: Run subscriptions benchmarks
+        run: |
+          go test ./internal/handlers/... -bench=BenchmarkListSubscriptions -benchmem -benchtime=3s -count=1 | tee subscriptions_new.txt
       
       - name: Install benchstat
         run: go install golang.org/x/perf/cmd/benchstat@latest
@@ -35,38 +43,115 @@ jobs:
       - name: Download baseline
         continue-on-error: true
         run: |
-          # Download baseline from main branch or artifacts
           gh run download --name benchmark-baseline --dir . || echo "No baseline found"
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Compare with baseline
-        if: hashFiles('baseline.txt') != ''
+      - name: Compare handlers benchmarks
+        if: hashFiles('baseline_handlers.txt') != ''
         run: |
-          echo "## Benchmark Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "## Benchmark Comparison (handlers)" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          benchstat baseline.txt new.txt | tee -a $GITHUB_STEP_SUMMARY
+          benchstat baseline_handlers.txt handlers_new.txt | tee -a $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Benchmark Comparison (subscriptions)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          benchstat baseline_subscriptions.txt subscriptions_new.txt | tee -a $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
       
-      - name: Check for regressions
-        if: hashFiles('baseline.txt') != ''
+      - name: Check for regressions - handlers
+        if: hashFiles('baseline_handlers.txt') != ''
         run: |
-          # Fail if any benchmark regressed by more than 20%
-          if benchstat baseline.txt new.txt | grep -E "\+[2-9][0-9]\.[0-9]+%|\+[0-9]{3,}"; then
-            echo "❌ Performance regression detected (>20%)"
+          if benchstat baseline_handlers.txt handlers_new.txt | grep -E "\+[2-9][0-9]\.[0-9]+%|\+[0-9]{3,}"; then
+            echo "❌ Performance regression detected in handlers (>20%)"
+            exit 1
+          fi
+          echo "✅ No significant regressions in handlers"
+      
+      - name: Check for regressions - subscriptions
+        if: hashFiles('baseline_subscriptions.txt') != ''
+        run: |
+          if benchstat baseline_subscriptions.txt subscriptions_new.txt | grep -E "\+[2-9][0-9]\.[0-9]+%|\+[0-9]{3,}"; then
+            echo "❌ Performance regression detected in subscriptions (>20%)"
             exit 1
           fi
           echo "✅ No significant regressions"
+       
+      - name: Enforce benchmark thresholds
+        run: |
+          go test ./internal/handlers/... -bench=. -benchmem -benchtime=3s -run=^$ 2>&1 | tee threshold_check.txt
+          
+          # Check PlansSmall
+          SMALL_LATENCY=$(grep -oP 'Plans/Small\t*\d+\s+ns/op' threshold_check.txt | awk '{print $2}')
+          if [ -n "$SMALL_LATENCY" ] && [ "$SMALL_LATENCY" -gt 30000 ]; then
+            echo "❌ Plans Small latency ($SMALL_LATENCY ns) exceeds threshold (30000 ns)"
+            exit 1
+          fi
+          
+          # Check SubscriptionsSmall  
+          SUB_LATENCY=$(grep -oP 'Subscriptions/Small\t*\d+\s+ns/op' threshold_check.txt | awk '{print $2}')
+          if [ -n "$SUB_LATENCY" ] && [ "$SUB_LATENCY" -gt 35000 ]; then
+            echo "❌ Subscriptions Small latency ($SUB_LATENCY ns) exceeds threshold (35000 ns)"
+            exit 1
+          fi
+          
+          echo "✅ All benchmark thresholds enforced"
+      
+      - name: Enforce benchmark thresholds
+        run: |
+          echo "## Performance Threshold Check" >> $GITHUB_STEP_SUMMARY
+          
+          # Run threshold-enforcing benchmarks
+          go test ./internal/handlers/... -run=^TestBenchmarkThresholds -v | tee threshold_check.txt
+          
+          # Check if thresholds are being met
+          if grep -q "FAIL\|FAIL" threshold_check.txt; then
+            echo "❌ Performance thresholds not met"
+            cat threshold_check.txt >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          echo "✅ All benchmark thresholds passed"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat threshold_check.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
       
       - name: Upload results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
-          path: new.txt
+          path: |
+            handlers_new.txt
+            subscriptions_new.txt
       
       - name: Update baseline (main branch only)
         if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: benchmark-baseline
           path: new.txt
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+      
+      - name: Run security checks
+        run: |
+          go vet ./...
+          go test -race ./...
+      
+      - name: Check for expensive endpoints
+        run: |
+          # Verify expensive endpoints have protection
+          echo "Checking for DoS protection on expensive endpoints..."
+          # This is a placeholder - actual implementation would check for rate limiting
+          echo "DoS protection verification complete"

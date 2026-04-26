@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"stellarbill-backend/internal/security"
 )
 
 // HTTPPublisher publishes events via HTTP (placeholder implementation)
@@ -25,7 +27,10 @@ type DefaultHTTPClient struct{}
 func (c *DefaultHTTPClient) Post(url string, contentType string, body []byte) (int, error) {
 	// This is a placeholder implementation
 	// In a real implementation, you would use http.Client
-	log.Printf("Would send POST to %s with content-type %s and body: %s", url, contentType, string(body))
+	log.Printf("Would send POST to %s with content-type %s and body: %s", 
+		security.MaskPII(url), 
+		contentType, 
+		security.MaskPII(string(body)))
 	return 200, nil
 }
 
@@ -50,7 +55,7 @@ func (p *HTTPPublisher) Publish(event *Event) error {
 		"data":          eventData.Data,
 		"occurred_at":   event.OccurredAt,
 		"aggregate_id":  event.AggregateID,
-		""aggregate_type": event.AggregateType,
+		"aggregate_type": event.AggregateType,
 		"version":       event.Version,
 	}
 
@@ -86,13 +91,14 @@ func (p *ConsolePublisher) Publish(event *Event) error {
 		return fmt.Errorf("failed to unmarshal event data: %w", err)
 	}
 
-	log.Printf("Publishing event: ID=%s, Type=%s, Data=%+v, AggregateID=%s, AggregateType=%s",
-		event.ID,
+	msg := fmt.Sprintf("Publishing event: ID=%s, Type=%s, Data=%+v, AggregateID=%s, AggregateType=%s",
+		security.MaskPII(event.ID),
 		event.EventType,
 		eventData.Data,
 		safeString(event.AggregateID),
 		safeString(event.AggregateType),
 	)
+	log.Printf("%s", security.MaskPII(msg))
 
 	return nil
 }
@@ -114,7 +120,7 @@ func (p *MultiPublisher) Publish(event *Event) error {
 	for i, publisher := range p.publishers {
 		if err := publisher.Publish(event); err != nil {
 			lastError = fmt.Errorf("publisher %d failed: %w", i, err)
-			log.Printf("Publisher %d failed: %v", i, err)
+			log.Printf("Publisher %d failed: %v", i, security.RedactError(err))
 		}
 	}
 	

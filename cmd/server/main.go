@@ -10,12 +10,18 @@ import (
 	"database/sql"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/routes"
+	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/shutdown"
 	"stellarbill-backend/internal/startup"
+	applogger "stellarbill-backend/internal/logger"
+)
+	"stellarbill-backend/internal/logger"
 )
 
 var listenAndServe = func(srv *http.Server) error {
@@ -64,7 +70,7 @@ func main() {
 	// Create router with configured middleware
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(middleware.Logger(logger))
+	router.Use(middleware.RequestLogger())
 
 	// Security headers middleware
 	router.Use(func(c *gin.Context) {
@@ -75,8 +81,8 @@ func main() {
 	})
 
 	// Wire up services and handlers, then register routes
-	planSvc := services.NewPlanService()
-	subSvc := services.NewSubscriptionService()
+	planSvc := service.NewPlanService()
+	subSvc := service.NewSubscriptionService()
 	h := handlers.NewHandler(planSvc, subSvc)
 	routes.Register(router, h)
 
@@ -145,7 +151,7 @@ func main() {
 		log.Println("Server shutdown completed successfully")
 	}
 
-	logger.Init()
+	applogger.Init()
 
 	r := gin.New()
 

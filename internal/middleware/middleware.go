@@ -3,19 +3,19 @@ package middleware
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"log"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/logger"
+	"stellarbill-backend/internal/security"
 )
 
 const (
-	RequestIDHeader = "X-Request-ID"
-	RequestIDKey    = "request_id"
-	AuthSubjectKey  = "auth_subject"
+	AuthSubjectKey = "auth_subject"
 )
 
 type RateLimiter struct {
@@ -53,10 +53,12 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
-func Recovery(logger *log.Logger) gin.HandlerFunc {
+func Recovery(_ *log.Logger) gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
 		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf("panic recovered request_id=%v err=%v", requestID, recovered)
+		msg := fmt.Sprintf("panic recovered request_id=%v err=%v", requestID, recovered)
+		// Use safe logger that redacts PII
+		logger.SafePrintf(msg)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 			"error":      "internal server error",
 			"request_id": requestID,
@@ -64,20 +66,25 @@ func Recovery(logger *log.Logger) gin.HandlerFunc {
 	})
 }
 
-func Logging(logger *log.Logger) gin.HandlerFunc {
+func Logging(_ *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 
 		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf(
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+		msg := fmt.Sprintf(
 			"method=%s path=%s status=%d request_id=%v duration=%s",
 			c.Request.Method,
-			c.FullPath(),
+			security.MaskPII(path),
 			c.Writer.Status(),
 			requestID,
 			time.Since(start).Round(time.Millisecond),
 		)
+		logger.SafePrintf("%s", msg)
 	}
 }
 
@@ -165,39 +172,6 @@ func (r *RateLimiter) Allow(key string) bool {
 	entry.count++
 	r.clients[key] = entry
 	return true
-}
-
-func sanitizeRequestID(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 128 {
-		return ""
-	}
-
-	var b strings.Builder
-	b.Grow(len(value))
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case strings.ContainsRune("-_.", r):
-			b.WriteRune(r)
-		default:
-			return ""
-		}
-	}
-	return b.String()
-}
-
-func newRequestID() string {
-	buf := make([]byte, 12)
-	if _, err := rand.Read(buf); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format("150405.000000000")))
-	}
-	return hex.EncodeToString(buf)
 }
 
 func DeprecationHeaders() gin.HandlerFunc {

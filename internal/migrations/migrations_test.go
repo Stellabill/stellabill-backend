@@ -85,3 +85,42 @@ func writeFile(t *testing.T, path, contents string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+func TestValidateSequence(t *testing.T) {
+	t.Run("valid sequence", func(t *testing.T) {
+		migs := []Migration{
+			{Version: 1, Name: "a"},
+			{Version: 2, Name: "b"},
+			{Version: 3, Name: "c"},
+		}
+		if err := ValidateSequence(migs); err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+	})
+
+	t.Run("missing version", func(t *testing.T) {
+		migs := []Migration{
+			{Version: 1, Name: "a"},
+			{Version: 3, Name: "c"},
+		}
+		err := ValidateSequence(migs)
+		if err == nil {
+			t.Error("expected error, got nil")
+		} else if err.Error() != "migration sequence error: expected version 2, got 3 for migration 'c'" {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("starts not from 1", func(t *testing.T) {
+		migs := []Migration{
+			{Version: 2, Name: "b"},
+			{Version: 3, Name: "c"},
+		}
+		err := ValidateSequence(migs)
+		if err == nil {
+			t.Error("expected error, got nil")
+		} else if err.Error() != "migration sequence error: expected version 1, got 2 for migration 'b'" {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+}

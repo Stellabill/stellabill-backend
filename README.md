@@ -103,22 +103,36 @@ cd stellabill-backend
 go mod download
 ```
 
-### 3. (Optional) Environment variables
+### 3. Environment variables (required for secure startup)
 
 Create a `.env` file in the project root (do not commit it; it is in `.gitignore`):
 
 ```bash
-# Optional - defaults shown
+# Required for startup
 ENV=development
 PORT=8080
 DATABASE_URL=postgres://localhost/stellarbill?sslmode=disable
-JWT_SECRET=change-me-in-production
-ADMIN_TOKEN=change-me-admin-token
+JWT_SECRET=ChangeMeNow123!Secure
+ADMIN_TOKEN=AnotherStrongToken123!
+
+# Required in production/staging (comma-separated https origins)
+ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+
+# Optional with validation
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_MODE=ip
+RATE_LIMIT_RPS=10
+RATE_LIMIT_BURST=20
+RATE_LIMIT_WHITELIST=/api/health
+READ_TIMEOUT=30
+WRITE_TIMEOUT=30
+IDLE_TIMEOUT=120
+MAX_HEADER_BYTES=1048576
 AUDIT_HMAC_SECRET=stellarbill-dev-audit
 AUDIT_LOG_PATH=audit.log
 ```
 
-Or export them in your shell. The app will run with the defaults if you do not set anything.
+Or export them in your shell. The app now fails fast when required values are missing or insecure.
 
 ### 4. Run the server
 
@@ -149,8 +163,17 @@ curl -X POST http://localhost:8080/api/outbox/test
 |----------------|----------------------------------------------|--------------------------------|
 | `ENV`          | `development`                                | Environment (e.g. production)  |
 | `PORT`         | `8080`                                       | HTTP server port               |
-| `DATABASE_URL` | `postgres://localhost/stellarbill?sslmode=disable` | PostgreSQL connection string   |
-| `JWT_SECRET`   | `change-me-in-production`                     | Secret for JWT (change in prod)|
+| `DATABASE_URL` | None (required) | PostgreSQL connection string (must be valid URL) |
+| `JWT_SECRET`   | None (required) | Secret for JWT (minimum 12 chars with upper/lower/digit/special) |
+| `ADMIN_TOKEN`  | None (required) | Admin endpoint token (minimum 12 chars with upper/lower/digit/special) |
+| `ALLOWED_ORIGINS` | Required in `production`/`staging` | Comma-separated `https://` origins for CORS |
+| `RATE_LIMIT_MODE` | `ip` | One of: `ip`, `user`, `hybrid` |
+| `RATE_LIMIT_RPS` | `10` | Integer between `1` and `1000` |
+| `RATE_LIMIT_BURST` | `20` | Integer between `1` and `5000`, must be `>= RATE_LIMIT_RPS` |
+| `READ_TIMEOUT` | `30` | Timeout in seconds, range `1` to `3600` |
+| `WRITE_TIMEOUT` | `30` | Timeout in seconds, range `1` to `3600` |
+| `IDLE_TIMEOUT` | `120` | Timeout in seconds, range `1` to `3600` |
+| `MAX_HEADER_BYTES` | `1048576` | Header size in bytes, range `1024` to `16777216` |
 | `FF_DEFAULT_ENABLED` | `false`                                | Default state for unknown flags |
 | `FF_LOG_DISABLED` | `true`                                  | Log when flags block requests  |
 | `FF_CONFIG_FILE` | `""`                                    | Path to feature flags config file |
@@ -220,6 +243,10 @@ router.GET("/feature", middleware.RequireAnyFeatureFlags("flag1", "flag2"), hand
 
 ## Testing
 
+> See **[docs/dev-test-guide.md](docs/dev-test-guide.md)** for the full local
+> development and test execution guide, including common failure
+> troubleshooting.
+
 ### Unit tests
 
 Unit tests cover config validation, service logic, HTTP handler behaviour,
@@ -227,7 +254,7 @@ circuit breaker, and the background worker. They use in-memory mocks and
 require **no external services**.
 
 ```bash
-go test ./...
+go test ./internal/... -count=1 -timeout 60s
 ```
 
 ### Integration tests
@@ -240,8 +267,7 @@ repository to the database — then tear the container down automatically.
 access). No manual database setup is required.
 
 ```bash
-# Run integration tests
-go test -tags integration -v -race -count=1 ./integration/...
+go test -tags integration -v -race -count=1 -timeout 120s ./integration/...
 ```
 
 The test suite in `integration/` covers:

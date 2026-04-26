@@ -8,8 +8,6 @@ info:
 
     Notes:
       - Preflight CORS requests (`OPTIONS`) are handled by middleware and return `204`.
-      - Authentication uses Bearer token (JWT) for versioned endpoints.
-      - Health endpoint is public and unversioned.
   version: 0.2.0
 servers:
   - url: http://localhost:8080
@@ -18,14 +16,7 @@ tags:
   - name: Health
   - name: Plans
   - name: Subscriptions
-  - name: Statements
-  - name: Admin
-securitySchemes:
-  bearerAuth:
-    type: http
-    scheme: bearer
-    bearerFormat: JWT
-    description: JWT token obtained via authentication
+  - name: ContractEvents
 paths:
   /api/health:
     get:
@@ -43,9 +34,21 @@ paths:
     get:
       tags: [Plans]
       summary: List billing plans
-      operationId: listPlansV1
-      security:
-        - bearerAuth: []
+      operationId: listPlans
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor for the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+          description: Maximum number of items to return
+          example: 20
       responses:
         "200":
           description: Plans list
@@ -53,13 +56,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlansResponse"
-  /api/v1/subscriptions:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/subscriptions:
     get:
       tags: [Subscriptions]
       summary: List subscriptions
-      operationId: listSubscriptionsV1
-      security:
-        - bearerAuth: []
+      operationId: listSubscriptions
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor for the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+          description: Maximum number of items to return
+          example: 20
       responses:
         "200":
           description: Subscriptions list
@@ -67,7 +86,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubscriptionsResponse"
-  /api/v1/subscriptions/{id}:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/subscriptions/{id}:
     get:
       tags: [Subscriptions]
       summary: Get one subscription
@@ -81,6 +104,7 @@ paths:
           schema:
             type: string
           description: Subscription identifier
+          example: "sub_123"
       responses:
         "200":
           description: Subscription
@@ -88,129 +112,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
-  /api/v1/statements:
-    get:
-      tags: [Statements]
-      summary: List statements
-      operationId: listStatementsV1
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Statements list
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StatementsResponse"
-  /api/v1/statements/{id}:
-    get:
-      tags: [Statements]
-      summary: Get one statement
-      operationId: getStatementV1
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Statement identifier
-      responses:
-        "200":
-          description: Statement
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Statement"
-  /api/v1/admin/purge:
-    post:
-      tags: [Admin]
-      summary: Purge cache (admin only)
-      operationId: purgeCacheV1
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Cache purged
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: "Cache purged successfully"
-  /api/v1/admin/diagnostics:
-    get:
-      tags: [Admin]
-      summary: Run diagnostics (admin only)
-      operationId: runDiagnosticsV1
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Diagnostics results
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: "ok"
-                  checks:
-                    type: object
-  /api/v1/admin/reconcile:
-    post:
-      tags: [Admin]
-      summary: Reconcile subscriptions (admin only)
-      operationId: reconcileV1
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                subscriptions:
-                  type: array
-                  items:
-                    type: string
-      responses:
-        "200":
-          description: Reconciliation complete
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: "reconciliation complete"
-  /api/v1/admin/reports:
-    get:
-      tags: [Admin]
-      summary: List reconciliation reports (admin only)
-      operationId: listReportsV1
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Reports list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  reports:
-                    type: array
-                    items:
-                      type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor for pagination
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return
+      schema:
+        type: integer
+        default: 10
+        maximum: 100
   schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error, message, code]
+      properties:
+        error:
+          type: string
+          description: High-level error type
+        message:
+          type: string
+          description: Human-readable error detail
+        code:
+          type: string
+          description: Machine-readable error code
+    Pagination:
+      type: object
+      additionalProperties: false
+      required: [has_more]
+      properties:
+        next_cursor:
+          type: string
+          description: Opaque token to retrieve the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        has_more:
+          type: boolean
+          description: Indicates if there are more results available
+          example: true
     HealthResponse:
       type: object
       additionalProperties: false
@@ -222,6 +173,19 @@ components:
         service:
           type: string
           example: stellarbill-backend
+    Pagination:
+      type: object
+      required: [limit, has_more]
+      properties:
+        next_cursor:
+          type: string
+          example: eyJpZCI6InBsYW5fMiIsInNvcnRfdmFsdWUiOiJQbGFuIDIifQ==
+        limit:
+          type: integer
+          example: 10
+        has_more:
+          type: boolean
+          example: true
     Plan:
       type: object
       additionalProperties: false
@@ -235,7 +199,6 @@ components:
           example: Basic
         amount:
           type: string
-          description: Amount as string (placeholder until DB integration).
           example: "1000"
         currency:
           type: string
@@ -249,12 +212,14 @@ components:
     PlansResponse:
       type: object
       additionalProperties: false
-      required: [plans]
+      required: [plans, pagination]
       properties:
         plans:
           type: array
           items:
             $ref: "#/components/schemas/Plan"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
     Subscription:
       type: object
       additionalProperties: false
@@ -280,49 +245,74 @@ components:
           example: monthly
         next_billing:
           type: string
-          description: Next billing datetime (string placeholder).
           example: "2026-04-01T00:00:00Z"
     SubscriptionsResponse:
       type: object
       additionalProperties: false
-      required: [subscriptions]
+      required: [subscriptions, pagination]
       properties:
         subscriptions:
           type: array
           items:
             $ref: "#/components/schemas/Subscription"
-    Statement:
-      type: object
-      additionalProperties: false
-      required: [id, subscription_id, amount, currency, status]
-      properties:
-        id:
-          type: string
-          example: stmt_123
-        subscription_id:
-          type: string
-          example: sub_123
-        amount:
-          type: string
-          example: "1000"
-        currency:
-          type: string
-          example: NGN
-        status:
-          type: string
-          example: pending
-        period_start:
-          type: string
-          example: "2026-04-01T00:00:00Z"
-        period_end:
-          type: string
-          example: "2026-05-01T00:00:00Z"
-    StatementsResponse:
-      type: object
-      additionalProperties: false
-      required: [statements]
-      properties:
-        statements:
-          type: array
-          items:
-            $ref: "#/components/schemas/Statement"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+  responses:
+    BadRequest:
+      description: Validation or client error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            PaginationLimitExceeded:
+              value:
+                error: "Bad Request"
+                message: "Pagination limit cannot exceed 100 items."
+                code: "validation_error"
+            InvalidCursorFormat:
+              value:
+                error: "Bad Request"
+                message: "Invalid pagination cursor format provided."
+                code: "invalid_cursor"
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            TokenMissing:
+              value:
+                error: "Unauthorized"
+                message: "Authentication token is missing or invalid."
+                code: "auth_unauthorized"
+            TokenExpired:
+              value:
+                error: "Unauthorized"
+                message: "Authentication token has expired."
+                code: "auth_token_expired"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            AccessDenied:
+              value:
+                error: "Forbidden"
+                message: "You do not have permission to access this resource."
+                code: "auth_forbidden"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            ResourceNotFound:
+              value:
+                error: "Not Found"
+                message: "The requested subscription could not be found."
+                code: "resource_not_found"

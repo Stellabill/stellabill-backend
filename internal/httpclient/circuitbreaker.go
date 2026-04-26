@@ -3,6 +3,8 @@ package httpclient
 import (
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // State represents the state of the circuit breaker.
@@ -21,16 +23,26 @@ type CircuitBreaker struct {
 	failures     int
 	maxFailures  int
 	resetTimeout time.Duration
-	openedAt     time.Time
+	openedAt       time.Time
+	probeStartedAt time.Time
+	host           string
+	logger       *zap.Logger
 }
 
 // NewCircuitBreaker initializes a new CircuitBreaker.
-func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBreaker {
-	return &CircuitBreaker{
+func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration, host string, logger *zap.Logger) *CircuitBreaker {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	cb := &CircuitBreaker{
 		state:        StateClosed,
 		maxFailures:  maxFailures,
 		resetTimeout: resetTimeout,
+		host:         host,
+		logger:       logger,
 	}
+	HTTPClientCircuitState.WithLabelValues(host).Set(float64(StateClosed))
+	return cb
 }
 
 // State returns the current State.
@@ -53,16 +65,26 @@ func (cb *CircuitBreaker) Allow() bool {
 
 	switch cb.state {
 	case StateOpen:
+		// Circuit is open. If the reset timeout has elapsed, allow exactly one probe request (Half-Open)
 		if time.Since(cb.openedAt) > cb.resetTimeout {
-			// Transition to HalfOpen to allow a single probe request
 			cb.state = StateHalfOpen
+			cb.probeStartedAt = time.Now()
+			HTTPClientCircuitState.WithLabelValues(cb.host).Set(float64(StateHalfOpen))
+			cb.logger.Info("Circuit breaker half-opened, allowing probe request", zap.String("host", cb.host))
+			return true
+		}
+		// Reset timeout has not elapsed; reject request
+		return false
+	case StateHalfOpen:
+		// A probe request is currently in-flight. Reject others unless the probe has hung past the timeout threshold.
+		if time.Since(cb.probeStartedAt) > cb.resetTimeout {
+			cb.probeStartedAt = time.Now()
+			cb.logger.Warn("Circuit breaker previous probe hung, allowing new probe request", zap.String("host", cb.host))
 			return true
 		}
 		return false
-	case StateHalfOpen:
-		// Only one probe request allowed at a time. Others fail fast.
-		return false
 	case StateClosed:
+		// Normal operation; allow all requests
 		return true
 	}
 	return true
@@ -73,10 +95,14 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
+	// If a probe request succeeded, the service has recovered; close the circuit.
 	if cb.state == StateHalfOpen || cb.state == StateOpen {
 		cb.state = StateClosed
 		cb.failures = 0
+		HTTPClientCircuitState.WithLabelValues(cb.host).Set(float64(StateClosed))
+		cb.logger.Info("Circuit breaker closed", zap.String("host", cb.host))
 	} else if cb.failures > 0 {
+		// Reset transient failures during normal operation
 		cb.failures = 0
 	}
 }
@@ -86,15 +112,21 @@ func (cb *CircuitBreaker) RecordFailure() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
+	// If in Half-Open state, the probe failed; immediately re-open the circuit.
 	if cb.state == StateHalfOpen {
 		cb.state = StateOpen
 		cb.openedAt = time.Now()
+		HTTPClientCircuitState.WithLabelValues(cb.host).Set(float64(StateOpen))
+		cb.logger.Warn("Circuit breaker opened (probe failed)", zap.String("host", cb.host))
 		return
 	}
 
+	// Normal operation: track failures until threshold is reached.
 	cb.failures++
 	if cb.failures >= cb.maxFailures {
 		cb.state = StateOpen
 		cb.openedAt = time.Now()
+		HTTPClientCircuitState.WithLabelValues(cb.host).Set(float64(StateOpen))
+		cb.logger.Warn("Circuit breaker opened (threshold reached)", zap.String("host", cb.host), zap.Int("failures", cb.failures))
 	}
 }

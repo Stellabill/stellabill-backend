@@ -96,6 +96,7 @@ func Register(r *gin.Engine) {
 	dep := middleware.DeprecationHeaders()
 
 	api.Use(idempotency.Middleware(store))
+	api.Use(middleware.MaintenanceMode())
 	v1.Use(middleware.AuthMiddleware(jwtSecret))
 	{
 		// Public health check - no authentication required
@@ -135,6 +136,8 @@ func Register(r *gin.Engine) {
 
 		admin := api.Group("/admin")
 		{
+			admin.POST("/maintenance/enable", auth.RequirePermission(auth.PermManageSubscriptions), handlers.EnableMaintenance)
+			admin.POST("/maintenance/disable", auth.RequirePermission(auth.PermManageSubscriptions), handlers.DisableMaintenance)
 			admin.POST("/purge", adminHandler.PurgeCache)
 			// Diagnostics endpoint — re-runs startup checks for live triage
 			diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)

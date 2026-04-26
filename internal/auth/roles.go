@@ -6,6 +6,7 @@ const (
 	RoleAdmin    Role = "admin"
 	RoleMerchant Role = "merchant"
 	RoleCustomer Role = "customer"
+	RoleUser     Role = "user"
 )
 
 type Permission string

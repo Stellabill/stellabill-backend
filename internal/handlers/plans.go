@@ -4,24 +4,48 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/repository"
 )
 
-// Plan is the plans payload shape exposed by handlers.
 type Plan struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	Amount      string `json:"amount"`
+	Amount      string `json:"amount"` // Changed to string to match tests
 	Currency    string `json:"currency"`
 	Interval    string `json:"interval"`
-	Description string `json:"description,omitempty"`
+	Description string `json:"description"`
 }
 
-var planRepo repository.PlanRepository
+func (p Plan) GetID() string        { return p.ID }
+func (p Plan) GetSortValue() string { return p.Name } // Standardize on Name as sort key
 
-// SetPlanRepository allows wiring a PlanRepository (used by routes.Register).
-func SetPlanRepository(r repository.PlanRepository) {
-	planRepo = r
+func (h *Handler) ListPlans(c *gin.Context) {
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 {
+		limit = 10
+	}
+
+	cursorStr := c.Query("cursor")
+	cursor, err := pagination.Decode(cursorStr)
+	if err != nil {
+		RespondWithInternalError(c, "Failed to retrieve plans")
+		return
+	}
+
+	allPlans, err := h.Plans.ListPlans(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
+		return
+	}
+
+	// For now, we paginate the slice. In a real DB repo, this would be in the query.
+	page := pagination.PaginateSlice(allPlans, cursor, limit)
+
+	c.JSON(http.StatusOK, gin.H{
+		"plans":       page.Items,
+		"next_cursor": page.NextCursor,
+		"has_more":    page.HasMore,
+	})
 }
 
 // ListPlans handles requests through the Handler dependency interface.
@@ -46,7 +70,7 @@ func ListPlans(c *gin.Context) {
 
 	rows, err := planRepo.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		RespondWithInternalError(c, "Failed to retrieve plans")
 		return
 	}
 

@@ -1,0 +1,83 @@
+[
+  {
+    "description": "Contract created event - full payload",
+    "event": {
+      "idempotency_key": "evt_contract_created_001",
+      "event_type": "contract.created",
+      "contract_id": "contract_abc123",
+      "tenant_id": "tenant_primary",
+      "occurred_at": "2024-01-15T10:30:00Z",
+      "sequence_num": 1,
+      "payload": {
+        "amount": 100000,
+        "currency": "USDC",
+        "interval": "monthly",
+        "start_date": "2024-01-15",
+        "plan_id": "plan_premium_monthly"
+      }
+    }
+  },
+  {
+    "description": "Contract amended event - full payload",
+    "event": {
+      "idempotency_key": "evt_contract_amended_001",
+      "event_type": "contract.amended",
+      "contract_id": "contract_abc123",
+      "tenant_id": "tenant_primary",
+      "occurred_at": "2024-02-15T10:30:00Z",
+      "sequence_num": 2,
+      "payload": {
+        "previous_amount": 100000,
+        "new_amount": 150000,
+        "currency": "USDC",
+        "reason": "upgrade"
+      }
+    }
+  },
+  {
+    "description": "Contract renewed event",
+    "event": {
+      "idempotency_key": "evt_contract_renewed_001",
+      "event_type": "contract.renewed",
+      "contract_id": "contract_abc123",
+      "tenant_id": "tenant_primary",
+      "occurred_at": "2024-02-15T10:30:00Z",
+      "sequence_num": 3,
+      "payload": {
+        "amount": 150000,
+        "currency": "USDC",
+        "new_period_start": "2024-02-15",
+        "new_period_end": "2024-03-15"
+      }
+    }
+  },
+  {
+    "description": "Contract cancelled event",
+    "event": {
+      "idempotency_key": "evt_contract_cancelled_001",
+      "event_type": "contract.cancelled",
+      "contract_id": "contract_abc123",
+      "tenant_id": "tenant_primary",
+      "occurred_at": "2024-03-01T10:30:00Z",
+      "sequence_num": 4,
+      "payload": {
+        "reason": "customer_request",
+        "cancel_at": "2024-03-01"
+      }
+    }
+  },
+  {
+    "description": "Contract expired event",
+    "event": {
+      "idempotency_key": "evt_contract_expired_001",
+      "event_type": "contract.expired",
+      "contract_id": "contract_abc123",
+      "tenant_id": "tenant_primary",
+      "occurred_at": "2024-03-15T10:30:00Z",
+      "sequence_num": 5,
+      "payload": {
+        "reason": "term_ended"
+      }
+    }
+  }
+]

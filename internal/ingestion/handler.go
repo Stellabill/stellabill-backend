@@ -5,16 +5,20 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"stellarbill-backend/internal/decoder"
 )
 
 // NewIngestHandler returns a Gin handler that accepts a single contract event
 // for ingestion. It validates the request, delegates to the Service, and
 // returns the normalised event or an appropriate error.
+//
+// Strict JSON decoding is enforced: unknown fields and type mismatches are
+// rejected with 400 to prevent silent data loss and API misuse.
 func NewIngestHandler(svc *Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var raw RawEvent
-		if err := c.ShouldBindJSON(&raw); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON body"})
+		if err := decoder.DecodeStrict(c, &raw); err != nil {
 			return
 		}
 

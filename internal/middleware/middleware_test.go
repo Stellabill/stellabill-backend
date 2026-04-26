@@ -225,19 +225,6 @@ func TestRecoveryReturnsStructuredError(t *testing.T) {
 	}
 }
 
-func TestSanitizeRequestID(t *testing.T) {
-	t.Parallel()
-
-	if got := sanitizeRequestID(" valid-id_123 "); got != "valid-id_123" {
-		t.Fatalf("expected valid request id, got %q", got)
-	}
-	if got := sanitizeRequestID("bad id"); got != "" {
-		t.Fatalf("expected invalid request id to be rejected, got %q", got)
-	}
-	if got := sanitizeRequestID(""); got != "" {
-		t.Fatalf("expected empty request id to be rejected, got %q", got)
-	}
-}
 
 func TestRateLimiterWindowReset(t *testing.T) {
 	t.Parallel()

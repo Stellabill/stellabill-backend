@@ -427,6 +427,7 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		}
 	}
 
+	// Security-focused defaults: conservative limits by default
 	if val := os.Getenv("RATE_LIMIT_RPS"); val != "" {
 		if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitRPS && rps <= MaxRateLimitRPS {
 			c.RateLimitRPS = rps
@@ -438,6 +439,8 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 				Value:   val,
 			})
 		}
+	} else {
+		c.RateLimitRPS = 10 // Conservative default for security
 	}
 
 	if val := os.Getenv("RATE_LIMIT_BURST"); val != "" {
@@ -451,6 +454,8 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 				Value:   val,
 			})
 		}
+	} else {
+		c.RateLimitBurst = 20 // Conservative default (2x RPS)
 	}
 
 	if c.RateLimitBurst < c.RateLimitRPS {
@@ -477,6 +482,8 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			paths[i] = clean
 		}
 		c.RateLimitWhitelist = paths
+	} else {
+		c.RateLimitWhitelist = []string{"/api/health"} // Only health check whitelisted by default
 	}
 
 	// Validate TRACING_EXPORTER

@@ -42,13 +42,21 @@ func Register(r *gin.Engine) {
 
 	corsProfile := cors.ProfileForEnv(cfg.Env, cfg.AllowedOrigins)
 
-	// Apply rate limiting middleware
+	// Apply rate limiting middleware with per-route overrides for sensitive endpoints
 	rateLimitConfig := middleware.RateLimiterConfig{
 		Enabled:        cfg.RateLimitEnabled,
 		Mode:           middleware.RateLimitMode(cfg.RateLimitMode),
 		RequestsPerSec: int64(cfg.RateLimitRPS),
 		BurstSize:      int64(cfg.RateLimitBurst),
 		WhitelistPaths: cfg.RateLimitWhitelist,
+		LogRateLimitHits: true, // Enable logging for security monitoring
+		RouteConfigs: map[string]middleware.RouteSpecificConfig{
+			// Stricter limits for expensive list endpoints
+			"/api/plans":        {RequestsPerSec: 5, BurstSize: 10},
+			"/api/subscriptions": {RequestsPerSec: 5, BurstSize: 10},
+			// Even stricter for reconciliation endpoint (admin-only, high-cost operation)
+			"/api/admin/reconcile": {RequestsPerSec: 2, BurstSize: 5},
+		},
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 

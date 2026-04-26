@@ -727,3 +727,79 @@ func GetRequiredEnvVars() []string {
 func GetOptionalEnvVars() map[string]string {
 	return optionalEnvVars
 }
+
+// validateAllowedOrigins validates CORS origin configuration based on environment
+func validateAllowedOrigins(origins, env string) error {
+	if origins == "" {
+		return nil
+	}
+
+	// Parse comma-separated origins
+	originList := strings.Split(origins, ",")
+	for i, o := range originList {
+		originList[i] = strings.TrimSpace(o)
+	}
+
+	// Check for wildcard
+	hasWildcard := false
+	for _, o := range originList {
+		if o == "*" {
+			hasWildcard = true
+			break
+		}
+	}
+
+	// Wildcard validation
+	if hasWildcard {
+		// Wildcard only allowed in development
+		if env == "production" || env == "staging" {
+			return fmt.Errorf("wildcard origin (*) not allowed in %s environment", env)
+		}
+		// Wildcard must be the only origin
+		if len(originList) > 1 {
+			return fmt.Errorf("wildcard origin (*) cannot be combined with other origins")
+		}
+		return nil
+	}
+
+	// Validate each origin format
+	for _, origin := range originList {
+		if origin == "" {
+			continue
+		}
+
+		// Parse as URL
+		parsed, err := url.Parse(origin)
+		if err != nil {
+			return fmt.Errorf("invalid origin URL %q: %v", origin, err)
+		}
+
+		// Must have scheme
+		if parsed.Scheme == "" {
+			return fmt.Errorf("origin %q must include scheme (https://)", origin)
+		}
+
+		// Must have host
+		if parsed.Host == "" {
+			return fmt.Errorf("origin %q must include host", origin)
+		}
+
+		// Production/staging must use HTTPS
+		if (env == "production" || env == "staging") && parsed.Scheme != "https" {
+			return fmt.Errorf("origin %q must use https in %s environment", origin, env)
+		}
+
+		// Must not have path, query, or fragment
+		if parsed.Path != "" && parsed.Path != "/" {
+			return fmt.Errorf("origin %q must not include path", origin)
+		}
+		if parsed.RawQuery != "" {
+			return fmt.Errorf("origin %q must not include query parameters", origin)
+		}
+		if parsed.Fragment != "" {
+			return fmt.Errorf("origin %q must not include fragment", origin)
+		}
+	}
+
+	return nil
+}

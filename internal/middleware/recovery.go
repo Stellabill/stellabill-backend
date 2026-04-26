@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"stellabill-backend/internal/logger"
+	"stellarbill-backend/internal/logger"
+	"stellarbill-backend/internal/security"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,20 +36,16 @@ const (
 	redactedPlaceholder  = "[REDACTED]"
 )
 
-// secretPatterns captures common shapes for credentials that occasionally end
-// up inside panic values (e.g. a panic from a third-party SDK echoing an
-// Authorization header). They are redacted in the *log line* so internal
-// observability tooling does not become a new exfil channel. The client
-// response never contains the panic value at all.
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._\-]+`),
-	regexp.MustCompile(`(?i)authorization:\s*\S+`),
-	regexp.MustCompile(`(?i)(password|passwd|pwd)\s*[:=]\s*\S+`),
-	regexp.MustCompile(`(?i)(api[_-]?key|apikey|secret|token)\s*[:=]\s*\S+`),
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-	// JWT: three base64url segments separated by dots.
-	regexp.MustCompile(`eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+`),
-}
+				// Redact error and path
+				redactedErr := security.RedactError(err)
+				redactedPath := security.MaskPII(c.Request.URL.Path)
+
+				logger.Log.WithFields(map[string]interface{}{
+					"level":      "error",
+					"request_id": requestID,
+					"path":       redactedPath,
+					"error":      redactedErr,
+				}).Error("panic recovered")
 
 // Recovery returns a Gin middleware that captures any panic raised by a
 // downstream handler or middleware, logs a structured event with the

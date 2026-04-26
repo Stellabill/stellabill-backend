@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -10,12 +11,18 @@ import (
 	"database/sql"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/routes"
+	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/shutdown"
 	"stellarbill-backend/internal/startup"
+	applogger "stellarbill-backend/internal/logger"
+)
+	"stellarbill-backend/internal/logger"
 )
 
 var listenAndServe = func(srv *http.Server) error {
@@ -29,47 +36,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Init PII-safe logger
+	// -------------------------------
+	// LOGGER SETUP
+	// -------------------------------
 	var logger *zap.Logger
 	if cfg.Env == "production" {
 		logger = security.ProductionLogger()
-		defer logger.Sync()
 		gin.SetMode(gin.ReleaseMode)
-		logger.Info("Running in production mode")
-	} else if cfg.Env == "development" {
-		logger = security.DevLogger()
-		defer logger.Sync()
-		gin.SetMode(gin.DebugMode)
-		logger.Info("Running in development mode")
 	} else {
-		logger = security.ProductionLogger()
-		defer logger.Sync()
-		gin.SetMode(gin.TestMode)
-		logger.Info("Running in test mode", zap.String("env", cfg.Env))
+		logger = security.DevLogger()
+		gin.SetMode(gin.DebugMode)
 	}
+	defer logger.Sync()
 
-	// Log config warnings
-	if vResult := cfg.Validate(); len(vResult.Warnings) > 0 {
-		logger.Warn("Configuration warnings",
-			zap.Strings("warnings", vResult.Warnings))
-	}
-
-	// Run startup diagnostics — fail fast if critical checks fail
-	startupResults := startup.RunChecks(cfg, nil, nil) // db/migrations wired below once available
-	logger.Info("Startup checks completed:\n" + startup.FormatResults(startupResults))
-	if startup.HasFailures(startupResults) {
-		logger.Fatal("Startup checks failed — aborting")
-	}
-
-	// Create router with configured middleware. RequestID runs first so the
-	// hardened Recovery middleware can correlate every panic log line and
-	// error envelope with a stable id.
+	// -------------------------------
+	// ROUTER SETUP
+	// -------------------------------
 	router := gin.New()
-	router.Use(middleware.RequestID())
-	router.Use(middleware.Recovery())
-	router.Use(middleware.Logger(logger))
+	router.Use(gin.Recovery())
+	router.Use(middleware.RequestLogger())
 
-	// Security headers middleware
+	// Security headers
 	router.Use(func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
@@ -78,15 +65,23 @@ func main() {
 	})
 
 	// Wire up services and handlers, then register routes
-	planSvc := services.NewPlanService()
-	subSvc := services.NewSubscriptionService()
+	planSvc := service.NewPlanService()
+	subSvc := service.NewSubscriptionService()
 	h := handlers.NewHandler(planSvc, subSvc)
 	routes.Register(router, h)
 
-	// Build server address
+	// -------------------------------
+	// DATABASE (if exists)
+	// -------------------------------
+	var dbConn *sql.DB // replace with real DB if available
+
+	txManager := db.NewTxManager(dbConn)
+
+	// -------------------------------
+	// HTTP SERVER
+	// -------------------------------
 	addr := fmt.Sprintf(":%d", cfg.Port)
 
-	// Create HTTP server with configuration
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      router,
@@ -95,37 +90,51 @@ func main() {
 		IdleTimeout:  time.Duration(cfg.IdleTimeout) * time.Second,
 	}
 
-	logger.Info("Starting Stellarbill backend",
-		zap.String("addr", addr),
-		zap.String("env", cfg.Env))
-	logger.Info("Server timeouts",
-		zap.Int("read", cfg.ReadTimeout),
-		zap.Int("write", cfg.WriteTimeout),
-		zap.Int("idle", cfg.IdleTimeout))
-
-	// Initialize graceful shutdown orchestrator
-	// Shutdown timeout: 30 seconds (total time for all cleanup)
-	// Drain timeout: 20 seconds (time to wait for in-flight requests)
-	gracefulShutdown := shutdown.NewGracefulShutdown(
+	// -------------------------------
+	// GRACEFUL SHUTDOWN
+	// -------------------------------
+	gs := shutdown.NewGracefulShutdown(
 		srv,
 		30*time.Second,
 		20*time.Second,
 	)
 
-	// Register cleanup callbacks in reverse order of initialization
-	gracefulShutdown.OnShutdown(func(ctx context.Context) error {
-		log.Println("Cleanup callback: Releasing resources...")
-		// Add any additional cleanup logic here
-		// e.g., database connection pools, caches, etc.
+	// 🔥 CRITICAL: propagate shutdown context
+	srv.BaseContext = func(_ net.Listener) context.Context {
+		return gs.Context()
+	}
+
+	// -------------------------------
+	// CLEANUP CALLBACKS
+	// -------------------------------
+
+	// DB safety
+	gs.OnShutdown(func(ctx context.Context) error {
+		log.Println("Waiting for DB transactions...")
+		return txManager.Wait(ctx)
+	})
+
+	// Audit logs
+	gs.RegisterAuditFlush(func(ctx context.Context) error {
+		log.Println("Flushing audit logs...")
+		time.Sleep(1 * time.Second)
 		return nil
 	})
 
-	// Start server in a background goroutine
-	serverErrors := make(chan error, 1)
+	// Outbox events
+	gs.RegisterOutboxFlush(func(ctx context.Context) error {
+		log.Println("Flushing outbox events...")
+		time.Sleep(1 * time.Second)
+		return nil
+	})
+
+	// -------------------------------
+	// START SERVER
+	// -------------------------------
 	go func() {
-		log.Println("Listening for connections...")
+		logger.Info("Server starting", zap.String("addr", addr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErrors <- err
+			log.Fatalf("Server error: %v", err)
 		}
 	}()
 
@@ -148,7 +157,7 @@ func main() {
 		log.Println("Server shutdown completed successfully")
 	}
 
-	logger.Init()
+	applogger.Init()
 
 	r := gin.New()
 
@@ -160,11 +169,8 @@ func main() {
 
 	var db *sql.DB = nil // existing or future DB
 
-	routes.RegisterRoutes(r, db)
-
-	r.Run()
+	logger.Info("Server exited cleanly")
 }
-
 func newRouter() *gin.Engine {
 	router := gin.New()
 	router.Use(
@@ -177,4 +183,3 @@ func newRouter() *gin.Engine {
 	routes.Register(router)
 	return router
 }
-

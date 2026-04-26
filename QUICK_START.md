@@ -1,5 +1,9 @@
 # Quick Start: Billing Worker
 
+> **This file covers the billing worker only.**
+> For the full local dev and test guide (including troubleshooting), see
+> **[docs/dev-test-guide.md](docs/dev-test-guide.md)**.
+
 ## 30-Second Overview
 
 The billing worker is a background job scheduler that:

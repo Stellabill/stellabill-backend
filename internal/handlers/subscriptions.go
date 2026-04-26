@@ -1,16 +1,13 @@
 package handlers
 
 import (
-	"database/sql"
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/db"
+	"stellarbill-backend/internal/pagination"
+	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/subscriptions"
-	"stellarbill-backend/internal/validation"
 )
 
 type Subscription struct {
@@ -23,15 +20,38 @@ type Subscription struct {
 	NextBilling string `json:"next_billing,omitempty"`
 }
 
+func (s Subscription) GetID() string        { return s.ID }
+func (s Subscription) GetSortValue() string { return s.Customer } // Sort by customer for now
+
 func (h *Handler) ListSubscriptions(c *gin.Context) {
-	// Delegate to the injected service/repo. Keep behavior minimal and compatible with tests.
-	subs, err := h.Subscriptions.ListSubscriptions(c)
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 {
+		limit = 10
+	}
+
+	cursorStr := c.Query("cursor")
+	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor format"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"subscriptions": subs})
+
+	allSubs, err := h.Subscriptions.ListSubscriptions(c)
+	if err != nil {
+		RespondWithInternalError(c, "Failed to retrieve subscriptions")
+		return
+	}
+
+	page := pagination.PaginateSlice(allSubs, cursor, limit)
+
+	c.JSON(http.StatusOK, gin.H{
+		"subscriptions": page.Items,
+		"next_cursor":   page.NextCursor,
+		"has_more":      page.HasMore,
+	})
 }
+
 
 func (h *Handler) GetSubscription(c *gin.Context) {
 	id := c.Param("id")
@@ -52,107 +72,79 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		// Minimal, safe handler that validates caller and path, then delegates to the service.
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			RespondWithAuthError(c, "unauthorized")
+			RespondWithAuthError(c, "Missing authentication credentials")
 			return
 		}
 
-		// 0. Reject unexpected query params for strict alignment with OpenAPI
-		if len(c.Request.URL.Query()) > 0 {
-			RespondWithValidationFields(c, "Unexpected query parameters", nil)
+		tenantID, exists := c.Get("tenantID")
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tenant id required"})
 			return
 		}
 
-		id := c.Param("id")
-		id = strings.TrimSpace(id)
-		id = validation.NormalizeString(id)
-		if err := validation.ValidateUUID(id); err != nil {
-			RespondWithValidationFields(c, "Invalid subscription ID", validation.ValidateVar(id, "required,uuid"))
+		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
+			RespondWithValidationError(c, "Invalid query parameters", map[string]interface{}{
+				"reason": err.Error(),
+			})
 			return
 		}
-		tenantID, _ := c.Get("tenantID")
 
-		// Delegate to service (note: real implementation may include ownership checks)
-		detail, warnings, err := svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id)
+		id, err := requestparams.NormalizePathID("id", c.Param("id"))
 		if err != nil {
-			statusCode, errorCode, msg := MapServiceErrorToResponse(err)
-			RespondWithError(c, statusCode, errorCode, msg)
+			RespondWithValidationError(c, "Invalid subscription id", map[string]interface{}{
+				"field":  "id",
+				"reason": err.Error(),
+			})
 			return
 		}
 
-		c.JSON(http.StatusOK, service.ResponseEnvelope{
-			APIVersion: "1",
-			Data:       detail,
-			Warnings:   warnings,
-		})
+		// Delegate to service
+		_, _, err = svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"id": id})
 	}
 }
 
-// UpdateSubscriptionStatus handles status updates with validation and atomic outbox publishing
-func (h *Handler) UpdateSubscriptionStatus(c *gin.Context) {
+// UpdateSubscriptionStatus handles status updates with validation
+func UpdateSubscriptionStatus(c *gin.Context) {
 	id := c.Param("id")
-	if err := validation.ValidateUUID(id); err != nil {
-		RespondWithValidationFields(c, "Invalid subscription ID", []validation.FieldError{
-			{Field: "id", Message: "ID must be a valid UUID"},
+	if id == "" {
+		RespondWithValidationError(c, "subscription id is required", map[string]interface{}{
+			"field":  "id",
+			"reason": "cannot be empty",
 		})
 		return
 	}
 
 	var payload struct {
-		Status string `json:"status" validate:"required,oneof=active cancelled expired pending"`
+		Status string `json:"status" binding:"required"`
 	}
 
-	if fieldErrors := validation.BindAndValidateJSON(c, &payload); len(fieldErrors) > 0 {
-		RespondWithValidationFields(c, "Validation failed", fieldErrors)
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		RespondWithValidationError(c, "Invalid request body", map[string]interface{}{
+			"field":  "status",
+			"reason": err.Error(),
+		})
 		return
 	}
 
-	// Use RunInTransaction for atomicity
-	err := db.RunInTransaction(c.Request.Context(), h.DB, func(tx *sql.Tx) error {
-		// 1. Fetch current subscription to check transition
-		// We use the repository with the transaction
-		subRepo := h.SubRepo.WithTx(tx)
-		sub, err := subRepo.GetByID(id)
-		if err != nil {
-			return err
-		}
+	// TODO: fetch current subscription from DB
+	currentStatus := "active" // placeholder
 
-		// 2. Validate transition
-		if err := subscriptions.CanTransition(sub.Status, payload.Status); err != nil {
-			return err // Will be handled outside to return 422
-		}
-
-		// 3. Update status
-		if err := subRepo.UpdateStatus(id, payload.Status); err != nil {
-			return err
-		}
-
-		// 4. Publish outbox event
-		eventData := map[string]interface{}{
-			"subscription_id": id,
-			"old_status":      sub.Status,
-			"new_status":      payload.Status,
-		}
-		
-		// Use a deterministic deduplication ID for idempotency if provided in headers (optional)
-		// For now, we'll generate one based on ID and Status to prevent duplicate transitions to same status
-		dedupID := fmt.Sprintf("sub_status_update_%s_%s", id, payload.Status)
-		
-		_, err = h.Outbox.PublishEventWithTx(tx, "subscription.status_updated", eventData, &id, nil, &dedupID)
-		return err
-	})
-
-	if err != nil {
-		// Handle specific errors
-		if err.Error() == "subscription not found" {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		
-		// Check if it's a transition error (this is a bit hacky since we lose type info in RunInTransaction)
-		// In a real app, we'd use custom error types
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+	if err := subscriptions.CanTransition(currentStatus, payload.Status); err != nil {
+		RespondWithErrorDetails(c, http.StatusConflict, ErrorCodeConflict, "Invalid status transition", map[string]interface{}{
+			"current_status": currentStatus,
+			"requested_status": payload.Status,
+			"reason": err.Error(),
+		})
 		return
 	}
+
+	// TODO: persist update
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":     id,

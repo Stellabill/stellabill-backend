@@ -6,6 +6,8 @@ import (
 	"log"
 
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/logger"
+	"stellarbill-backend/internal/security"
 )
 
 // Manager handles the outbox system lifecycle
@@ -44,7 +46,7 @@ func NewManager(db *sql.DB, cfg config.Config) (*Manager, error) {
 
 // Start starts the outbox system
 func (m *Manager) Start() error {
-	log.Println("Starting outbox manager...")
+	logger.SafePrintf("Starting outbox manager...")
 	
 	// Run database migrations
 	if err := m.runMigrations(); err != nil {
@@ -56,19 +58,19 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to start outbox service: %w", err)
 	}
 	
-	log.Println("Outbox manager started successfully")
+	logger.SafePrintf("Outbox manager started successfully")
 	return nil
 }
 
 // Stop stops the outbox system
 func (m *Manager) Stop() error {
-	log.Println("Stopping outbox manager...")
+	logger.SafePrintf("Stopping outbox manager...")
 	
 	if err := m.service.Stop(); err != nil {
 		return fmt.Errorf("failed to stop outbox service: %w", err)
 	}
 	
-	log.Println("Outbox manager stopped")
+	logger.SafePrintf("Outbox manager stopped")
 	return nil
 }
 
@@ -89,7 +91,7 @@ func (m *Manager) Health() error {
 
 // runMigrations runs the necessary database migrations
 func (m *Manager) runMigrations() error {
-	log.Println("Running outbox migrations...")
+	logger.SafePrintf("Running outbox migrations...")
 	
 	// Check if outbox table exists
 	var exists bool
@@ -105,7 +107,7 @@ func (m *Manager) runMigrations() error {
 	}
 	
 	if !exists {
-		log.Println("Creating outbox table...")
+		logger.SafePrintf("Creating outbox table...")
 		if err := m.createOutboxTable(); err != nil {
 			return fmt.Errorf("failed to create outbox table: %w", err)
 		}
@@ -161,7 +163,7 @@ func (m *Manager) createOutboxTable() error {
 		return fmt.Errorf("failed to create outbox table: %w", err)
 	}
 	
-	log.Println("Outbox table created successfully")
+	logger.SafePrintf("Outbox table created successfully")
 	return nil
 }
 

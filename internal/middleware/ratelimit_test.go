@@ -553,3 +553,142 @@ func TestRateLimitMiddleware_EdgeCases(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 	})
 }
+
+func TestRateLimitMiddleware_PerRouteOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	config := RateLimiterConfig{
+		Enabled:        true,
+		Mode:           ModeIP,
+		RequestsPerSec: 100, // High default
+		BurstSize:      200,
+		WhitelistPaths: []string{},
+		RouteConfigs: map[string]RouteSpecificConfig{
+			"/api/sensitive": {RequestsPerSec: 2, BurstSize: 5}, // Strict override
+		},
+	}
+
+	middleware := RateLimitMiddleware(config)
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/api/sensitive", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "sensitive"})
+	})
+	router.GET("/api/normal", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "normal"})
+	})
+
+	t.Run("Sensitive endpoint has strict limits", func(t *testing.T) {
+		// Should allow 5 requests (burst) then block
+		for i := 0; i < 5; i++ {
+			req := httptest.NewRequest("GET", "/api/sensitive", nil)
+			req.RemoteAddr = "192.168.1.100:12345"
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, 200, w.Code, "Request %d should succeed", i+1)
+		}
+
+		// 6th request should be blocked
+		req := httptest.NewRequest("GET", "/api/sensitive", nil)
+		req.RemoteAddr = "192.168.1.100:12345"
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, 429, w.Code, "6th request should be rate limited")
+	})
+
+	t.Run("Normal endpoint has default limits", func(t *testing.T) {
+		// Should allow many more requests (200 burst)
+		for i := 0; i < 10; i++ {
+			req := httptest.NewRequest("GET", "/api/normal", nil)
+			req.RemoteAddr = "192.168.1.100:12345"
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, 200, w.Code, "Request %d should succeed", i+1)
+		}
+	})
+}
+
+func TestRateLimitMiddleware_RouteSpecificBuckets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	config := RateLimiterConfig{
+		Enabled:        true,
+		Mode:           ModeIP,
+		RequestsPerSec: 10,
+		BurstSize:      10,
+		WhitelistPaths: []string{},
+		RouteConfigs: map[string]RouteSpecificConfig{
+			"/api/endpoint1": {RequestsPerSec: 2, BurstSize: 2},
+			"/api/endpoint2": {RequestsPerSec: 5, BurstSize: 5},
+		},
+	}
+
+	middleware := RateLimitMiddleware(config)
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/api/endpoint1", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "endpoint1"})
+	})
+	router.GET("/api/endpoint2", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "endpoint2"})
+	})
+
+	// Exhaust endpoint1
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("GET", "/api/endpoint1", nil)
+		req.RemoteAddr = "192.168.1.100:12345"
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, 200, w.Code)
+	}
+
+	// endpoint1 should be rate limited
+	req1 := httptest.NewRequest("GET", "/api/endpoint1", nil)
+	req1.RemoteAddr = "192.168.1.100:12345"
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	assert.Equal(t, 429, w1.Code)
+
+	// endpoint2 should still work (separate bucket)
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("GET", "/api/endpoint2", nil)
+		req.RemoteAddr = "192.168.1.100:12345"
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, 200, w.Code, "Request %d to endpoint2 should succeed", i+1)
+	}
+}
+
+func TestRateLimitMiddleware_Logging(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	config := RateLimiterConfig{
+		Enabled:          true,
+		Mode:             ModeIP,
+		RequestsPerSec:   1,
+		BurstSize:        1,
+		WhitelistPaths:   []string{},
+		LogRateLimitHits: true,
+	}
+
+	middleware := RateLimitMiddleware(config)
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "ok"})
+	})
+
+	// First request should succeed
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "192.168.1.100:12345"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, 200, w.Code)
+
+	// Second request should be rate limited (logging is tested implicitly by not panicking)
+	req2 := httptest.NewRequest("GET", "/test", nil)
+	req2.RemoteAddr = "192.168.1.100:12345"
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	assert.Equal(t, 429, w2.Code)
+}

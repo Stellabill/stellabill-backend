@@ -5,7 +5,6 @@ import (
 
     "github.com/gin-gonic/gin"
     "stellarbill-backend/internal/reconciliation"
-    "stellarbill-backend/internal/validation"
 )
 
 // NewReconcileHandler returns a handler that accepts a list of backend subscriptions
@@ -16,20 +15,15 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
     return func(c *gin.Context) {
         var backendSubs []reconciliation.BackendSubscription
         if err := c.ShouldBindJSON(&backendSubs); err != nil {
-            RespondWithValidationFields(c, "Invalid JSON payload", []validation.FieldError{
-                {Field: "body", Message: "Invalid JSON payload"},
+            RespondWithValidationError(c, "Invalid request body", map[string]interface{}{
+                "reason": err.Error(),
             })
-            return
-        }
-
-        if fieldErrors := validation.ValidateVar(backendSubs, "required,dive"); len(fieldErrors) > 0 {
-            RespondWithValidationFields(c, "Validation failed", fieldErrors)
             return
         }
 
         snaps, err := adapter.FetchSnapshots(c.Request.Context())
         if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch snapshots"})
+            RespondWithInternalError(c, "Failed to fetch reconciliation snapshots")
             return
         }
 

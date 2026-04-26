@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -26,6 +27,13 @@ type Config struct {
 	Audience string
 }
 
+// Claims represents our custom JWT structure
+type Claims struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email,omitempty"`
+	Role   string `json:"role,omitempty"`
+	jwt.RegisteredClaims
+}
 
 // JWTMiddleware creates a middleware verifying tokens against the provided config
 func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {
@@ -97,4 +105,56 @@ func stringInSlice(a string, list []string) bool {
 		}
 	}
 	return false
+}
+
+// TokenGenerator creates JWT tokens for testing and internal use.
+type TokenGenerator struct {
+	secret []byte
+	issuer string
+}
+
+// NewTokenGenerator creates a new token generator.
+func NewTokenGenerator(secret string) *TokenGenerator {
+	return &TokenGenerator{
+		secret: []byte(secret),
+		issuer: "stellarbill-backend",
+	}
+}
+
+// generateToken creates a token with given claims.
+func (tg *TokenGenerator) generateToken(userID, email, role string, expiresAt time.Time) (string, error) {
+	claims := Claims{
+		UserID: userID,
+		Email:  email,
+		Role:   role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    tg.issuer,
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Subject:   userID,
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(tg.secret)
+}
+
+// GenerateAdminToken creates an admin token valid for 24h.
+func (tg *TokenGenerator) GenerateAdminToken(userID, email string) (string, error) {
+	return tg.generateToken(userID, email, string(RoleAdmin), time.Now().Add(24*time.Hour))
+}
+
+// GenerateMerchantToken creates a merchant token.
+func (tg *TokenGenerator) GenerateMerchantToken(userID, email, merchantID string) (string, error) {
+	_ = merchantID // could embed as custom claim if needed
+	return tg.generateToken(userID, email, string(RoleMerchant), time.Now().Add(24*time.Hour))
+}
+
+// GenerateCustomerToken creates a customer token.
+func (tg *TokenGenerator) GenerateCustomerToken(userID, email string) (string, error) {
+	return tg.generateToken(userID, email, string(RoleCustomer), time.Now().Add(24*time.Hour))
+}
+
+// GenerateExpiredToken creates a token that is already expired.
+func (tg *TokenGenerator) GenerateExpiredToken(userID, email string, role Role) (string, error) {
+	return tg.generateToken(userID, email, string(role), time.Now().Add(-1*time.Hour))
 }

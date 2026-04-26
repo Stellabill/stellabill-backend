@@ -23,7 +23,9 @@ type Handler struct {
 	Plans         PlanService
 	Subscriptions SubscriptionService
 	DB            *sql.DB
-	Outbox        *outbox.Service
+	OutboxSvc     *outbox.Service
+	Database      interface{} // DBPinger - dependency for health checks
+	Outbox        interface{} // OutboxHealther - dependency for queue health checks
 	SubRepo       repositories.SubscriptionRepository
 	PlanRepo      repositories.PlanRepository
 }
@@ -35,5 +37,20 @@ func NewHandler(plans PlanService, subscriptions SubscriptionService, db *sql.DB
 		Subscriptions: subscriptions,
 		DB:            db,
 		Outbox:        outboxSvc,
+	}
+}
+
+// NewHandlerWithDependencies creates a new Handler with all dependencies
+func NewHandlerWithDependencies(
+	plans PlanService,
+	subscriptions SubscriptionService,
+	db interface{},
+	outbox interface{},
+) *Handler {
+	return &Handler{
+		Plans:         plans,
+		Subscriptions: subscriptions,
+		Database:      db,
+		Outbox:        outbox,
 	}
 }

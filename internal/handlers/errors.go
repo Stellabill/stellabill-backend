@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/security"
 	"stellarbill-backend/internal/validation"
 )
 
@@ -16,12 +17,15 @@ type ErrorCode string
 
 const (
 	// Client errors
-	ErrorCodeBadRequest     ErrorCode = "BAD_REQUEST"
-	ErrorCodeUnauthorized   ErrorCode = "UNAUTHORIZED"
-	ErrorCodeForbidden      ErrorCode = "FORBIDDEN"
-	ErrorCodeNotFound       ErrorCode = "NOT_FOUND"
-	ErrorCodeConflict       ErrorCode = "CONFLICT"
+	ErrorCodeBadRequest       ErrorCode = "BAD_REQUEST"
+	ErrorCodeUnauthorized     ErrorCode = "UNAUTHORIZED"
+	ErrorCodeForbidden        ErrorCode = "FORBIDDEN"
+	ErrorCodeNotFound         ErrorCode = "NOT_FOUND"
+	ErrorCodeConflict         ErrorCode = "CONFLICT"
 	ErrorCodeValidationFailed ErrorCode = "VALIDATION_FAILED"
+	// ErrorCodeUnknownField is returned when a mutation request body contains a
+	// field not defined in the API schema. See internal/decoder for details.
+	ErrorCodeUnknownField ErrorCode = "UNKNOWN_FIELD"
 
 	// Server errors
 	ErrorCodeInternalError ErrorCode = "INTERNAL_ERROR"
@@ -51,9 +55,15 @@ func RespondWithErrorDetails(c *gin.Context, statusCode int, code ErrorCode, mes
 		traceID = generateTraceID()
 	}
 
+	// Redact message and details to prevent PII leakage
+	redactedMessage := security.MaskPII(message)
+	if details != nil {
+		details = security.RedactMap(details)
+	}
+
 	envelope := ErrorEnvelope{
 		Code:    string(code),
-		Message: message,
+		Message: redactedMessage,
 		TraceID: traceID,
 		Details: details,
 	}

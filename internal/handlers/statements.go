@@ -2,11 +2,12 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
-	"stellarbill-backend/internal/validation"
 )
 
 // NewGetStatementHandler returns a gin.HandlerFunc that retrieves a full
@@ -16,23 +17,25 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 		// 1. Read callerID from context (set by AuthMiddleware).
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			RespondWithAuthError(c, "unauthorized")
+			RespondWithAuthError(c, "Missing authentication credentials")
 			return
 		}
 
 		// 2. Validate :id path param.
 		id := c.Param("id")
-		id = validation.NormalizeString(id)
-		if err := validation.ValidateUUID(id); err != nil {
-			RespondWithValidationFields(c, "Invalid statement ID", validation.ValidateVar(id, "required,uuid"))
+		if strings.TrimSpace(id) == "" {
+			RespondWithValidationError(c, "statement id is required", map[string]interface{}{
+				"field":  "id",
+				"reason": "cannot be empty",
+			})
 			return
 		}
 
 		// 3. Call service.
 		detail, warnings, err := svc.GetDetail(c.Request.Context(), callerID.(string), id)
 		if err != nil {
-			statusCode, errorCode, msg := MapServiceErrorToResponse(err)
-			RespondWithError(c, statusCode, errorCode, msg)
+			statusCode, code, message := MapServiceErrorToResponse(err)
+			RespondWithError(c, statusCode, code, message)
 			return
 		}
 
@@ -55,62 +58,45 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		// 1. Read callerID from context (set by AuthMiddleware).
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			RespondWithAuthError(c, "unauthorized")
+			RespondWithAuthError(c, "Missing authentication credentials")
 			return
 		}
 
-		// 2. Build and validate query from optional filters.
-		var reqQuery struct {
-			SubscriptionID string `form:"subscription_id" validate:"omitempty,uuid"`
-			Kind           string `form:"kind" validate:"omitempty,oneof=invoice credit_note payment"`
-			Status         string `form:"status" validate:"omitempty,oneof=open paid void"`
-			StartAfter     string `form:"start_after" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
-			EndBefore      string `form:"end_before" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
-			Page           int    `form:"page" validate:"omitempty,min=1"`
-			PageSize       int    `form:"page_size" validate:"omitempty,min=1,max=100"`
-		}
-
-		if err := c.ShouldBindQuery(&reqQuery); err != nil {
-			RespondWithValidationFields(c, "Invalid query parameters", []validation.FieldError{
-				{Field: "query", Message: "Invalid query parameter format"},
-			})
-			return
-		}
-
-		if fieldErrors := validation.ValidateStruct(reqQuery); len(fieldErrors) > 0 {
-			RespondWithValidationFields(c, "Validation failed", fieldErrors)
-			return
-		}
-
+		// 2. Build query from optional filters.
 		q := repository.StatementQuery{
-			SubscriptionID: reqQuery.SubscriptionID,
-			Kind:           reqQuery.Kind,
-			Status:         reqQuery.Status,
-			StartAfter:     reqQuery.StartAfter,
-			EndBefore:      reqQuery.EndBefore,
-			Page:           reqQuery.Page,
-			PageSize:       reqQuery.PageSize,
+			SubscriptionID: c.Query("subscription_id"),
+			Kind:           c.Query("kind"),
+			Status:         c.Query("status"),
+			StartAfter:     c.Query("start_after"),
+			EndBefore:      c.Query("end_before"),
 		}
+
+		limitStr := c.DefaultQuery("limit", "10")
+		limit, _ := strconv.Atoi(limitStr)
+		if limit <= 0 {
+			limit = 10
+		}
+		q.PageSize = limit // Reuse PageSize as Limit for now in repo
+
+		cursorStr := c.Query("cursor")
+		q.StartAfter = cursorStr // Standardize on StartAfter as the cursor field
 
 		// 3. Call service.
 		detail, count, warnings, err := svc.ListByCustomer(c.Request.Context(), callerID.(string), callerID.(string), q)
 		if err != nil {
-			statusCode, errorCode, msg := MapServiceErrorToResponse(err)
-			RespondWithError(c, statusCode, errorCode, msg)
+			statusCode, code, message := MapServiceErrorToResponse(err)
+			RespondWithError(c, statusCode, code, message)
 			return
 		}
 
-		// 4. Normalise pagination values for response.
-		page := q.Page
-		if page <= 0 {
-			page = 1
-		}
-		pageSize := q.PageSize
-		if pageSize <= 0 {
-			pageSize = 10
+		// 4. Build response envelope with cursor pagination.
+		// Since we don't have a real cursor implementation in the service yet, we'll simulate.
+		hasMore := count > limit
+		nextCursor := ""
+		if hasMore && len(detail.Statements) > 0 {
+			nextCursor = detail.Statements[len(detail.Statements)-1].ID
 		}
 
-		// 5. Build response envelope with pagination.
 		resp := service.ResponseEnvelopeWithPagination{
 			ResponseEnvelope: service.ResponseEnvelope{
 				APIVersion: "2025-01-01",
@@ -118,9 +104,9 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 				Warnings:   warnings,
 			},
 			Pagination: service.PaginationMetadata{
-				Page:     page,
-				PageSize: pageSize,
-				Count:    count,
+				NextCursor: nextCursor,
+				Limit:      limit,
+				HasMore:    hasMore,
 			},
 		}
 
@@ -128,3 +114,4 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		c.JSON(http.StatusOK, resp)
 	}
 }
+

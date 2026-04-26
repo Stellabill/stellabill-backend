@@ -3,7 +3,8 @@ package middleware
 import (
 	"net/http"
 
-	"stellabill-backend/internal/logger"
+	"stellarbill-backend/internal/logger"
+	"stellarbill-backend/internal/security"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,11 +17,15 @@ func RecoveryLogger() gin.HandlerFunc {
 
 				requestID, _ := c.Get("request_id")
 
+				// Redact error and path
+				redactedErr := security.RedactError(err)
+				redactedPath := security.MaskPII(c.Request.URL.Path)
+
 				logger.Log.WithFields(map[string]interface{}{
 					"level":      "error",
 					"request_id": requestID,
-					"path":       c.Request.URL.Path,
-					"error":      err,
+					"path":       redactedPath,
+					"error":      redactedErr,
 				}).Error("panic recovered")
 
 				c.JSON(http.StatusInternalServerError, gin.H{

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 func TestClient_SuccessAfterRetries(t *testing.T) {
@@ -31,7 +33,7 @@ func TestClient_SuccessAfterRetries(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient()
+	client := NewClient("test_host", zap.NewNop())
 	client.MaxRetries = 3
 	client.BaseBackoff = 10 * time.Millisecond
 	client.MaxBackoff = 50 * time.Millisecond
@@ -61,20 +63,20 @@ func TestClient_MaxRetriesReached(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient()
+	client := NewClient("test_host", zap.NewNop())
 	client.MaxRetries = 2
 	client.BaseBackoff = 5 * time.Millisecond
 	client.MaxBackoff = 10 * time.Millisecond
-	client.Breaker = NewCircuitBreaker(10, time.Second)
+	client.Breaker = NewCircuitBreaker(10, time.Second, "test_host", zap.NewNop())
 
 	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-	_, err := client.Do(req)
+	resp, err := client.Do(req)
 
-	if err == nil {
-		t.Fatalf("expected error, got nil")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
 	}
-	if !errors.Is(err, ErrMaxRetriesReached) && !strings.Contains(err.Error(), "max retries reached") {
-		t.Fatalf("expected ErrMaxRetriesReached, got %v", err)
+	if resp == nil || resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 response, got %v", resp)
 	}
 }
 
@@ -85,11 +87,11 @@ func TestClient_TimeoutAndContextCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient()
+	client := NewClient("test_host", zap.NewNop())
 	client.RequestTimeout = 20 * time.Millisecond
 	client.MaxRetries = 1
 	client.BaseBackoff = 5 * time.Millisecond
-	client.Breaker = NewCircuitBreaker(10, time.Second)
+	client.Breaker = NewCircuitBreaker(10, time.Second, "test_host", zap.NewNop())
 
 	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
 	_, err := client.Do(req)
@@ -114,9 +116,9 @@ func TestClient_CircuitBreakerOpens(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient()
+	client := NewClient("test_host", zap.NewNop())
 	client.MaxRetries = 0 
-	client.Breaker = NewCircuitBreaker(2, time.Second)
+	client.Breaker = NewCircuitBreaker(2, time.Second, "test_host", zap.NewNop())
 
 	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
 	
@@ -133,7 +135,7 @@ func TestClient_CircuitBreakerOpens(t *testing.T) {
 }
 
 func TestClient_NetworkError(t *testing.T) {
-	client := NewClient()
+	client := NewClient("test_host", zap.NewNop())
 	client.MaxRetries = 1
 	client.BaseBackoff = 5 * time.Millisecond
 
@@ -178,7 +180,7 @@ func (errReader) Read(p []byte) (n int, err error) {
 }
 
 func TestClient_PartialReads(t *testing.T) {
-	client := NewClient()
+	client := NewClient("test_host", zap.NewNop())
 	client.MaxRetries = 1
 	client.BaseBackoff = 5 * time.Millisecond
 	client.HTTPClient.Transport = &dropRoundTripper{}
@@ -193,5 +195,124 @@ func TestClient_PartialReads(t *testing.T) {
 	_, readErr := io.ReadAll(resp.Body)
 	if readErr == nil || !strings.Contains(readErr.Error(), "simulated") {
 		t.Fatalf("expected simulated error, got %v", readErr)
+	}
+}
+
+func TestClient_IdempotencyPOST_NoRetry(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient("test_host", zap.NewNop())
+	client.MaxRetries = 2
+	client.BaseBackoff = 5 * time.Millisecond
+	client.MaxBackoff = 10 * time.Millisecond
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL, nil)
+	resp, err := client.Do(req)
+
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 response, got %v", resp.StatusCode)
+	}
+
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt (no retries) for POST without Idempotency-Key, got %d", attempts)
+	}
+}
+
+func TestClient_IdempotencyPOST_WithKey_Retry(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient("test_host", zap.NewNop())
+	client.MaxRetries = 2
+	client.BaseBackoff = 5 * time.Millisecond
+	client.MaxBackoff = 10 * time.Millisecond
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL, nil)
+	req.Header.Set("Idempotency-Key", "test-key-123")
+	resp, err := client.Do(req)
+
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 response, got %v", resp.StatusCode)
+	}
+
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts (2 retries) for POST with Idempotency-Key, got %d", attempts)
+	}
+}
+
+func TestClient_RetryNonIdempotent_Flag(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient("test_host", zap.NewNop())
+	client.MaxRetries = 2
+	client.BaseBackoff = 5 * time.Millisecond
+	client.MaxBackoff = 10 * time.Millisecond
+	client.RetryNonIdempotent = true
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL, nil)
+	resp, err := client.Do(req)
+
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 response, got %v", resp.StatusCode)
+	}
+
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts (2 retries) for POST with RetryNonIdempotent flag, got %d", attempts)
+	}
+}
+
+func TestClient_RetryAfter(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient("test_host", zap.NewNop())
+	client.MaxRetries = 1
+	client.BaseBackoff = 1 * time.Millisecond
+	client.MaxBackoff = 2 * time.Second
+
+	start := time.Now()
+	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+	resp, err := client.Do(req)
+
+	if err != nil {
+		t.Fatalf("expected success, got err: %v", err)
+	}
+	resp.Body.Close()
+
+	elapsed := time.Since(start)
+	if elapsed < 1*time.Second {
+		t.Fatalf("expected backoff to respect Retry-After (>= 1s), but took %v", elapsed)
 	}
 }

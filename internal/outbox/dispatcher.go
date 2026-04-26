@@ -2,10 +2,13 @@ package outbox
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math"
 	"sync"
 	"time"
+
+	"stellarbill-backend/internal/security"
 )
 
 // DispatcherConfig holds configuration for the dispatcher
@@ -91,7 +94,7 @@ func (d *dispatcher) Stop() error {
 	d.wg.Wait()
 	d.running = false
 	
-	log.Println("Outbox dispatcher stopped")
+	log.Printf("%s", security.MaskPII("Outbox dispatcher stopped"))
 	return nil
 }
 
@@ -140,7 +143,7 @@ func (d *dispatcher) cleanupLoop() {
 func (d *dispatcher) processPendingEvents() {
 	events, err := d.repository.GetPendingEvents(d.config.BatchSize)
 	if err != nil {
-		log.Printf("Failed to get pending events: %v", err)
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to get pending events: %v", err)))
 		return
 	}
 	
@@ -148,22 +151,22 @@ func (d *dispatcher) processPendingEvents() {
 		return // No events to process
 	}
 	
-	log.Printf("Processing %d pending events", len(events))
+	log.Printf("%s", security.MaskPII(fmt.Sprintf("Processing %d pending events", len(events))))
 	
 	for _, event := range events {
 		if err := d.processEvent(event); err != nil {
-			log.Printf("Failed to process event %s: %v", event.ID, err)
+			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to process event %s: %v", security.MaskPII(event.ID), err)))
 		}
 	}
 }
 
 // processEvent processes a single event
 func (d *dispatcher) processEvent(event *Event) error {
-	// Mark as processing to prevent other dispatchers from picking it up
-	if err := d.repository.MarkAsProcessing(event.ID); err != nil {
-		log.Printf("Failed to mark event %s as processing: %v", event.ID, err)
-		return err
-	}
+		// Mark as processing to prevent other dispatchers from picking it up
+		if err := d.repository.MarkAsProcessing(event.ID); err != nil {
+			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as processing: %v", security.MaskPII(event.ID), err)))
+			return err
+		}
 	
 	// Create a timeout context for processing
 	ctx, cancel := context.WithTimeout(d.ctx, d.config.ProcessingTimeout)
@@ -183,11 +186,11 @@ func (d *dispatcher) processEvent(event *Event) error {
 		
 		// Mark as completed
 		if err := d.repository.UpdateStatus(event.ID, StatusCompleted, nil); err != nil {
-			log.Printf("Failed to mark event %s as completed: %v", event.ID, err)
+			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as completed: %v", security.MaskPII(event.ID), err)))
 			return err
 		}
 		
-		log.Printf("Successfully published event %s", event.ID)
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Successfully published event %s", security.MaskPII(event.ID))))
 		return nil
 		
 	case <-ctx.Done():
@@ -202,14 +205,14 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	event.RetryCount++
 	
 	if event.RetryCount >= d.config.MaxRetries {
-		// Max retries reached, mark as failed
-		errorMsg := err.Error()
-		if updateErr := d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg); updateErr != nil {
-			log.Printf("Failed to mark event %s as failed: %v", event.ID, updateErr)
-			return updateErr
-		}
-		
-		log.Printf("Event %s failed after %d retries: %v", event.ID, event.RetryCount, err)
+	// Max retries reached, mark as failed
+	errorMsg := err.Error()
+	if updateErr := d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg); updateErr != nil {
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as failed: %v", security.MaskPII(event.ID), updateErr)))
+		return updateErr
+	}
+	
+	log.Printf("%s", security.MaskPII(fmt.Sprintf("Event %s failed after %d retries: %v", security.MaskPII(event.ID), event.RetryCount, err)))
 		return err
 	}
 	
@@ -219,11 +222,11 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	
 	errorMsg := err.Error()
 	if updateErr := d.repository.IncrementRetryCount(event.ID, nextRetryAt, &errorMsg); updateErr != nil {
-		log.Printf("Failed to increment retry count for event %s: %v", event.ID, updateErr)
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to increment retry count for event %s: %v", security.MaskPII(event.ID), updateErr)))
 		return updateErr
 	}
 	
-	log.Printf("Event %s retry %d scheduled for %v: %v", event.ID, event.RetryCount, nextRetryAt, err)
+	log.Printf("%s", security.MaskPII(fmt.Sprintf("Event %s retry %d scheduled for %v: %v", security.MaskPII(event.ID), event.RetryCount, nextRetryAt, err)))
 	return err
 }
 
@@ -232,12 +235,12 @@ func (d *dispatcher) cleanupCompletedEvents() {
 	cutoff := time.Now().Add(-d.config.CompletedEventTTL)
 	deleted, err := d.repository.DeleteCompletedEvents(cutoff)
 	if err != nil {
-		log.Printf("Failed to cleanup completed events: %v", err)
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to cleanup completed events: %v", err)))
 		return
 	}
 	
 	if deleted > 0 {
-		log.Printf("Cleaned up %d completed events older than %v", deleted, cutoff)
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Cleaned up %d completed events older than %v", deleted, cutoff)))
 	}
 }
 

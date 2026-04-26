@@ -30,3 +30,47 @@ jobs:
           print(f"Total coverage (non-cmd): {total:.1f}%")
           raise SystemExit(0 if total >= 95.0 else 1)
           PY
+
+  benchmark-thresholds:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - name: Run baseline benchmarks
+        run: |
+          go test ./internal/handlers/... -bench=. -benchmem -benchtime=1s -count=1 | tee baseline.txt
+      
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - name: Run current benchmarks
+        run: |
+          go test ./internal/handlers/... -bench=. -benchmem -benchtime=1s -count=1 | tee current.txt
+      
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+      
+      - name: Compare benchmarks
+        run: |
+          echo "## Benchmark Comparison" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          benchstat baseline.txt current.txt | tee -a $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+      
+      - name: Check for regressions
+        run: |
+          REGRESSION_PCT=20
+          if benchstat baseline.txt current.txt | grep -E "\+[2-9][0-9]\.[0-9]+%|\+[0-9]{3,}" > /dev/null 2>&1; then
+            echo "❌ Performance regression detected (>${REGRESSION_PCT}%)"
+            benchstat baseline.txt current.txt
+            exit 1
+          fi
+          echo "✅ No significant regressions (<${REGRESSION_PCT}%)"

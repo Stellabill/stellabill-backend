@@ -31,7 +31,7 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	cursorStr := c.Query("cursor")
 	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor format"})
+		RespondWithInternalError(c, "Failed to retrieve plans")
 		return
 	}
 
@@ -52,3 +52,21 @@ func (h *Handler) ListPlans(c *gin.Context) {
 }
 
 
+	rows, err := planRepo.List(c.Request.Context())
+	if err != nil {
+		RespondWithInternalError(c, "Failed to retrieve plans")
+		return
+	}
+	out := make([]Plan, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Plan{
+			ID:          r.ID,
+			Name:        r.Name,
+			Amount:      r.Amount,
+			Currency:    r.Currency,
+			Interval:    r.Interval,
+			Description: r.Description,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"plans": out})
+}

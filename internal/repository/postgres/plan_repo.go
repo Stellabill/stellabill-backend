@@ -9,6 +9,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"stellarbill-backend/internal/repository"
 )
 
@@ -34,7 +35,7 @@ func (r *PlanRepo) FindByID(ctx context.Context, id string) (*repository.PlanRow
 
 	var p repository.PlanRow
 	ctx, span := tracer.Start(ctx, "PlanRepo.FindByID",
-		otel.WithAttributes(attribute.String("plan.id", id)))
+		trace.WithAttributes(attribute.String("plan.id", id)))
 	defer span.End()
 
 	err := r.pool.QueryRow(ctx, q, id).

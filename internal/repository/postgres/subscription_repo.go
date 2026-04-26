@@ -10,6 +10,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"stellarbill-backend/internal/repository"
 )
 
@@ -37,7 +38,7 @@ func (r *SubscriptionRepo) FindByID(ctx context.Context, id string) (*repository
 	var deletedAt *time.Time
 
 	ctx, span := tracer.Start(ctx, "SubscriptionRepo.FindByID",
-		otel.WithAttributes(attribute.String("subscription.id", id)))
+		trace.WithAttributes(attribute.String("subscription.id", id)))
 	defer span.End()
 
 	err := r.pool.QueryRow(ctx, q, id).Scan(
@@ -53,4 +54,11 @@ func (r *SubscriptionRepo) FindByID(ctx context.Context, id string) (*repository
 	}
 	s.DeletedAt = deletedAt
 	return &s, nil
+}
+
+// FindByIDAndTenant fetches the subscription with the given ID.
+// For now, tenant is ignored as the table does not have tenant column.
+// Returns repository.ErrNotFound if no row exists.
+func (r *SubscriptionRepo) FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*repository.SubscriptionRow, error) {
+	return r.FindByID(ctx, id)
 }

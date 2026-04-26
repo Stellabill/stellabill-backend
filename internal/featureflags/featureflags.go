@@ -2,7 +2,6 @@ package featureflags
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"strconv"
 	"strings"

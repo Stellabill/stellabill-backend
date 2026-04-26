@@ -13,11 +13,6 @@ type Claims struct {
 	MerchantID string   `json:"merchant_id,omitempty"`
 	jwt.RegisteredClaims
 }
-
-// Role-based access control roles
-const (
-	RoleAdmin    = "admin"
-	RoleMerchant = "merchant"
 	RoleCustomer = "customer"
 )
 

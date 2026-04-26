@@ -161,7 +161,10 @@ func main() {
 
 	r := gin.New()
 
-	r.Use(middleware.RecoveryLogger())
+	// Order matters: RequestID first so the hardened Recovery middleware can
+	// always include a correlation id in the log and the error envelope.
+	r.Use(middleware.RequestID())
+	r.Use(middleware.Recovery())
 	r.Use(middleware.RequestLogger())
 
 	var db *sql.DB = nil // existing or future DB

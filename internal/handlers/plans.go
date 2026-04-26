@@ -19,7 +19,7 @@ func (h *Handler) ListPlans(c *gin.Context) {
 
 	plans, err := h.planService.ListPlans(ctx)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
+		RespondWithInternalError(c, "Failed to retrieve plans")
 		return
 	}
 
@@ -44,7 +44,7 @@ func ListPlans(c *gin.Context) {
 
 	rows, err := planRepo.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		RespondWithInternalError(c, "Failed to retrieve plans")
 		return
 	}
 	out := make([]Plan, 0, len(rows))

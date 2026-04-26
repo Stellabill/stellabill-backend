@@ -15,13 +15,15 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
     return func(c *gin.Context) {
         var backendSubs []reconciliation.BackendSubscription
         if err := c.ShouldBindJSON(&backendSubs); err != nil {
-            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+            RespondWithValidationError(c, "Invalid request body", map[string]interface{}{
+                "reason": err.Error(),
+            })
             return
         }
 
         snaps, err := adapter.FetchSnapshots(c.Request.Context())
         if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch snapshots"})
+            RespondWithInternalError(c, "Failed to fetch reconciliation snapshots")
             return
         }
 

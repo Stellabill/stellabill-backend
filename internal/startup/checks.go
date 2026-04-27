@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/migrations"
+	"stellabill-backend/internal/config"
+	"stellabill-backend/internal/migrations"
 )
 
 // Status represents the result of a single startup check.
@@ -226,3 +226,4 @@ func checkMigrations(migStatus MigrationStatusFunc) CheckResult {
 		DurationMs: dur,
 	}
 }
+

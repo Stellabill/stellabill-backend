@@ -162,3 +162,4 @@ func TestParse_TrimsWhitespace(t *testing.T) {
 	assert.Equal(t, "contract-trimmed", result.ContractID)
 	assert.Equal(t, "tenant-trimmed", result.TenantID)
 }
+

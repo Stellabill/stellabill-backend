@@ -57,7 +57,7 @@ func TestRecoveryMiddleware(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			router.Use(Recovery())
+			router.Use(Recovery(nil))
 
 			router.GET("/panic", func(c *gin.Context) {
 				switch tt.panicType {
@@ -102,7 +102,7 @@ func TestRecoveryWithRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 
 	router.GET("/panic", func(c *gin.Context) {
 		panic("test panic")
@@ -128,7 +128,7 @@ func TestRecoveryGeneratesRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 
 	router.GET("/panic", func(c *gin.Context) {
 		panic("test panic")
@@ -153,7 +153,7 @@ func TestRecoveryPlainTextResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 
 	router.GET("/panic", func(c *gin.Context) {
 		panic("test panic")
@@ -174,7 +174,7 @@ func TestPanicAfterHeadersWritten(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 
 	router.GET("/panic-after-write", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
@@ -198,7 +198,7 @@ func TestNestedPanic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 
 	router.GET("/nested-panic", func(c *gin.Context) {
 		func() {
@@ -329,7 +329,7 @@ func BenchmarkRecoveryMiddleware(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
@@ -347,7 +347,7 @@ func BenchmarkRecoveryWithPanic(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 	router.GET("/panic", func(c *gin.Context) {
 		panic("benchmark panic")
 	})
@@ -360,3 +360,4 @@ func BenchmarkRecoveryWithPanic(b *testing.B) {
 		router.ServeHTTP(w, req)
 	}
 }
+

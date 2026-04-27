@@ -217,3 +217,4 @@ func (r Runner) appliedVersions(ctx context.Context, tx *sql.Tx) (map[int64]stru
 	}
 	return out, nil
 }
+

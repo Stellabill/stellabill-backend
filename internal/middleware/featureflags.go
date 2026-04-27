@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/featureflags"
+	"stellabill-backend/internal/featureflags"
 )
 
 type FeatureFlagOptions struct {
@@ -142,3 +142,4 @@ func RequireAllFeatureFlags(flagNames ...string) gin.HandlerFunc {
 		c.Next()
 	}
 }
+

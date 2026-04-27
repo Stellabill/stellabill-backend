@@ -56,3 +56,4 @@ func (h *HTTPAdapter) FetchSnapshots(ctx context.Context) ([]Snapshot, error) {
 	}
 	return snaps, nil
 }
+

@@ -202,3 +202,4 @@ func TestConsume_ContextCancellation(t *testing.T) {
 	raw := validRawEvent()
 	_, _ = svc.Consume(ctx, raw)
 }
+

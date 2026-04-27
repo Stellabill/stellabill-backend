@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/requestparams"
-	"stellarbill-backend/internal/service"
-	"stellarbill-backend/internal/subscriptions"
+	"stellabill-backend/internal/requestparams"
+	"stellabill-backend/internal/service"
+	"stellabill-backend/internal/subscriptions"
 )
 
 type Subscription struct {
@@ -17,6 +17,22 @@ type Subscription struct {
 	Amount      string `json:"amount"`
 	Interval    string `json:"interval"`
 	NextBilling string `json:"next_billing,omitempty"`
+}
+
+func ListSubscriptions(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"subscriptions": []Subscription{}})
+}
+
+func GetSubscription(c *gin.Context) {
+	id := c.Param("id")
+	c.JSON(http.StatusOK, Subscription{
+		ID:       id,
+		PlanID:   "plan_placeholder",
+		Customer: "customer_placeholder",
+		Status:   "placeholder",
+		Amount:   "0",
+		Interval: "monthly",
+	})
 }
 
 func (h *Handler) ListSubscriptions(c *gin.Context) {
@@ -64,10 +80,24 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		}
 
 		// Delegate to service (note: real implementation may include ownership checks)
-		_, _, err = svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		tenantID, _ := c.Get("tenantID")
+		role, _ := c.Get("role")
+		isAdmin := role == "admin"
+
+		_, _, err = svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id, isAdmin)
 		if err != nil {
-			// Simplified error handling to keep compilation and behavior predictable during tests.
-			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+			switch err {
+			case service.ErrNotFound:
+				c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+			case service.ErrForbidden:
+				c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+			case service.ErrDeleted:
+				c.JSON(http.StatusGone, gin.H{"error": "subscription has been deleted"})
+			case service.ErrBillingParse:
+				c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "billing data error"})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			}
 			return
 		}
 
@@ -109,3 +139,4 @@ func UpdateSubscriptionStatus(c *gin.Context) {
 		"status": payload.Status,
 	})
 }
+

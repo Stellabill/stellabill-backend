@@ -36,3 +36,4 @@ func TestLoadFromData_InvalidOpenAPI(t *testing.T) {
 		t.Fatalf("expected validation error for invalid OpenAPI document")
 	}
 }
+

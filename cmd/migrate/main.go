@@ -9,7 +9,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	"stellarbill-backend/internal/migrations"
+	"stellabill-backend/internal/migrations"
 )
 
 func main() {
@@ -132,3 +132,4 @@ func fatal(err error) {
 	_, _ = fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
 }
+

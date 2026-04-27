@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/repository"
+	"stellabill-backend/internal/service"
 )
 
 func seedStatements() []*repository.StatementRow {
@@ -353,3 +353,4 @@ func TestStatementListByCustomer_LargeSet(t *testing.T) {
 		t.Errorf("page size: got %d, want 10", len(detail.Statements))
 	}
 }
+

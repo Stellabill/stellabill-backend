@@ -27,3 +27,4 @@ func TestNewRouterRegistersMiddlewareAndRoutes(t *testing.T) {
 		t.Fatal("expected CORS header")
 	}
 }
+

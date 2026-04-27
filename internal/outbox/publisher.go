@@ -1,11 +1,9 @@
 package outbox
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 )
 
 // HTTPPublisher publishes events via HTTP (placeholder implementation)
@@ -128,3 +126,4 @@ func safeString(s *string) string {
 	}
 	return *s
 }
+

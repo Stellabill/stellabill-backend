@@ -156,3 +156,4 @@ func looksSensitiveValue(v string) bool {
 	v = strings.TrimSpace(strings.ToLower(v))
 	return strings.HasPrefix(v, "bearer ") || strings.HasPrefix(v, "basic ")
 }
+

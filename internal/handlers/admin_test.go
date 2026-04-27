@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/audit"
+	"stellabill-backend/internal/audit"
 )
 
 func TestAdminPurgeSuccess(t *testing.T) {
@@ -107,3 +107,4 @@ func TestAdminDefaultToken(t *testing.T) {
 		t.Fatalf("expected 200 with default token, got %d", rec.Code)
 	}
 }
+

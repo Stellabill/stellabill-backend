@@ -36,3 +36,4 @@ func (m *MockSubscriptionService) GetSubscription(c *gin.Context, id string) (*S
 	}
 	return args.Get(0).(*Subscription), args.Error(1)
 }
+

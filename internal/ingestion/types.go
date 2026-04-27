@@ -64,3 +64,4 @@ type EventRepository interface {
 	ListByContractID(ctx context.Context, contractID string, limit, offset int) ([]*ContractEvent, error)
 	LatestSequenceForContract(ctx context.Context, contractID string) (int64, error)
 }
+

@@ -67,3 +67,4 @@ func InitTracer(serviceName string) (func(context.Context) error, error) {
 
 	return tracerProvider.Shutdown, nil
 }
+

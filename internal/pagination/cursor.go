@@ -105,3 +105,4 @@ func PaginateSlice[T Item](items []T, cursor Cursor, limit int) ([]T, Cursor, bo
 
 	return page, nextCursor, hasMore
 }
+

@@ -1,7 +1,7 @@
 package services
 
 import (
-	"stellarbill-backend/internal/handlers"
+	"stellabill-backend/internal/handlers"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,3 +29,4 @@ func (s *subscriptionService) ListSubscriptions(c *gin.Context) ([]handlers.Subs
 func (s *subscriptionService) GetSubscription(c *gin.Context, id string) (*handlers.Subscription, error) {
 	return &handlers.Subscription{ID: id, Status: "placeholder"}, nil
 }
+

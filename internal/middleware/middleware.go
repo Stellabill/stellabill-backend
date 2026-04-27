@@ -40,20 +40,10 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
-func RequestID() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		requestID := sanitizeRequestID(c.GetHeader(RequestIDHeader))
-		if requestID == "" {
-			requestID = newRequestID()
-		}
-
-		c.Set(RequestIDKey, requestID)
-		c.Writer.Header().Set(RequestIDHeader, requestID)
-		c.Next()
-	}
-}
-
 func Recovery(logger *log.Logger) gin.HandlerFunc {
+	if logger == nil {
+		logger = log.Default()
+	}
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
 		requestID, _ := c.Get(RequestIDKey)
 		logger.Printf("panic recovered request_id=%v err=%v", requestID, recovered)
@@ -217,3 +207,4 @@ func DeprecationHeaders() gin.HandlerFunc {
 		c.Next()
 	}
 }
+

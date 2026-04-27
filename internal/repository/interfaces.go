@@ -37,3 +37,4 @@ type StatementRepository interface {
 	FindByID(ctx context.Context, id string) (*StatementRow, error)
 	ListByCustomerID(ctx context.Context, customerID string, q StatementQuery) ([]*StatementRow, int, error)
 }
+

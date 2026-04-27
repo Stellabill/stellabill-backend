@@ -39,3 +39,4 @@ func CanTransition(from, to string) error {
 
 	return fmt.Errorf("invalid transition from %s to %s", from, to)
 }
+

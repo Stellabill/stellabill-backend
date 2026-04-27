@@ -194,3 +194,4 @@ func TestIdentifierRule(t *testing.T) {
 		t.Fatal("expected identifier pattern to be set")
 	}
 }
+

@@ -185,3 +185,4 @@ func (s *MemoryStore) ReleaseLock(jobID string, workerID string) error {
 	delete(s.locks, jobID)
 	return nil
 }
+

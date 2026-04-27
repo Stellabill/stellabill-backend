@@ -81,3 +81,4 @@ func NewListByContractHandler(repo EventRepository) gin.HandlerFunc {
 		})
 	}
 }
+

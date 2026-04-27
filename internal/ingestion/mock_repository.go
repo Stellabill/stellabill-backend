@@ -81,3 +81,4 @@ func (m *MockRepository) LatestSequenceForContract(_ context.Context, contractID
 	}
 	return max, nil
 }
+

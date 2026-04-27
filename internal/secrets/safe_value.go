@@ -43,3 +43,4 @@ func (s SafeValue) MarshalText() ([]byte, error) {
 func (s SafeValue) IsEmpty() bool {
 	return s.inner == ""
 }
+

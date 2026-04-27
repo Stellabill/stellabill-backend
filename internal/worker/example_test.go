@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go.uber.org/zap"
-	"stellarbill-backend/internal/security"
+	"stellabill-backend/internal/security"
 	"time"
 )
 
@@ -35,7 +35,7 @@ func ExampleCustomExecutor() {
 	w.Stop()
 }
 
-func ExampleConcurrentWorkers() {
+func ExampleWorker() {
 	// Shared store
 	store := NewMemoryStore()
 	executor := NewBillingExecutor()
@@ -61,3 +61,4 @@ func ExampleConcurrentWorkers() {
 	worker1.Stop()
 	worker2.Stop()
 }
+

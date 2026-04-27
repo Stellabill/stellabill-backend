@@ -223,3 +223,4 @@ func TestGlobalFunctions(t *testing.T) {
 		t.Error("Global IsEnabledWithDefault should return default for nonexistent flag")
 	}
 }
+

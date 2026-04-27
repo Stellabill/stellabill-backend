@@ -38,3 +38,4 @@ func TestHTTPAdapter_FetchSnapshots(t *testing.T) {
 		t.Fatalf("unexpected snapshots: %#v", got)
 	}
 }
+

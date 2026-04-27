@@ -93,11 +93,47 @@ func (m *MockStatementRepo) FindByID(_ context.Context, id string) (*StatementRo
 
 // ListByCustomerID returns statement rows for the customer matching the query.
 func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID string, q StatementQuery) ([]*StatementRow, int, error) {
-	out := make([]*StatementRow, 0)
+	filtered := make([]*StatementRow, 0)
 	for _, r := range m.records {
-		if r.CustomerID == customerID {
-			out = append(out, r)
+		if r.CustomerID != customerID {
+			continue
 		}
+		if q.Kind != "" && r.Kind != q.Kind {
+			continue
+		}
+		if q.Status != "" && r.Status != q.Status {
+			continue
+		}
+		if q.SubscriptionID != "" && r.SubscriptionID != q.SubscriptionID {
+			continue
+		}
+		filtered = append(filtered, r)
 	}
-	return out, len(out), nil
+
+	total := len(filtered)
+
+	// In the real DB we'd have an ORDER BY. Let's do a simple stable sort for testing if needed.
+	// For now, let's just paginate what we have.
+
+	page := q.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := q.PageSize
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []*StatementRow{}, total, nil
+	}
+
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	return filtered[start:end], total, nil
 }
+

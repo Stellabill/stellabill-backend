@@ -213,7 +213,9 @@ func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) e
 	}
 
 	if nextRetryAt.Valid {
-		event.NextRetryAt = &nextRetryAt.Time
+		if t, err := time.Parse(time.RFC3339, nextRetryAt.String); err == nil {
+			event.NextRetryAt = &t
+		}
 	}
 
 	if errorMessage.Valid {
@@ -252,3 +254,4 @@ func NewEvent(eventType string, data interface{}, aggregateID, aggregateType *st
 		Version:       1,
 	}, nil
 }
+

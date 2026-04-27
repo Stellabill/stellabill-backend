@@ -137,3 +137,4 @@ func TestCompareStaleSnapshot(t *testing.T) {
 		t.Fatalf("snapshot_stale mismatch not found: %#v", rep.Mismatches)
 	}
 }
+

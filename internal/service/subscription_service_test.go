@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/repository"
+	"stellabill-backend/internal/service"
 )
 
 func TestGetDetail_HappyPath(t *testing.T) {
@@ -36,7 +36,7 @@ func TestGetDetail_HappyPath(t *testing.T) {
 		repository.NewMockPlanRepo(plan),
 	)
 
-	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-1", "sub-1")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-1", "sub-1", false)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -107,7 +107,7 @@ func TestGetDetail_MissingPlan(t *testing.T) {
 		repository.NewMockPlanRepo(), // empty — no plans
 	)
 
-	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-2", "sub-2")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-2", "sub-2", false)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -138,7 +138,7 @@ func TestGetDetail_SoftDeleted(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-3", "sub-3")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-3", "sub-3", false)
 	if err != service.ErrDeleted {
 		t.Errorf("expected ErrDeleted, got %v", err)
 	}
@@ -150,7 +150,7 @@ func TestGetDetail_NotFound(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-x", "sub-unknown")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-x", "sub-unknown", false)
 	if err != service.ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -174,7 +174,7 @@ func TestGetDetail_UnparseableAmount(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-4", "sub-4")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-4", "sub-4", false)
 	if err != service.ErrBillingParse {
 		t.Errorf("expected ErrBillingParse, got %v", err)
 	}
@@ -198,7 +198,7 @@ func TestGetDetail_WrongCaller(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-other", "sub-5")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-other", "sub-5", false)
 	if err != service.ErrForbidden {
 		t.Errorf("expected ErrForbidden, got %v", err)
 	}
@@ -222,8 +222,33 @@ func TestGetDetail_CrossTenantPrevention(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-2", "cust-6", "sub-6")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-2", "cust-6", "sub-6", false)
 	if err != service.ErrNotFound {
 		t.Errorf("expected ErrNotFound for cross-tenant query, got %v", err)
+	}
+}
+
+func TestGetDetail_AdminBypass(t *testing.T) {
+	sub := &repository.SubscriptionRow{
+		ID:         "sub-admin-test",
+		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
+		CustomerID: "cust-owner",
+		Status:     "active",
+		Amount:     "1000",
+		Currency:   "USD",
+		Interval:   "month",
+		DeletedAt:  nil,
+	}
+
+	svc := service.NewSubscriptionService(
+		repository.NewMockSubscriptionRepo(sub),
+		repository.NewMockPlanRepo(),
+	)
+
+	// Admin should be able to see it even if not the owner
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "admin-someone", "sub-admin-test", true)
+	if err != nil {
+		t.Errorf("expected admin to bypass ownership check, got error: %v", err)
 	}
 }

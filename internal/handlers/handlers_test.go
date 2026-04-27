@@ -36,7 +36,7 @@ func TestHealth(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Errorf("status field: got %q, want %q", body["status"], "ok")
 	}
-	if body["service"] != "stellarbill-backend" {
+	if body["service"] != "stellabill-backend" {
 		t.Errorf("service field: got %q", body["service"])
 	}
 }
@@ -113,3 +113,4 @@ func TestGetSubscription_EmptyID(t *testing.T) {
 		t.Fatalf("status: got %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
+

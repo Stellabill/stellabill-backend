@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"stellarbill-backend/internal/security"
+	"stellabill-backend/internal/security"
 )
 
 // BillingExecutor implements JobExecutor for billing operations
@@ -94,3 +94,4 @@ func (e *BillingExecutor) executeReminder(ctx context.Context, job *Job) error {
 
 	return nil
 }
+

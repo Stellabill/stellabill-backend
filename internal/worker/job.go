@@ -42,3 +42,4 @@ type JobStore interface {
 	AcquireLock(jobID string, workerID string, ttl time.Duration) (bool, error)
 	ReleaseLock(jobID string, workerID string) error
 }
+

@@ -326,3 +326,4 @@ func TestHighCardinalityProtection(t *testing.T) {
 		t.Errorf("Expected 100 requests on route pattern, got %f", count)
 	}
 }
+

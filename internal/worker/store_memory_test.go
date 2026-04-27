@@ -340,3 +340,4 @@ func TestMemoryStore_ReleaseLockNonExistent(t *testing.T) {
 		t.Errorf("Expected nil error for non-existent lock, got %v", err)
 	}
 }
+

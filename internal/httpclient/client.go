@@ -93,3 +93,4 @@ func calculateBackoff(attempt int, base, max time.Duration) time.Duration {
 	jitter := (rand.Float64() * 0.2) * backoff
 	return time.Duration(backoff + jitter)
 }
+

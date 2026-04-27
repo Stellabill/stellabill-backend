@@ -254,3 +254,4 @@ func TestEdgeCases_RetryLogic(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
+

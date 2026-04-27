@@ -142,3 +142,4 @@ func TestGetPrincipal_NotFound(t *testing.T) {
 		t.Error("expected ok to be false for empty context")
 	}
 }
+

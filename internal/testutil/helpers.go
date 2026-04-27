@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/auth"
+	"stellabill-backend/internal/auth"
 )
 
 // TestRequest holds test request context
@@ -211,3 +211,4 @@ func AdminOnlyScenarios(tg *TestTokenGenerator) []TestAuthScenario {
 
 	return scenarios
 }
+

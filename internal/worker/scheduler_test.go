@@ -76,3 +76,4 @@ func TestScheduler_ScheduleReminder(t *testing.T) {
 		t.Errorf("Expected subscription 'sub-3', got %s", job.SubscriptionID)
 	}
 }
+

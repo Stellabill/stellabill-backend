@@ -14,11 +14,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stellarbill-backend/internal/handlers"
-	"stellarbill-backend/internal/middleware"
-	"stellarbill-backend/internal/repository"
-	repopostgres "stellarbill-backend/internal/repository/postgres"
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/handlers"
+	"stellabill-backend/internal/middleware"
+	"stellabill-backend/internal/repository"
+	repopostgres "stellabill-backend/internal/repository/postgres"
+	"stellabill-backend/internal/service"
 )
 
 const testJWTSecret = "integration-test-jwt-secret-32ch!!"
@@ -117,3 +117,4 @@ func seedSubscription(t *testing.T, pool *pgxpool.Pool, s *repository.Subscripti
 func uniqueID(prefix string, t *testing.T, suffix string) string {
 	return fmt.Sprintf("%s-%s-%s", prefix, t.Name(), suffix)
 }
+

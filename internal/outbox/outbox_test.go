@@ -541,3 +541,4 @@ func BenchmarkPublisherPublish(b *testing.B) {
 		}
 	}
 }
+

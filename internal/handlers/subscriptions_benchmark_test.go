@@ -282,6 +282,7 @@ func BenchmarkGetSubscription_FullHTTP(b *testing.B) {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set("callerID", "bench-caller")
+		c.Set("tenantID", "bench-tenant")
 		c.Next()
 	})
 	router.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(&mockSubscriptionService{}))
@@ -363,3 +364,4 @@ func BenchmarkListSubscriptions_FilteredByStatus_Large(b *testing.B) {
 		router.ServeHTTP(w, req)
 	}
 }
+

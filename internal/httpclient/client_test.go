@@ -195,3 +195,4 @@ func TestClient_PartialReads(t *testing.T) {
 		t.Fatalf("expected simulated error, got %v", readErr)
 	}
 }
+

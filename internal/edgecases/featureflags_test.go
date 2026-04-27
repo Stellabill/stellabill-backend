@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"stellarbill-backend/internal/featureflags"
+	"stellabill-backend/internal/featureflags"
 )
 
 func TestUnknownFlagBehavior(t *testing.T) {
@@ -292,3 +292,4 @@ func TestRaceConditionInReload(t *testing.T) {
 
 	os.Unsetenv("FF_RACE_TEST")
 }
+

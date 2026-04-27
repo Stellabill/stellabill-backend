@@ -246,3 +246,4 @@ func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	}
 	return db, mock
 }
+

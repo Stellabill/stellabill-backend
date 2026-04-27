@@ -78,3 +78,4 @@ func TestTraceIDMiddleware_SetsResponseHeader(t *testing.T) {
 		t.Error("Expected X-Trace-ID header in response")
 	}
 }
+

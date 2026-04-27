@@ -139,3 +139,4 @@ func FindByVersion(migs []Migration, version int64) (Migration, bool) {
 	}
 	return Migration{}, false
 }
+

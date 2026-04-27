@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/config"
+	"stellabill-backend/internal/config"
 )
 
 func assertHeader(t *testing.T, rec *httptest.ResponseRecorder, key, expected string) {
@@ -116,3 +116,4 @@ func TestSecurityHeaders_ProxyLayerConflicts(t *testing.T) {
 	assertHeader(t, rec, "X-Frame-Options", "SAMEORIGIN")
 	assertHeader(t, rec, "Strict-Transport-Security", "max-age=60")
 }
+

@@ -92,3 +92,4 @@ func Parse(raw RawEvent) (*ParseResult, error) {
 		Payload:        payload,
 	}, nil
 }
+

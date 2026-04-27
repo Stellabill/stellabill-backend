@@ -10,11 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	RequestIDHeader = "X-Request-ID"
-	RequestIDKey    = "request_id"
-)
-
 var (
 	// Validate request ID format: alphanumeric, max 32 chars
 	validRequestID = regexp.MustCompile(`^[a-zA-Z0-9]{1,32}$`)
@@ -76,3 +71,4 @@ func generateRequestID() string {
 	}
 	return hex.EncodeToString(bytes)
 }
+

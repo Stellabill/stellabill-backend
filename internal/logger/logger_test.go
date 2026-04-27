@@ -27,3 +27,4 @@ func TestLoggerOutputsJSON(t *testing.T) {
 		t.Errorf("message field missing, got: %+v", result)
 	}
 }
+

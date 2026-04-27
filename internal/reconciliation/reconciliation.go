@@ -144,3 +144,4 @@ func (r *Reconciler) Compare(backend BackendSubscription, contract *Snapshot) Re
 	rep.Matched = len(rep.Mismatches) == 0
 	return rep
 }
+

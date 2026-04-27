@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"stellarbill-backend/internal/featureflags"
+	"stellabill-backend/internal/featureflags"
 )
 
 func main() {
@@ -34,3 +34,4 @@ func main() {
 
 	fmt.Println("\n=== Demo Complete ===")
 }
+

@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/repository"
+	"stellabill-backend/internal/service"
 )
 
 // ── mock ─────────────────────────────────────────────────────────────────────
@@ -485,3 +485,4 @@ func TestListStatements_WarningsIncluded(t *testing.T) {
 		t.Errorf("unexpected warnings: %v", warns)
 	}
 }
+

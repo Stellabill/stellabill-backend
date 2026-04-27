@@ -152,3 +152,4 @@ func TestRedactsBasicAuth(t *testing.T) {
 		t.Fatal("expected Basic auth to be redacted")
 	}
 }
+

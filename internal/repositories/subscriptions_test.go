@@ -338,3 +338,4 @@ func TestSubscriptionRepository_ScanError(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
+

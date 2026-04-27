@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"stellarbill-backend/internal/repository"
+	"stellabill-backend/internal/repository"
 )
 
 // TestGetSubscription_HappyPath validates that the owner of an active subscription
@@ -330,3 +330,4 @@ func assertErrorBody(t *testing.T, w *httptest.ResponseRecorder, want string) {
 		t.Errorf("error body: want %q, got %q", want, body["error"])
 	}
 }
+

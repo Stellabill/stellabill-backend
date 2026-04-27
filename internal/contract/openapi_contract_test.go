@@ -10,8 +10,8 @@ import (
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers/gorillamux"
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/routes"
-	"stellarbill-backend/openapi"
+	"stellabill-backend/internal/routes"
+	"stellabill-backend/openapi"
 )
 
 func TestOpenAPI_ImplementedRoutesAreInSpec(t *testing.T) {
@@ -112,3 +112,4 @@ func ginPathToOpenAPIPath(path string) string {
 	}
 	return strings.Join(parts, "/")
 }
+

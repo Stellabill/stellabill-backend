@@ -70,3 +70,4 @@ func GetAuthMatrixSummary() []RouteAuth {
 	}
 	return result
 }
+

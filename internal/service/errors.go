@@ -15,3 +15,4 @@ var (
 	// ErrBillingParse is returned when the subscription's amount cannot be parsed.
 	ErrBillingParse = errors.New("billing parse error")
 )
+

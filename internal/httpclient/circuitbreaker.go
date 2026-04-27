@@ -98,3 +98,4 @@ func (cb *CircuitBreaker) RecordFailure() {
 		cb.openedAt = time.Now()
 	}
 }
+

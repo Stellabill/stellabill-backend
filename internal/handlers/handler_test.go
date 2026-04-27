@@ -15,3 +15,4 @@ func TestNewHandler(t *testing.T) {
 	assert.Equal(t, mockPlans, h.Plans)
 	assert.Equal(t, mockSubs, h.Subscriptions)
 }
+

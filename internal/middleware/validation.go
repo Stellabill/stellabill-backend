@@ -89,3 +89,4 @@ func handleValidationError(c *gin.Context, err error) {
 	}
 	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 }
+

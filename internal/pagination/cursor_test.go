@@ -156,3 +156,4 @@ func TestPaginateSlice_CursorBeyondData(t *testing.T) {
 		t.Errorf("expected empty result, got %v, %v, %v", page, next, hasMore)
 	}
 }
+

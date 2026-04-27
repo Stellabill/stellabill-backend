@@ -38,3 +38,4 @@ func TestRedactDatabaseURL_EmptyUsername(t *testing.T) {
 		t.Fatalf("unexpected: %q", got)
 	}
 }
+

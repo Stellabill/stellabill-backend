@@ -24,3 +24,4 @@ func (m *MemoryAdapter) FetchSnapshots(ctx context.Context) ([]Snapshot, error) 
 	}
 	return out, nil
 }
+

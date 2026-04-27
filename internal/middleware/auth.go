@@ -1,13 +1,13 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"stellabill-backend/internal/auth"
 )
 
 // ErrorEnvelope for auth errors
@@ -26,13 +26,11 @@ func respondAuthError(c *gin.Context, message string) {
 		traceID = uuid.New().String()
 	}
 
-	envelope := ErrorEnvelope{
-		Code:    "UNAUTHORIZED",
-		Message: message,
-		TraceID: traceID,
-	}
-
-	c.AbortWithStatusJSON(http.StatusUnauthorized, envelope)
+	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+		"error":    message,
+		"code":     "UNAUTHORIZED",
+		"trace_id": traceID,
+	})
 }
 
 // AuthMiddleware validates the Authorization header (Bearer JWT).
@@ -42,18 +40,19 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			respondAuthError(c, "authorization header required")
+			respondAuthError(c, "missing authorization header")
 			return
 		}
 
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			respondAuthError(c, "authorization header must be Bearer token")
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			respondAuthError(c, "invalid authorization header format")
 			return
 		}
 
 		tokenStr := parts[1]
-		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+		var claims auth.Claims
+		token, err := jwt.ParseWithClaims(tokenStr, &claims, func(t *jwt.Token) (interface{}, error) {
 			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrSignatureInvalid
 			}
@@ -61,34 +60,23 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		}, jwt.WithValidMethods([]string{"HS256", "HS384", "HS512"}))
 
 		if err != nil || !token.Valid {
-			msg := "invalid or expired token"
-			if err != nil {
-				msg = fmt.Sprintf("token validation failed: %v", err)
-			}
-			respondAuthError(c, msg)
+			respondAuthError(c, "invalid or expired token")
 			return
 		}
 
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			respondAuthError(c, "invalid token claims")
-			return
+		// User identifier
+		sub := claims.Subject
+		if sub == "" {
+			sub = claims.UserID
 		}
-
-		sub, err := claims.GetSubject()
-		if err != nil || sub == "" {
-			respondAuthError(c, "token missing subject claim")
+		if sub == "" {
+			respondAuthError(c, "token missing user identifier")
 			return
 		}
 
 		// Tenant ID enforcement.
 		tenantHeader := strings.TrimSpace(c.GetHeader("X-Tenant-ID"))
-		tenantClaim := ""
-		if v, ok := claims["tenant"]; ok {
-			if ts, ok := v.(string); ok {
-				tenantClaim = strings.TrimSpace(ts)
-			}
-		}
+		tenantClaim := strings.TrimSpace(claims.Tenant)
 
 		var tenantID string
 		if tenantHeader != "" && tenantClaim != "" {
@@ -102,12 +90,26 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		} else if tenantClaim != "" {
 			tenantID = tenantClaim
 		} else {
-			respondAuthError(c, "tenant id required")
-			return
+			// If role is present and not admin, tenant is required.
+			// If role is missing, we let it pass to let permission guards return 403.
+			if claims.Role != "" && claims.Role != string(auth.RoleAdmin) {
+				respondAuthError(c, "tenant id required")
+				return
+			}
+			if claims.Role == string(auth.RoleAdmin) {
+				tenantID = "system"
+			}
 		}
 
 		c.Set("callerID", sub)
-		c.Set("tenantID", tenantID)
+		if claims.Role != "" {
+			c.Set("role", claims.Role)
+		}
+
+		if tenantID != "" {
+			c.Set("tenantID", tenantID)
+		}
 		c.Next()
 	}
 }
+

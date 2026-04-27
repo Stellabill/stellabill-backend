@@ -114,3 +114,4 @@ func RecordDBQuery(operation, table string, duration time.Duration, err error) {
 	DBQueryDuration.WithLabelValues(safeOp, safeTable).Observe(duration.Seconds())
 	DBQueryTotal.WithLabelValues(safeOp, safeTable, errorLabel).Inc()
 }
+

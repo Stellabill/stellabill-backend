@@ -25,3 +25,4 @@ func RedactDatabaseURL(databaseURL string) string {
 	}
 	return s
 }
+

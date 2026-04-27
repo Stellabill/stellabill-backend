@@ -82,3 +82,4 @@ func TestCircuitBreaker_Concurrency(t *testing.T) {
 	}
 	wg.Wait()
 }
+

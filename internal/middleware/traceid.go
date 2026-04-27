@@ -35,3 +35,4 @@ func TraceIDMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+

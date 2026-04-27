@@ -8,9 +8,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
-	"stellarbill-backend/internal/secrets"
+	"stellabill-backend/internal/secrets"
 )
 
 // ConfigErrorType represents the category of configuration error
@@ -39,6 +40,51 @@ func (e *ConfigError) Error() string {
 	return fmt.Sprintf("config error [%s]: %s", e.Type, e.Message)
 }
 
+// OutboxConfig holds outbox-specific configuration
+type OutboxConfig struct {
+	BatchSize          int
+	MaxRetries         int
+	RetryBackoffFactor float64
+	PollInterval       time.Duration
+	CleanupInterval    time.Duration
+	CompletedEventTTL  time.Duration
+	ProcessingTimeout  time.Duration
+	PublisherType      string
+	HTTPEndpoint       string
+}
+
+// GetPollInterval returns the poll interval with default
+func (o OutboxConfig) GetPollInterval() time.Duration {
+	if o.PollInterval == 0 {
+		return 5 * time.Second
+	}
+	return o.PollInterval
+}
+
+// GetCleanupInterval returns the cleanup interval with default
+func (o OutboxConfig) GetCleanupInterval() time.Duration {
+	if o.CleanupInterval == 0 {
+		return 1 * time.Hour
+	}
+	return o.CleanupInterval
+}
+
+// GetCompletedEventTTL returns the TTL with default
+func (o OutboxConfig) GetCompletedEventTTL() time.Duration {
+	if o.CompletedEventTTL == 0 {
+		return 24 * time.Hour
+	}
+	return o.CompletedEventTTL
+}
+
+// GetProcessingTimeout returns the processing timeout with default
+func (o OutboxConfig) GetProcessingTimeout() time.Duration {
+	if o.ProcessingTimeout == 0 {
+		return 30 * time.Second
+	}
+	return o.ProcessingTimeout
+}
+
 // Config holds all application configuration
 type Config struct {
 	Env       string
@@ -56,9 +102,15 @@ type Config struct {
 	RateLimitRPS       int
 	RateLimitBurst     int
 	RateLimitWhitelist []string
+	AllowedOrigins     string
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
+	// Outbox configuration
+	Outbox OutboxConfig
+	// Security configuration
+	SecurityFrameOpt    string
+	SecurityHSTSMaxAge  string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -155,6 +207,12 @@ func Load(opts ...Option) (Config, error) {
 		ReadTimeout:        DefaultReadTimeout,
 		WriteTimeout:       DefaultWriteTimeout,
 		IdleTimeout:        DefaultIdleTimeout,
+		RateLimitEnabled:   getEnvBool("RATE_LIMIT_ENABLED", false),
+		RateLimitMode:      getEnv("RATE_LIMIT_MODE", "standard"),
+		RateLimitRPS:       getEnvInt("RATE_LIMIT_RPS", 100),
+		RateLimitBurst:     getEnvInt("RATE_LIMIT_BURST", 200),
+		RateLimitWhitelist: getEnvSlice("RATE_LIMIT_WHITELIST", nil),
+		AllowedOrigins:     getEnv("CORS_ALLOWED_ORIGINS", ""),
 		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 	}
@@ -512,3 +570,4 @@ func GetRequiredEnvVars() []string {
 func GetOptionalEnvVars() map[string]string {
 	return optionalEnvVars
 }
+

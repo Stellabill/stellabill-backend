@@ -8,3 +8,4 @@ var (
 	// ErrMaxRetriesReached is returned when the client exhausts all retry attempts.
 	ErrMaxRetriesReached = errors.New("max retries reached")
 )
+

@@ -83,7 +83,7 @@ func ProductionLogger() *zap.Logger {
 	config := zap.NewProductionConfig()
 	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	config.InitialFields = map[string]interface{}{
-		"service": "stellarbill-backend",
+		"service": "stellabill-backend",
 		"version": "1.0.0",
 	}
 	logger, _ := config.Build(zap.Hooks(ZapRedactHook))
@@ -97,3 +97,4 @@ func DevLogger() *zap.Logger {
 	logger, _ := config.Build(zap.Hooks(ZapRedactHook))
 	return logger.WithOptions(zap.AddCaller())
 }
+

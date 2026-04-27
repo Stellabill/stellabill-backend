@@ -13,7 +13,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
-	"stellarbill-backend/internal/tracing"
+	"stellabill-backend/internal/tracing"
 )
 
 func TestTraceContextPropagation(t *testing.T) {
@@ -84,3 +84,4 @@ func TestTracerExporterConfiguration(t *testing.T) {
 		assert.Nil(t, shutdown)
 	})
 }
+

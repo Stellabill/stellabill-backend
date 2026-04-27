@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"stellarbill-backend/internal/cors"
+	"stellabill-backend/internal/cors"
 
 	"github.com/gin-gonic/gin"
 )
@@ -215,3 +215,4 @@ func TestCustomMaxAge(t *testing.T) {
 		t.Fatalf("expected Max-Age 1800, got %q", got)
 	}
 }
+

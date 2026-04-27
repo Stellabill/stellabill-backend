@@ -373,3 +373,4 @@ func TestPlanRepository_ScanError(t *testing.T) {
 func stringPtr(s string) *string {
 	return &s
 }
+

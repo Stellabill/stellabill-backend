@@ -11,6 +11,14 @@ const RoleContextKey = "role"
 // Extract role (temporary: header-based)
 // Later replace with JWT parsing
 func ExtractRole(c *gin.Context) Role {
+	if v, ok := c.Get(RoleContextKey); ok {
+		if r, ok := v.(Role); ok {
+			return r
+		}
+		if s, ok := v.(string); ok {
+			return Role(s)
+		}
+	}
 	role := c.GetHeader("X-Role")
 	if role == "" {
 		return ""
@@ -22,16 +30,9 @@ func RequirePermission(permission Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role := ExtractRole(c)
 
-		if role == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "missing role",
-			})
-			return
-		}
-
-		if !HasPermission(role, permission) {
+		if role == "" || !HasPermission(role, permission) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "forbidden",
+				"error": "insufficient permissions",
 			})
 			return
 		}
@@ -40,3 +41,4 @@ func RequirePermission(permission Permission) gin.HandlerFunc {
 		c.Next()
 	}
 }
+

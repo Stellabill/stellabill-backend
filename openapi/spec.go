@@ -28,3 +28,4 @@ func loadFromData(data []byte) (*openapi3.T, error) {
 func RawYAML() []byte {
 	return specYAML
 }
+

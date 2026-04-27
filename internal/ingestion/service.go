@@ -98,3 +98,4 @@ func (s *Service) Consume(ctx context.Context, raw RawEvent) (*ContractEvent, er
 
 	return event, nil
 }
+

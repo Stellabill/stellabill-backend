@@ -2,16 +2,25 @@ package integration
 
 import (
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/auth"
-	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/routes"
-	"stellarbill-backend/internal/testutil"
+	"stellabill-backend/internal/auth"
+	"stellabill-backend/internal/config"
+	"stellabill-backend/internal/routes"
+	"stellabill-backend/internal/testutil"
 )
 
 func setupRouter() *gin.Engine {
+	// Set required env vars for config.Load() to succeed if not already set
+	if os.Getenv("DATABASE_URL") == "" {
+		os.Setenv("DATABASE_URL", "postgres://localhost:5432/test")
+	}
+	if os.Getenv("JWT_SECRET") == "" {
+		os.Setenv("JWT_SECRET", "StrongTestSecret123!")
+	}
+
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	routes.Register(router)
@@ -41,7 +50,7 @@ func TestHealthEndpointAuthnz(t *testing.T) {
 		},
 	}
 
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
 
 	for _, tt := range tests {
@@ -74,7 +83,7 @@ func TestHealthEndpointAuthnz(t *testing.T) {
 
 func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 	router := setupRouter()
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
 
 	tests := []struct {
@@ -162,7 +171,7 @@ func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 
 func TestListSubscriptionsAuthorizationEnforcement(t *testing.T) {
 	router := setupRouter()
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
 
 	tests := []struct {
@@ -243,7 +252,7 @@ func TestListSubscriptionsAuthorizationEnforcement(t *testing.T) {
 
 func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 	router := setupRouter()
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
 
 	tests := []struct {
@@ -332,7 +341,7 @@ func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 
 func TestAuthenticationEdgeCases(t *testing.T) {
 	router := setupRouter()
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	_ = testutil.NewTestTokenGenerator(cfg.JWTSecret) // Verify token generator creation works
 
 	tests := []struct {
@@ -410,3 +419,4 @@ func createTokenWithoutUserID(tg *testutil.TestTokenGenerator) string {
 	token, _ := tg.GenerateTokenWithoutUserID("user@test.com", auth.RoleAdmin)
 	return token
 }
+

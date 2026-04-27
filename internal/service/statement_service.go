@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"stellarbill-backend/internal/repository"
+	"stellabill-backend/internal/repository"
 )
 
 // StatementService defines the business logic interface for billing statements.
@@ -102,3 +102,4 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 	// 4. Return details, total count, and warnings.
 	return result, count, warnings, nil
 }
+

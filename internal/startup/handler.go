@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"stellarbill-backend/internal/config"
+	"stellabill-backend/internal/config"
 
 	"github.com/gin-gonic/gin"
 )
@@ -73,3 +73,4 @@ func (d *DiagnosticsHandler) getResults() []CheckResult {
 
 	return results
 }
+

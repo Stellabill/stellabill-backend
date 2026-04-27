@@ -422,3 +422,4 @@ func TestRateLimitMiddleware_ZeroRefillRate(t *testing.T) {
 	router.ServeHTTP(w3, req3)
 	assert.Equal(t, 200, w3.Code, "Request should succeed after refill")
 }
+

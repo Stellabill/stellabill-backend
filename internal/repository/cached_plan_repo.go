@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"stellarbill-backend/internal/cache"
+	"stellabill-backend/internal/cache"
 )
 
 // CachedPlanRepo decorates a PlanRepository with a read-through cache.
@@ -95,3 +95,4 @@ func (cpr *CachedPlanRepo) Delete(ctx context.Context, id string) error {
 func (cpr *CachedPlanRepo) Metrics() (hits uint64, misses uint64) {
 	return atomic.LoadUint64(&cpr.hits), atomic.LoadUint64(&cpr.misses)
 }
+

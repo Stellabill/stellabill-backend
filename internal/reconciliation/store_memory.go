@@ -29,3 +29,4 @@ func (m *MemoryStore) ListReports() ([]Report, error) {
 	copy(out, m.reports)
 	return out, nil
 }
+

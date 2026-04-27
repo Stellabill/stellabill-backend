@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/service"
 )
 
 // mockErrorService returns different errors for testing
@@ -20,7 +20,7 @@ type mockErrorService struct {
 	warnings          []string
 }
 
-func (m *mockErrorService) GetDetail(_ context.Context, _, _, _ string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockErrorService) GetDetail(_ context.Context, _, _, _ string, _ bool) (*service.SubscriptionDetail, []string, error) {
 	if m.shouldReturnError {
 		return nil, nil, m.errorType
 	}
@@ -312,3 +312,4 @@ func TestErrorEnvelope_ContentType(t *testing.T) {
 		t.Errorf("Expected proper content type, got %s", contentType)
 	}
 }
+

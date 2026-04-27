@@ -40,3 +40,4 @@ type StatementRow struct {
 	Status         string
 	DeletedAt      *time.Time
 }
+

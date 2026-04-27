@@ -277,3 +277,4 @@ func TestGracefulShutdown_Integration_CallbackWithContext(t *testing.T) {
 		t.Error("Context did not work as expected in callback")
 	}
 }
+

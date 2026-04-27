@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/audit"
+	"stellabill-backend/internal/audit"
 )
 
 // AdminHandler encapsulates admin-only operations (secured via static token for now).
@@ -50,3 +50,4 @@ func (h *AdminHandler) PurgeCache(c *gin.Context) {
 	})
 	c.JSON(status, gin.H{"status": outcome, "target": target, "attempt": attempt})
 }
+

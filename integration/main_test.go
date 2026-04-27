@@ -19,7 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stellarbill-backend/internal/testutil"
+	"stellabill-backend/internal/testutil"
 )
 
 // sharedPool is the single connection pool shared by all tests in this binary
@@ -63,3 +63,4 @@ func TestMain(m *testing.M) {
 
 	os.Exit(code)
 }
+

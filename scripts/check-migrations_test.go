@@ -646,3 +646,38 @@ func TestMain_Error(t *testing.T) {
 		t.Fatalf("expected 1, got %d", exitCode)
 	}
 }
+
+func TestLoadRegistry_NullJSON(t *testing.T) {
+	dir := t.TempDir()
+	registryPath := filepath.Join(dir, "null.json")
+	if err := os.WriteFile(registryPath, []byte("null"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	registry, err := loadRegistry(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registry == nil {
+		t.Fatal("expected non-nil registry for null input")
+	}
+}
+
+func TestCheckMigrations_ScanMigrationsErrorInLoop(t *testing.T) {
+	dir := t.TempDir()
+	migrations := filepath.Join(dir, "migrations")
+	if err := os.Mkdir(migrations, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a directory ending in .sql to trigger error in computeFileChecksum
+	badFile := filepath.Join(migrations, "error.sql")
+	if err := os.Mkdir(badFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := checkMigrations(migrations)
+	if err == nil {
+		t.Fatal("expected error when scanMigrations fails due to unreadable file")
+	}
+}

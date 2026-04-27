@@ -440,3 +440,4 @@ func setupTestTable(db *sql.DB) error {
 func cleanupTestTable(db *sql.DB) {
 	_, _ = db.Exec("DROP TABLE IF EXISTS outbox_events")
 }
+

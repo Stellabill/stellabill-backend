@@ -9,15 +9,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/security"
+	"stellabill-backend/internal/repository"
+	"stellabill-backend/internal/security"
 )
 
 var tracer = otel.Tracer("service/subscriptions")
 
 // SubscriptionService defines the business logic interface for subscriptions.
 type SubscriptionService interface {
-	GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error)
+	GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string, isAdmin bool) (*SubscriptionDetail, []string, error)
 }
 
 // subscriptionService is the concrete implementation of SubscriptionService.
@@ -33,14 +33,14 @@ func NewSubscriptionService(subRepo repository.SubscriptionRepository, planRepo 
 
 // GetDetail retrieves a full SubscriptionDetail for the given subscriptionID.
 // It enforces ownership (callerID must match the subscription's CustomerID),
-//
-// handles soft-deletes, joins plan metadata, and normalizes billing fields.
-func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
+// unless the caller has the isAdmin flag set.
+func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string, isAdmin bool) (*SubscriptionDetail, []string, error) {
 	ctx, span := tracer.Start(ctx, "SubscriptionService.GetDetail",
 		trace.WithAttributes(
 			attribute.String("subscription.id", subscriptionID),
 			attribute.String("caller.id", callerID),
 			attribute.String("tenant.id", tenantID),
+			attribute.Bool("is_admin", isAdmin),
 		))
 	defer span.End()
 
@@ -61,7 +61,7 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 	}
 
 	// 3. Ownership check.
-	if callerID != row.CustomerID {
+	if !isAdmin && callerID != row.CustomerID {
 		return nil, nil, ErrForbidden
 	}
 
@@ -122,3 +122,4 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 	// 8. Return detail and warnings.
 	return detail, warnings, nil
 }
+

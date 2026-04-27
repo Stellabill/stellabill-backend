@@ -1,4 +1,4 @@
-module stellarbill-backend
+module stellabill-backend
 
 go 1.25.0
 

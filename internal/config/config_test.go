@@ -111,3 +111,4 @@ func TestIsValidSecret(t *testing.T) {
 		t.Fatal("expected short secret to fail")
 	}
 }
+

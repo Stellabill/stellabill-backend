@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"stellarbill-backend/internal/security"
+	"stellabill-backend/internal/security"
 )
 
 // Config holds worker configuration
@@ -270,3 +270,4 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 func generateWorkerID() string {
 	return fmt.Sprintf("worker-%d", time.Now().UnixNano())
 }
+

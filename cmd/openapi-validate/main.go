@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"stellarbill-backend/openapi"
+	"stellabill-backend/openapi"
 )
 
 func main() {
@@ -13,3 +13,4 @@ func main() {
 		os.Exit(1)
 	}
 }
+

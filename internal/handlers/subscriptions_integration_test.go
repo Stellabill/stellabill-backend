@@ -10,9 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
-	"stellarbill-backend/internal/middleware"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/middleware"
+	"stellabill-backend/internal/repository"
+	"stellabill-backend/internal/service"
 )
 
 const testJWTSecret = "integration-test-secret"
@@ -284,3 +284,4 @@ func TestIntegration_GetSubscription_SoftDeleted_Returns410(t *testing.T) {
 		t.Errorf("unexpected error code: %q", body.Code)
 	}
 }
+

@@ -34,3 +34,4 @@ func RequestLogger() gin.HandlerFunc {
 		}).Info("request completed")
 	}
 }
+

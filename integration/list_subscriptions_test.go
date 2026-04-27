@@ -24,3 +24,4 @@ func TestListSubscriptions(t *testing.T) {
 		t.Errorf("expected response to contain 'subscriptions' key, got: %v", body)
 	}
 }
+

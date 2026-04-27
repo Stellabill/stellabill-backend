@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/repository"
+	"stellabill-backend/internal/service"
 )
 
 // NewGetStatementHandler returns a gin.HandlerFunc that retrieves a full
@@ -132,3 +132,4 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		c.JSON(http.StatusOK, resp)
 	}
 }
+

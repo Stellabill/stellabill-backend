@@ -175,3 +175,4 @@ func writeRegistry(path string, registry map[string]string) error {
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o600)
 }
+

@@ -3,32 +3,36 @@ package routes
 import (
 	"log"
 	"os"
-	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/cors"
-	"stellarbill-backend/internal/handlers"
-	"stellarbill-backend/internal/idempotency"
-	"stellarbill-backend/internal/middleware"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/service"
-	"stellarbill-backend/internal/startup"
-	"stellarbill-backend/internal/tracing"
+	"stellabill-backend/internal/config"
+	"stellabill-backend/internal/cors"
+	"stellabill-backend/internal/handlers"
+	"stellabill-backend/internal/idempotency"
+	"stellabill-backend/internal/middleware"
+	"stellabill-backend/internal/repository"
+	"stellabill-backend/internal/service"
+	"stellabill-backend/internal/startup"
+	"stellabill-backend/internal/tracing"
 
-	"stellarbill-backend/internal/auth"
-	"stellarbill-backend/internal/reconciliation"
+	"stellabill-backend/internal/auth"
+	"stellabill-backend/internal/reconciliation"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func Register(r *gin.Engine) {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("Failed to load config: %v", err)
+		return
+	}
 
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
 		_, err := tracing.InitTracer(cfg.TracingServiceName)
 		if err != nil {
 			// Log error but continue
-			middleware.Log.Errorf("Failed to initialize tracer: %v", err)
+			log.Printf("Failed to initialize tracer: %v", err)
 		}
 	}
 
@@ -57,7 +61,11 @@ func Register(r *gin.Engine) {
 		jwtSecret = "dev-secret"
 	}
 
-	subRepo := repository.NewMockSubscriptionRepo()
+	subRepo := repository.NewMockSubscriptionRepo(
+		&repository.SubscriptionRow{ID: "sub-123", CustomerID: "admin-user", TenantID: "system", Amount: "1999", Currency: "USD"},
+		&repository.SubscriptionRow{ID: "sub-456", CustomerID: "merchant-user", TenantID: "merchant-123", Amount: "2999", Currency: "USD"},
+		&repository.SubscriptionRow{ID: "test123", CustomerID: "admin-user", TenantID: "system", Amount: "999", Currency: "USD"},
+	)
 	planRepo := repository.NewMockPlanRepo()
 	svc := service.NewSubscriptionService(subRepo, planRepo)
 
@@ -78,42 +86,43 @@ func Register(r *gin.Engine) {
 	dep := middleware.DeprecationHeaders()
 
 	api.Use(idempotency.Middleware(store))
-	v1.Use(middleware.AuthMiddleware(jwtSecret))
 	{
 		// Public health check - no authentication required
 		api.GET("/health", dep, handlers.Health)
-		v1.GET("/health", handlers.Health)
 
-		// Public read (user + admin)
-		api.GET("/plans",
-			dep,
-			auth.RequirePermission(auth.PermReadPlans),
-			handlers.ListPlans,
-		)
+		// Protected routes
+		protected := api.Group("/")
+		protected.Use(middleware.AuthMiddleware(jwtSecret))
+		{
+			protected.GET("/plans",
+				dep,
+				auth.RequirePermission(auth.PermReadPlans),
+				handlers.ListPlans,
+			)
 
-		api.GET("/subscriptions",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			handlers.ListSubscriptions,
-		)
+			protected.GET("/subscriptions",
+				dep,
+				auth.RequirePermission(auth.PermReadSubscriptions),
+				handlers.ListSubscriptions,
+			)
 
-		api.GET("/subscriptions/:id",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			handlers.GetSubscription,
-		)
+			protected.GET("/subscriptions/:id",
+				dep,
+				auth.RequirePermission(auth.PermReadSubscriptions),
+				handlers.NewGetSubscriptionHandler(svc),
+			)
 
-		// Example future admin-only endpoints:
-		// api.POST("/plans", auth.RequirePermission(auth.PermManagePlans), ...)
-		api.GET("/subscriptions", dep, handlers.ListSubscriptions)
-		v1.GET("/subscriptions", handlers.ListSubscriptions)
-		api.GET("/subscriptions/:id", dep, middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		v1.GET("/subscriptions/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		api.GET("/plans", dep, handlers.ListPlans)
-		v1.GET("/plans", handlers.ListPlans)
+			protected.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
+			protected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
+		}
 
-		api.GET("/statements/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetStatementHandler(stmtSvc))
-		api.GET("/statements", middleware.AuthMiddleware(jwtSecret), handlers.NewListStatementsHandler(stmtSvc))
+		v1.Use(middleware.AuthMiddleware(jwtSecret))
+		{
+			v1.GET("/health", handlers.Health)
+			v1.GET("/subscriptions", handlers.ListSubscriptions)
+			v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
+			v1.GET("/plans", handlers.ListPlans)
+		}
 
 		admin := api.Group("/admin")
 		{
@@ -148,3 +157,4 @@ func Register(r *gin.Engine) {
 		}
 	}
 }
+

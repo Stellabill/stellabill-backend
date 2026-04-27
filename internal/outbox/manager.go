@@ -4,9 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"time"
 
-	"stellarbill-backend/internal/config"
+	"stellabill-backend/internal/config"
 )
 
 // Manager handles the outbox system lifecycle
@@ -190,3 +189,4 @@ func (m *Manager) GetStats() (map[string]interface{}, error) {
 
 	return stats, nil
 }
+

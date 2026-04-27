@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/handlers"
-	"stellarbill-backend/internal/middleware"
-	"stellarbill-backend/internal/routes"
+	"stellabill-backend/internal/config"
+	"stellabill-backend/internal/handlers"
+	"stellabill-backend/internal/middleware"
+	"stellabill-backend/internal/routes"
 )
 
 func setupIntegrationTestRouter() *gin.Engine {
@@ -246,3 +246,4 @@ func TestConfigIntegration(t *testing.T) {
 		t.Error("Log disabled should be false")
 	}
 }
+

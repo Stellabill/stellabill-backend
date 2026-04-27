@@ -145,3 +145,4 @@ func TestHandleValidationError_OtherError(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, "some other error", resp["error"])
 }
+

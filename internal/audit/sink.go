@@ -60,3 +60,4 @@ func (s *MemorySink) Entries() []Entry {
 	copy(out, s.entries)
 	return out
 }
+

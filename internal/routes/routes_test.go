@@ -32,8 +32,8 @@ func TestRegister_HealthAndCORS(t *testing.T) {
 	if payload["status"] != "ok" {
 		t.Fatalf("payload.status: got %v want %q", payload["status"], "ok")
 	}
-	if payload["service"] != "stellarbill-backend" {
-		t.Fatalf("payload.service: got %v want %q", payload["service"], "stellarbill-backend")
+	if payload["service"] != "stellabill-backend" {
+		t.Fatalf("payload.service: got %v want %q", payload["service"], "stellabill-backend")
 	}
 }
 
@@ -80,3 +80,4 @@ func TestRegister_GetSubscriptionShape(t *testing.T) {
 		t.Fatalf("expected payload.customer to be present")
 	}
 }
+

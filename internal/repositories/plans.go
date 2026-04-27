@@ -261,3 +261,4 @@ func (r *postgresPlanRepository) scanPlan(scanner interface{ Scan(...interface{}
 
 	return &plan, nil
 }
+

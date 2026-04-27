@@ -470,3 +470,4 @@ func (r *postgresSubscriptionRepository) scanSubscription(scanner interface{ Sca
 
 	return &subscription, nil
 }
+

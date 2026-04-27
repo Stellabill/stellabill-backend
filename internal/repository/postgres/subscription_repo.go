@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"stellarbill-backend/internal/repository"
+	"stellabill-backend/internal/repository"
 )
 
 var tracer = otel.Tracer("repository/postgres")
@@ -62,3 +62,4 @@ func (r *SubscriptionRepo) FindByID(ctx context.Context, id string) (*repository
 func (r *SubscriptionRepo) FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*repository.SubscriptionRow, error) {
 	return r.FindByID(ctx, id)
 }
+

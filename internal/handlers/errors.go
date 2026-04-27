@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/service"
 )
 
 // ErrorCode represents a standardized error code
@@ -101,3 +101,4 @@ func RespondWithNotFoundError(c *gin.Context, resource string) {
 func RespondWithInternalError(c *gin.Context, message string) {
 	RespondWithError(c, http.StatusInternalServerError, ErrorCodeInternalError, message)
 }
+

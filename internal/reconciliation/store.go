@@ -5,3 +5,4 @@ type Store interface {
 	SaveReports(reports []Report) error
 	ListReports() ([]Report, error)
 }
+

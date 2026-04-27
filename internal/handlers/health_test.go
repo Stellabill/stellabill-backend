@@ -25,5 +25,6 @@ func TestHealth(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
 	assert.Equal(t, "ok", response["status"])
-	assert.Equal(t, "stellarbill-backend", response["service"])
+	assert.Equal(t, "stellabill-backend", response["service"])
 }
+

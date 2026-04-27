@@ -310,3 +310,4 @@ func TestGracefulShutdown_ConcurrentShutdown(t *testing.T) {
 		t.Errorf("Callback called %d times, expected 1", callCount)
 	}
 }
+

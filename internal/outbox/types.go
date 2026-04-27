@@ -65,3 +65,4 @@ type Dispatcher interface {
 	Stop() error
 	IsRunning() bool
 }
+

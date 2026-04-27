@@ -391,3 +391,4 @@ func TestWorker_ShutdownTimeout(t *testing.T) {
 		t.Error("Expected timeout error, got nil")
 	}
 }
+

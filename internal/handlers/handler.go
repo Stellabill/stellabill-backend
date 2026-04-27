@@ -4,6 +4,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Plan represents the JSON response shape for plans.
+type Plan struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Amount      string `json:"amount"`
+	Currency    string `json:"currency"`
+	Interval    string `json:"interval"`
+	Description string `json:"description,omitempty"`
+}
+
 // PlanService defines the interface for plan-related operations
 type PlanService interface {
 	ListPlans(c *gin.Context) ([]Plan, error)
@@ -28,3 +38,4 @@ func NewHandler(plans PlanService, subscriptions SubscriptionService) *Handler {
 		Subscriptions: subscriptions,
 	}
 }
+

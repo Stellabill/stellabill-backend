@@ -40,3 +40,4 @@ func TestFindByVersion_NotFound(t *testing.T) {
 		t.Fatalf("expected not found")
 	}
 }
+

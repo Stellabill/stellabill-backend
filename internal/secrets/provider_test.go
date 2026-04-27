@@ -268,3 +268,4 @@ func TestSafeValue_ZeroValue(t *testing.T) {
 	assert.Equal(t, "", sv.Expose())
 	assert.True(t, sv.IsEmpty())
 }
+

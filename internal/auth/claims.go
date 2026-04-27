@@ -11,14 +11,13 @@ type Claims struct {
 	Role       string   `json:"role"`
 	Roles      []string `json:"roles,omitempty"`
 	MerchantID string   `json:"merchant_id,omitempty"`
+	Tenant     string   `json:"tenant,omitempty"`
 	jwt.RegisteredClaims
 }
-	RoleCustomer = "customer"
-)
 
 // AllRoles returns all valid roles
 func AllRoles() []string {
-	return []string{RoleAdmin, RoleMerchant, RoleCustomer}
+	return []string{string(RoleAdmin), string(RoleMerchant), string(RoleCustomer)}
 }
 
 // HasRole checks if claims contain the specified role
@@ -33,3 +32,4 @@ func (c *Claims) HasRole(role string) bool {
 	}
 	return false
 }
+

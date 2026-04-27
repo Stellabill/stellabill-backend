@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/featureflags"
+	"stellabill-backend/internal/featureflags"
 )
 
 func setupTestRouter() *gin.Engine {
@@ -313,3 +313,4 @@ func TestRequireAllFeatureFlags_EmptyList(t *testing.T) {
 		t.Errorf("Expected status 500, got %d", w.Code)
 	}
 }
+

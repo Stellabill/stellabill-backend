@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"stellarbill-backend/internal/cache"
+	"stellabill-backend/internal/cache"
 )
 
 func TestCachedPlanRepo_HitMissAndTTL(t *testing.T) {
@@ -136,3 +136,4 @@ func TestCachedPlanRepo_ConcurrentInvalidation(t *testing.T) {
 		t.Fatalf("expected C2 after invalidation, got %s", p.Name)
 	}
 }
+

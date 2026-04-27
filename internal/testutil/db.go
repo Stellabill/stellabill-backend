@@ -14,7 +14,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"stellarbill-backend/migrations"
+	"stellabill-backend/migrations"
 )
 
 // ContainerDSN holds the DSN and a teardown function for a running Postgres testcontainer.
@@ -52,8 +52,10 @@ func StartPostgresContainer(ctx context.Context) (*ContainerDSN, error) {
 	}
 
 	return &ContainerDSN{
-		DSN:      dsn,
-		Teardown: container.Terminate,
+		DSN: dsn,
+		Teardown: func(ctx context.Context) error {
+			return container.Terminate(ctx)
+		},
 	}, nil
 }
 
@@ -128,3 +130,4 @@ func NewPoolFromDSN(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 
 	return pool, nil
 }
+

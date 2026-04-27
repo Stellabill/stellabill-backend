@@ -23,7 +23,8 @@ func TestHealth(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Errorf("expected status=ok, got %q", body["status"])
 	}
-	if body["service"] != "stellarbill-backend" {
-		t.Errorf("expected service=stellarbill-backend, got %q", body["service"])
+	if body["service"] != "stellabill-backend" {
+		t.Errorf("expected service=stellabill-backend, got %q", body["service"])
 	}
 }
+

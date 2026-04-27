@@ -33,3 +33,4 @@ func RecoveryLogger() gin.HandlerFunc {
 		c.Next()
 	}
 }
+

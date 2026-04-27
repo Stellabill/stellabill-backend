@@ -22,3 +22,4 @@ type Provider interface {
 	// Must never include secret values.
 	Name() string
 }
+

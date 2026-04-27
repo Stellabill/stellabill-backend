@@ -206,7 +206,7 @@ func (e SubscriptionCreated) AggregateType() *string {
 	return &aggregateType
 }
 
-func (e SubscriptionCreated) OccurredAt() time.Time {
+func (e SubscriptionCreated) GetOccurredAt() time.Time {
 	return e.OccurredAt
 }
 
@@ -237,6 +237,7 @@ func (e PaymentProcessed) AggregateType() *string {
 	return &aggregateType
 }
 
-func (e PaymentProcessed) OccurredAt() time.Time {
+func (e PaymentProcessed) GetOccurredAt() time.Time {
 	return e.OccurredAt
 }
+

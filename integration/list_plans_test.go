@@ -24,3 +24,4 @@ func TestListPlans(t *testing.T) {
 		t.Errorf("expected response to contain 'plans' key, got: %v", body)
 	}
 }
+

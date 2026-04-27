@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/http/httptest"
-	"stellarbill-backend/internal/service"
+	"stellabill-backend/internal/service"
 	"testing"
 )
 
@@ -19,7 +19,7 @@ type mockSubscriptionService struct {
 	id       string
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerID, id string, isAdmin bool) (*service.SubscriptionDetail, []string, error) {
 	m.callerID = callerID
 	m.id = id
 	return m.detail, m.warnings, m.err
@@ -321,3 +321,4 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 		t.Errorf("expected billing_summary.currency=USD, got %v", billing["currency"])
 	}
 }
+

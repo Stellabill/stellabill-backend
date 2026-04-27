@@ -42,3 +42,4 @@ func TestNoOpTransition(t *testing.T) {
 		t.Errorf("expected no-op transition to pass")
 	}
 }
+

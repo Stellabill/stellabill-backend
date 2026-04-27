@@ -194,3 +194,4 @@ func TestLogAuthFailureWithoutErrors(t *testing.T) {
 type errUnauthorized struct{}
 
 func (errUnauthorized) Error() string { return "missing token" }
+

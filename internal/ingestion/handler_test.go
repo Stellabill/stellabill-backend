@@ -174,3 +174,4 @@ func TestListByContractHandler_Pagination(t *testing.T) {
 	assert.Equal(t, float64(2), resp["limit"])
 	assert.Equal(t, float64(1), resp["offset"])
 }
+

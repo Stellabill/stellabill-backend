@@ -3,7 +3,7 @@ package middleware
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/config"
+	"stellabill-backend/internal/config"
 )
 
 // SecurityHeaders applies baseline HTTP security headers.
@@ -37,3 +37,4 @@ func SecurityHeaders(cfg *config.Config) gin.HandlerFunc {
 		c.Next()
 	}
 }
+

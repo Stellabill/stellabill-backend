@@ -383,3 +383,4 @@ func TestRunner_Applied_CommitError(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
+

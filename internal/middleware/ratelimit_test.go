@@ -553,3 +553,4 @@ func TestRateLimitMiddleware_EdgeCases(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 	})
 }
+

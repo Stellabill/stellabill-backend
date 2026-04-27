@@ -53,3 +53,4 @@ func TestListPlans(t *testing.T) {
 		assert.Equal(t, "db error", response["error"])
 	})
 }
+

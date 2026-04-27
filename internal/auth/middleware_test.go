@@ -65,3 +65,4 @@ func TestHasPermission_DefaultDeny(t *testing.T) {
 		t.Fatal("expected false for unknown role")
 	}
 }
+

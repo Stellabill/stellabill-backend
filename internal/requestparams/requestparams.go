@@ -207,3 +207,4 @@ func normalizeString(value string) (string, error) {
 	}
 	return normalized, nil
 }
+

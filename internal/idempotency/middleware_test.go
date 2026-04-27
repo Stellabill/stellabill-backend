@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/idempotency"
+	"stellabill-backend/internal/idempotency"
 )
 
 func init() {
@@ -194,3 +194,4 @@ func TestGetRequestSkipped(t *testing.T) {
 		t.Fatal("GET requests should never be intercepted")
 	}
 }
+

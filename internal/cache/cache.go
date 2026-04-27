@@ -55,3 +55,4 @@ func (m *InMemory) Delete(_ context.Context, key string) error {
 	delete(m.items, key)
 	return nil
 }
+

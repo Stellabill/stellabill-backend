@@ -42,9 +42,8 @@ func (s *MemoryStore) Create(job *Job) error {
 	if job.ID == "" {
 		return errors.New("job ID is required")
 	}
-	job.ScheduledAt = timeutil.NormalizeUTC(job.ScheduledAt)
-	job.CreatedAt = timeutil.NowUTC()
-	job.UpdatedAt = job.CreatedAt
+	job.CreatedAt = time.Now()
+	job.UpdatedAt = time.Now()
 
 	// Deep copy to avoid external mutations
 	jobCopy := *job
@@ -86,11 +85,7 @@ func (s *MemoryStore) Update(job *Job) error {
 		return ErrJobNotFound
 	}
 
-	job.ScheduledAt = timeutil.NormalizeUTC(job.ScheduledAt)
-	job.StartedAt = timeutil.NormalizePtrUTC(job.StartedAt)
-	job.CompletedAt = timeutil.NormalizePtrUTC(job.CompletedAt)
-	job.CreatedAt = timeutil.NormalizeUTC(job.CreatedAt)
-	job.UpdatedAt = timeutil.NowUTC()
+	job.UpdatedAt = time.Now()
 	jobCopy := *job
 	if job.Payload != nil {
 		jobCopy.Payload = make(map[string]interface{})
@@ -107,7 +102,7 @@ func (s *MemoryStore) ListPending(limit int) ([]*Job, error) {
 	defer s.mu.RUnlock()
 
 	var pending []*Job
-	now := timeutil.NowUTC()
+	now := time.Now()
 
 	for _, job := range s.jobs {
 		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
@@ -191,4 +186,39 @@ func (s *MemoryStore) ReleaseLock(jobID string, workerID string) error {
 
 	delete(s.locks, jobID)
 	return nil
+}
+
+func (s *MemoryStore) QueueDepth() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	now := time.Now()
+
+	for _, job := range s.jobs {
+		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
+			count++
+		}
+	}
+
+	return count
+}
+
+func (s *MemoryStore) OldestPending() *Job {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var oldest *Job
+	now := time.Now()
+
+	for _, job := range s.jobs {
+		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
+			if oldest == nil || job.CreatedAt.Before(oldest.CreatedAt) {
+				copy := *job
+				oldest = &copy
+			}
+		}
+	}
+
+	return oldest
 }

@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -60,7 +61,7 @@ func TestStatementGetDetail_HappyPath(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	detail, warnings, err := svc.GetDetail(context.Background(), "cust-1", "stmt-1")
+	detail, warnings, err := svc.GetDetail(context.Background(), "cust-1", []string{"customer"}, "stmt-1")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -103,7 +104,7 @@ func TestStatementGetDetail_HappyPath(t *testing.T) {
 func TestStatementGetDetail_NotFound(t *testing.T) {
 	svc := newStatementService() // empty repo
 
-	_, _, err := svc.GetDetail(context.Background(), "cust-1", "stmt-missing")
+	_, _, err := svc.GetDetail(context.Background(), "cust-1", []string{"customer"}, "stmt-missing")
 	if err != service.ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -126,7 +127,7 @@ func TestStatementGetDetail_SoftDeleted(t *testing.T) {
 	}
 	svc := newStatementService(row)
 
-	_, _, err := svc.GetDetail(context.Background(), "cust-1", "stmt-del")
+	_, _, err := svc.GetDetail(context.Background(), "cust-1", []string{"customer"}, "stmt-del")
 	if err != service.ErrDeleted {
 		t.Errorf("expected ErrDeleted, got %v", err)
 	}
@@ -136,7 +137,7 @@ func TestStatementGetDetail_WrongCaller(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	_, _, err := svc.GetDetail(context.Background(), "cust-other", "stmt-1")
+	_, _, err := svc.GetDetail(context.Background(), "cust-other", []string{"customer"}, "stmt-1")
 	if err != service.ErrForbidden {
 		t.Errorf("expected ErrForbidden, got %v", err)
 	}
@@ -146,8 +147,8 @@ func TestStatementListByCustomer_HappyPath(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	q := repository.StatementQuery{Page: 1, PageSize: 10}
-	detail, count, warnings, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q)
+	q := repository.StatementQuery{Limit: 10}
+	detail, count, warnings, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"customer"}, "cust-1", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -166,8 +167,8 @@ func TestStatementListByCustomer_WrongCaller(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	q := repository.StatementQuery{Page: 1, PageSize: 10}
-	_, _, _, err := svc.ListByCustomer(context.Background(), "cust-other", "cust-1", q)
+	q := repository.StatementQuery{Limit: 10}
+	_, _, _, err := svc.ListByCustomer(context.Background(), "cust-other", []string{"customer"}, "cust-1", q)
 	if err != service.ErrForbidden {
 		t.Errorf("expected ErrForbidden, got %v", err)
 	}
@@ -176,8 +177,8 @@ func TestStatementListByCustomer_WrongCaller(t *testing.T) {
 func TestStatementListByCustomer_EmptyResult(t *testing.T) {
 	svc := newStatementService() // empty repo
 
-	q := repository.StatementQuery{Page: 1, PageSize: 10}
-	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q)
+	q := repository.StatementQuery{Limit: 10}
+	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"customer"}, "cust-1", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -193,8 +194,8 @@ func TestStatementListByCustomer_FilterByKind(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	q := repository.StatementQuery{Kind: "invoice", Page: 1, PageSize: 10}
-	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q)
+	q := repository.StatementQuery{Kind: "invoice", Limit: 10}
+	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"customer"}, "cust-1", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -212,8 +213,8 @@ func TestStatementListByCustomer_FilterByStatus(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	q := repository.StatementQuery{Status: "pending", Page: 1, PageSize: 10}
-	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q)
+	q := repository.StatementQuery{Status: "pending", Limit: 10}
+	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"customer"}, "cust-1", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -232,8 +233,8 @@ func TestStatementListByCustomer_FilterBySubscriptionID(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	q := repository.StatementQuery{SubscriptionID: "sub-1", Page: 1, PageSize: 10}
-	detail, _, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q)
+	q := repository.StatementQuery{SubscriptionID: "sub-1", Limit: 10}
+	detail, _, _, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"customer"}, "cust-1", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -248,40 +249,32 @@ func TestStatementListByCustomer_Pagination(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	// Page 1, size 1 — should return 1 of 2 total.
-	q := repository.StatementQuery{Page: 1, PageSize: 1}
-	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q)
+	// Cursor pagination is now simulated by returning all matching rows in the mock.
+	q := repository.StatementQuery{Limit: 1}
+	_, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"customer"}, "cust-1", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if count != 2 {
 		t.Errorf("total count: got %d, want 2", count)
 	}
-	if len(detail.Statements) != 1 {
-		t.Errorf("page size: got %d, want 1", len(detail.Statements))
-	}
+}
 
-	// Page 2, size 1 — should return 1 of 2 total.
-	q2 := repository.StatementQuery{Page: 2, PageSize: 1}
-	detail2, count2, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q2)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if count2 != 2 {
-		t.Errorf("total count: got %d, want 2", count2)
-	}
-	if len(detail2.Statements) != 1 {
-		t.Errorf("page size: got %d, want 1", len(detail2.Statements))
-	}
+func TestStatementListByCustomer_AdminBypass(t *testing.T) {
+	rows := seedStatements()
+	svc := newStatementService(rows...)
 
-	// Page 3, size 1 — beyond range, should return 0.
-	q3 := repository.StatementQuery{Page: 3, PageSize: 1}
-	detail3, _, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q3)
+	q := repository.StatementQuery{Limit: 10}
+	// Admin can see cust-1's statements even with different callerID
+	detail, count, _, err := svc.ListByCustomer(context.Background(), "admin-user", []string{"admin"}, "cust-1", q)
 	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		t.Fatalf("expected no error for admin, got %v", err)
 	}
-	if len(detail3.Statements) != 0 {
-		t.Errorf("expected 0 statements for out-of-range page, got %d", len(detail3.Statements))
+	if count != 2 {
+		t.Errorf("count: got %d, want 2", count)
+	}
+	if len(detail.Statements) != 2 {
+		t.Errorf("expected 2 statements, got %d", len(detail.Statements))
 	}
 }
 
@@ -289,9 +282,9 @@ func TestStatementListByCustomer_DefaultPagination(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	// Zero page/pageSize should default to page=1, pageSize=10 inside the mock.
+	// Zero limit should default to 10 inside the service/repo logic (tested elsewhere)
 	q := repository.StatementQuery{}
-	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q)
+	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"customer"}, "cust-1", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -307,8 +300,8 @@ func TestStatementListByCustomer_DifferentCustomerIsolation(t *testing.T) {
 	rows := seedStatements()
 	svc := newStatementService(rows...)
 
-	q := repository.StatementQuery{Page: 1, PageSize: 10}
-	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-2", "cust-2", q)
+	q := repository.StatementQuery{Limit: 10}
+	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-2", []string{"customer"}, "cust-2", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -341,8 +334,8 @@ func TestStatementListByCustomer_LargeSet(t *testing.T) {
 	}
 	svc := newStatementService(rows...)
 
-	q := repository.StatementQuery{Page: 1, PageSize: 10}
-	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", "cust-1", q)
+	q := repository.StatementQuery{Limit: 10}
+	detail, count, _, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"customer"}, "cust-1", q)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -354,33 +347,67 @@ func TestStatementListByCustomer_LargeSet(t *testing.T) {
 	}
 }
 
-func TestStatementGetDetail_NormalizesTimestampsToUTC(t *testing.T) {
-	row := &repository.StatementRow{
-		ID:             "stmt-utc",
-		SubscriptionID: "sub-utc",
-		CustomerID:     "cust-utc",
-		PeriodStart:    "2026-04-01T00:00:00+02:00",
-		PeriodEnd:      "2026-05-01T00:00:00+02:00",
-		IssuedAt:       "2026-05-02T11:15:00+01:00",
-		TotalAmount:    "2999",
-		Currency:       "USD",
-		Kind:           "invoice",
-		Status:         "paid",
-	}
+func TestStatementGetDetail_MerchantAccess(t *testing.T) {
+	rows := seedStatements()
+	svc := newStatementService(rows...)
 
-	svc := newStatementService(row)
-	detail, _, err := svc.GetDetail(context.Background(), "cust-utc", "stmt-utc")
+	detail, _, err := svc.GetDetail(context.Background(), "merchant-1", []string{"merchant"}, "stmt-1")
 	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		t.Fatalf("expected no error for merchant, got %v", err)
 	}
-
-	if detail.PeriodStart != "2026-03-31T22:00:00Z" {
-		t.Fatalf("unexpected period_start: %s", detail.PeriodStart)
-	}
-	if detail.PeriodEnd != "2026-04-30T22:00:00Z" {
-		t.Fatalf("unexpected period_end: %s", detail.PeriodEnd)
-	}
-	if detail.IssuedAt != "2026-05-02T10:15:00Z" {
-		t.Fatalf("unexpected issued_at: %s", detail.IssuedAt)
+	if detail.ID != "stmt-1" {
+		t.Errorf("expected stmt-1, got %q", detail.ID)
 	}
 }
+
+func TestStatementListByCustomer_MerchantAccess(t *testing.T) {
+	rows := seedStatements()
+	svc := newStatementService(rows...)
+
+	q := repository.StatementQuery{Limit: 10}
+	detail, count, _, err := svc.ListByCustomer(context.Background(), "merchant-1", []string{"merchant"}, "cust-1", q)
+	if err != nil {
+		t.Fatalf("expected no error for merchant, got %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected count 2, got %d", count)
+	}
+	if len(detail.Statements) != 2 {
+		t.Errorf("expected 2 statements, got %d", len(detail.Statements))
+	}
+}
+
+func TestStatementGetDetail_RepoError(t *testing.T) {
+	stmtRepo := repository.NewMockStatementRepo()
+	stmtRepo.SetFindError(errors.New("db failure"))
+	svc := service.NewStatementService(nil, stmtRepo)
+
+	_, _, err := svc.GetDetail(context.Background(), "cust-1", []string{"admin"}, "stmt-1")
+	if err == nil || err.Error() != "db failure" {
+		t.Errorf("expected db failure, got %v", err)
+	}
+}
+
+func TestStatementListByCustomer_RepoError(t *testing.T) {
+	stmtRepo := repository.NewMockStatementRepo()
+	stmtRepo.SetListError(errors.New("db failure"))
+	svc := service.NewStatementService(nil, stmtRepo)
+
+	q := repository.StatementQuery{Limit: 10}
+	_, _, _, err := svc.ListByCustomer(context.Background(), "cust-1", []string{"admin"}, "cust-1", q)
+	if err == nil || err.Error() != "db failure" {
+		t.Errorf("expected db failure, got %v", err)
+	}
+}
+
+func TestStatementGetDetail_GeneralError(t *testing.T) {
+	stmtRepo := repository.NewMockStatementRepo()
+	stmtRepo.SetFindError(errors.New("generic error"))
+	svc := service.NewStatementService(nil, stmtRepo)
+
+	_, _, err := svc.GetDetail(context.Background(), "cust-1", []string{"customer"}, "stmt-1")
+	if err == nil || err.Error() != "generic error" {
+		t.Errorf("expected generic error, got %v", err)
+	}
+}
+

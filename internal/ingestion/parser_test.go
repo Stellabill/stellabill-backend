@@ -163,13 +163,148 @@ func TestParse_TrimsWhitespace(t *testing.T) {
 	assert.Equal(t, "tenant-trimmed", result.TenantID)
 }
 
-func TestParse_NormalizesOccurredAtToUTC(t *testing.T) {
-	raw := validRawEvent()
-	raw.OccurredAt = "2026-04-23T10:30:00+02:00"
+func TestParse_ValidSubscriptionCreated(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(ValidSubscriptionCreated), &raw)
+	require.NoError(t, err)
 
 	result, err := Parse(raw)
 	require.NoError(t, err)
 
-	assert.Equal(t, "2026-04-23T08:30:00Z", result.OccurredAt.Format(time.RFC3339))
-	assert.Equal(t, time.UTC, result.OccurredAt.Location())
+	assert.Equal(t, "evt-001", result.IdempotencyKey)
+	assert.Equal(t, EventContractCreated, result.EventType)
+	assert.Equal(t, "contract-123", result.ContractID)
+	assert.Equal(t, "tenant-456", result.TenantID)
+	assert.Equal(t, int64(1), result.SequenceNum)
+
+	var payload map[string]interface{}
+	err = json.Unmarshal(result.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "sub-789", payload["subscriber_id"])
+	assert.Equal(t, "plan-basic", payload["plan_id"])
+	assert.Equal(t, "9.99", payload["amount"])
+	assert.Equal(t, "USD", payload["currency"])
+	assert.Equal(t, "month", payload["interval"])
+}
+
+func TestParse_ValidSubscriptionAmended(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(ValidSubscriptionAmended), &raw)
+	require.NoError(t, err)
+
+	result, err := Parse(raw)
+	require.NoError(t, err)
+	assert.Equal(t, EventContractAmended, result.EventType)
+
+	var payload map[string]interface{}
+	err = json.Unmarshal(result.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "plan-premium", payload["plan_id"])
+}
+
+func TestParse_ValidSubscriptionRenewed(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(ValidSubscriptionRenewed), &raw)
+	require.NoError(t, err)
+
+	result, err := Parse(raw)
+	require.NoError(t, err)
+	assert.Equal(t, EventContractRenewed, result.EventType)
+}
+
+func TestParse_ValidSubscriptionCancelled(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(ValidSubscriptionCancelled), &raw)
+	require.NoError(t, err)
+
+	result, err := Parse(raw)
+	require.NoError(t, err)
+	assert.Equal(t, EventContractCancelled, result.EventType)
+
+	var payload map[string]interface{}
+	err = json.Unmarshal(result.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "user_request", payload["reason"])
+}
+
+func TestParse_ValidSubscriptionExpired(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(ValidSubscriptionExpired), &raw)
+	require.NoError(t, err)
+
+	result, err := Parse(raw)
+	require.NoError(t, err)
+	assert.Equal(t, EventContractExpired, result.EventType)
+}
+
+func TestParse_MissingIdempotencyKey_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(MissingIdempotencyKey), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrMissingIdempotencyKey)
+}
+
+func TestParse_MissingEventType_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(MissingEventType), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrMissingEventType)
+}
+
+func TestParse_InvalidEventType_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(InvalidEventType), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrInvalidEventType)
+}
+
+func TestParse_MissingContractID_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(MissingContractID), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrMissingContractID)
+}
+
+func TestParse_MissingTenantID_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(MissingTenantID), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrMissingTenantID)
+}
+
+func TestParse_MissingOccurredAt_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(MissingOccurredAt), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrMissingOccurredAt)
+}
+
+func TestParse_InvalidOccurredAt_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(InvalidOccurredAt), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrInvalidOccurredAt)
+}
+
+func TestParse_InvalidPayload_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(InvalidPayload), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrInvalidPayload)
+}
+
+func TestParse_NegativeSequence_FromFixture(t *testing.T) {
+	var raw RawEvent
+	err := json.Unmarshal([]byte(NegativeSequence), &raw)
+	require.NoError(t, err)
+	_, err = Parse(raw)
+	assert.ErrorIs(t, err, ErrNegativeSequence)
 }

@@ -1,19 +1,15 @@
 package routes
 
 import (
-	"log"
-	"os"
+	"fmt"
+	"net/http"
+
 	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/cors"
 	"stellarbill-backend/internal/handlers"
-	"stellarbill-backend/internal/idempotency"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
-	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/tracing"
-
-	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/reconciliation"
 
 	"github.com/gin-gonic/gin"
@@ -23,26 +19,24 @@ import (
 func Register(r *gin.Engine) {
 	cfg, err := config.Load()
 	if err != nil {
-		cfg = config.Config{Env: "development", TracingExporter: "none", TracingServiceName: "stellarbill-backend"}
+		panic(fmt.Sprintf("failed to load configuration: %v", err))
 	}
 
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
 		_, err := tracing.InitTracer(cfg.TracingServiceName)
 		if err != nil {
-			// Log error but continue
-			log.Printf("Failed to initialize tracer: %v", err)
+			fmt.Printf("Failed to initialize tracer: %v\n", err)
 		}
 	}
 
-	// Add OpenTelemetry middleware
+	// Global middleware
+	r.Use(middleware.RequestID())
+	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
-	// Add TraceID middleware to bridge OTEL trace ID to response headers
 	r.Use(middleware.TraceIDMiddleware())
 
-	corsProfile := cors.ProfileForEnv(cfg.Env, os.Getenv("ALLOWED_ORIGINS"))
-
-	// Apply rate limiting middleware
+	// Rate limiting
 	rateLimitConfig := middleware.RateLimiterConfig{
 		Enabled:        cfg.RateLimitEnabled,
 		Mode:           middleware.RateLimitMode(cfg.RateLimitMode),
@@ -52,94 +46,68 @@ func Register(r *gin.Engine) {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
-	r.Use(cors.Middleware(corsProfile))
+	// Request size and Gzip
+	r.Use(middleware.RequestSizeLimit(cfg.MaxRequestSize))
+	r.Use(middleware.GzipPolicy(middleware.GzipPolicyConfig{
+		MaxUncompressedBytes: cfg.MaxGzipUncompressed,
+		MaxRatio:             cfg.MaxGzipRatio,
+	}))
 
-	store := idempotency.NewStore(idempotency.DefaultTTL)
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		jwtSecret = "dev-secret"
-	}
-
+	// Dependencies
 	subRepo := repository.NewMockSubscriptionRepo()
-	planRepo := repository.NewMockPlanRepo()
-
-	// Statement service wiring (in-memory mock for test/dev)
+	_ = repository.NewMockPlanRepo() // Placeholder
 	stmtRepo := repository.NewMockStatementRepo()
+
 	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
+	
+	// Create the main handler instance
+	h := handlers.NewHandler(nil, nil) // Placeholder for services if needed
+	h.Database = nil // Wire real DB here
+	
+	// Auth configuration
+	jwtSecret := cfg.JWTSecret
+	authMW := middleware.AuthMiddleware(nil, jwtSecret)
 
-	// Admin handler (token from env or default)
-	adminToken := os.Getenv("ADMIN_TOKEN")
-	adminHandler := handlers.NewAdminHandler(adminToken)
-	// wire planRepo into handlers for list/detail endpoints and optional caching
-	handlers.SetPlanRepository(planRepo)
-
-	// Define the API version/group
+	// API Groups
 	api := r.Group("/api")
 	v1 := api.Group("/v1")
-
+	
 	dep := middleware.DeprecationHeaders()
 
-	api.Use(idempotency.Middleware(store))
-	v1.Use(middleware.AuthMiddleware(jwtSecret))
+	// Public Routes
+	api.GET("/health", h.ReadinessProbe)
+	api.GET("/liveness", h.LivenessProbe)
+
+	// Protected Routes (v1)
+	v1.Use(authMW)
 	{
-		// Public health check - no authentication required
-		api.GET("/health", dep, handlers.Health)
-		v1.GET("/health", handlers.Health)
+		v1.GET("/plans", dep, h.ListPlans)
+		v1.GET("/subscriptions", dep, h.ListSubscriptions)
+		v1.GET("/subscriptions/:id", dep, h.GetSubscription)
+		
+		// Hardened Statements API
+		v1.GET("/statements", dep, handlers.NewListStatementsHandler(stmtSvc))
+		v1.GET("/statements/:id", dep, handlers.NewGetStatementHandler(stmtSvc))
+	}
 
-		// Public read (user + admin)
-		api.GET("/plans",
-			dep,
-			auth.RequirePermission(auth.PermReadPlans),
-			handlers.ListPlans,
-		)
-
-		api.GET("/subscriptions",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			handlers.ListSubscriptions,
-		)
-
-		api.GET("/subscriptions/:id",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			handlers.GetSubscription,
-		)
-
-		// Example future admin-only endpoints:
-		// api.POST("/plans", auth.RequirePermission(auth.PermManagePlans), ...)
-		api.GET("/statements/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetStatementHandler(stmtSvc))
-		api.GET("/statements", middleware.AuthMiddleware(jwtSecret), handlers.NewListStatementsHandler(stmtSvc))
-
-		admin := api.Group("/admin")
-		{
-			admin.POST("/purge", adminHandler.PurgeCache)
-			// Diagnostics endpoint — re-runs startup checks for live triage
-			diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
-			admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
-			// Reconciliation endpoint (admin-only) - accepts backend subscription list
-			// Choose adapter implementation via env var CONTRACT_SNAPSHOT_URL. If set, use HTTPAdapter.
-			contractURL := os.Getenv("CONTRACT_SNAPSHOT_URL")
-			var adapter reconciliation.Adapter
-			if contractURL != "" {
-				// Optional auth header via CONTRACT_SNAPSHOT_AUTH (e.g. "Bearer <token>")
-				authHeader := os.Getenv("CONTRACT_SNAPSHOT_AUTH")
-				adapter = reconciliation.NewHTTPAdapter(contractURL, authHeader)
-			} else {
-				// Default to in-memory adapter (empty) — replace or seed as needed in dev.
-				adapter = reconciliation.NewMemoryAdapter()
+	// Admin Routes
+	admin := api.Group("/admin")
+	admin.Use(authMW) // Should ideally be a more restrictive check
+	{
+		adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
+		admin.POST("/purge", adminHandler.PurgeCache)
+		
+		// Reconciliation
+		adapter := reconciliation.NewMemoryAdapter()
+		reconStore := reconciliation.NewMemoryStore()
+		admin.POST("/reconcile", handlers.NewReconcileHandler(adapter, reconStore))
+		admin.GET("/reports", func(c *gin.Context) {
+			reports, err := reconStore.ListReports()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load reports"})
+				return
 			}
-			// Wire in-memory store for persistence by default; can be swapped for DB-backed store.
-			reconStore := reconciliation.NewMemoryStore()
-			admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
-			// List persisted reports
-			admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
-				reports, err := reconStore.ListReports()
-				if err != nil {
-					c.JSON(500, gin.H{"error": "failed to load reports"})
-					return
-				}
-				c.JSON(200, gin.H{"reports": reports})
-			})
-		}
+			c.JSON(http.StatusOK, gin.H{"reports": reports})
+		})
 	}
 }

@@ -362,7 +362,7 @@ func TestPlanRepository_ScanError(t *testing.T) {
 		mock.ExpectQuery(`SELECT`).WillReturnRows(rows)
 		
 		plans, err := repo.GetByMerchantID("merchant-123", 10, 0)
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to scan plan")
 		assert.Nil(t, plans)
 		

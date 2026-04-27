@@ -34,6 +34,12 @@ func SecurityHeaders(cfg *config.Config) gin.HandlerFunc {
 			}
 		}
 
+		// Content-Security-Policy: frame-ancestors
+		if c.Writer.Header().Get("Content-Security-Policy") == "" {
+			csp := fmt.Sprintf("frame-ancestors %s", cfg.SecurityFrameAncestors)
+			c.Header("Content-Security-Policy", csp)
+		}
+
 		c.Next()
 	}
 }

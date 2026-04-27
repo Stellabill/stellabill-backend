@@ -7,6 +7,8 @@ import (
 	"log"
 	"time"
 
+	"stellarbill-backend/internal/security"
+
 	"github.com/google/uuid"
 )
 
@@ -66,7 +68,9 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 		return fmt.Errorf("failed to store event: %w", err)
 	}
 	
-	log.Printf("Event %s stored in outbox: %s", event.ID, eventType)
+	log.Printf("Event %s stored in outbox: %s", 
+		security.MaskPII(event.ID), 
+		security.MaskPII(eventType))
 	return nil
 }
 

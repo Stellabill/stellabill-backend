@@ -7,6 +7,8 @@ import (
     "net/http/httptest"
     "testing"
     "time"
+
+    "go.uber.org/zap"
 )
 
 func TestHTTPAdapter_FetchSnapshots(t *testing.T) {
@@ -29,7 +31,7 @@ func TestHTTPAdapter_FetchSnapshots(t *testing.T) {
     }))
     defer srv.Close()
 
-    adapter := NewHTTPAdapter(srv.URL, "")
+    adapter := NewHTTPAdapter(srv.URL, "", zap.NewNop())
     got, err := adapter.FetchSnapshots(context.Background())
     if err != nil {
         t.Fatalf("FetchSnapshots error: %v", err)

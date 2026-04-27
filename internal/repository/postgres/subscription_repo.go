@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/timeutil"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -39,7 +38,7 @@ func (r *SubscriptionRepo) FindByID(ctx context.Context, id string) (*repository
 	var s repository.SubscriptionRow
 	var deletedAt *time.Time
 
-	ctx, span := subscriptionTracer.Start(ctx, "SubscriptionRepo.FindByID",
+	ctx, span := tracer.Start(ctx, "SubscriptionRepo.FindByID",
 		trace.WithAttributes(attribute.String("subscription.id", id)))
 	defer span.End()
 

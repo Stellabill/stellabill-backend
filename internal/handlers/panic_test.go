@@ -6,8 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// TestPanicHandler intentionally panics to test recovery middleware
-func TestPanicHandler(c *gin.Context) {
+// HandleTestPanic intentionally panics to test recovery middleware
+func HandleTestPanic(c *gin.Context) {
 	panicType := c.Query("type")
 	switch panicType {
 	case "string":

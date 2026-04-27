@@ -2,64 +2,52 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/pagination"
 )
 
-// Plan is the plans payload shape exposed by handlers.
 type Plan struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	Amount      string `json:"amount"`
+	Amount      string `json:"amount"` // Changed to string to match tests
 	Currency    string `json:"currency"`
 	Interval    string `json:"interval"`
-	Description string `json:"description,omitempty"`
+	Description string `json:"description"`
 }
 
-var planRepo repository.PlanRepository
+func (p Plan) GetID() string        { return p.ID }
+func (p Plan) GetSortValue() string { return p.Name } // Standardize on Name as sort key
 
-// SetPlanRepository allows wiring a PlanRepository (used by routes.Register).
-func SetPlanRepository(r repository.PlanRepository) {
-	planRepo = r
-}
-
-// ListPlans handles requests through the Handler dependency interface.
+// ListPlans handles requests for listing all available plans.
 func (h *Handler) ListPlans(c *gin.Context) {
-	plans, err := h.Plans.ListPlans(c)
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 {
+		limit = 10
+	}
+
+	cursorStr := c.Query("cursor")
+	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if plans == nil {
-		plans = []Plan{}
-	}
-	c.JSON(http.StatusOK, gin.H{"plans": plans})
-}
-
-// ListPlans handles global route registration by using the configured repository.
-func ListPlans(c *gin.Context) {
-	if planRepo == nil {
-		c.JSON(http.StatusOK, gin.H{"plans": []Plan{}})
+		RespondWithInternalError(c, "Failed to retrieve plans")
 		return
 	}
 
-	rows, err := planRepo.List(c.Request.Context())
+	// Fetch plans from the service/repository
+	allPlans, err := h.Plans.ListPlans(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
 		return
 	}
 
-	out := make([]Plan, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, Plan{
-			ID:          r.ID,
-			Name:        r.Name,
-			Amount:      r.Amount,
-			Currency:    r.Currency,
-			Interval:    r.Interval,
-			Description: r.Description,
-		})
-	}
-	c.JSON(http.StatusOK, gin.H{"plans": out})
+	// Paginate the slice. In a real DB repo, this would be in the query.
+	page := pagination.PaginateSlice(allPlans, cursor, limit)
+
+	c.JSON(http.StatusOK, gin.H{
+		"plans":       page.Items,
+		"next_cursor": page.NextCursor,
+		"has_more":    page.HasMore,
+	})
 }

@@ -71,6 +71,8 @@ func (m *MockPlanRepo) List(_ context.Context) ([]*PlanRow, error) {
 // MockStatementRepo is an in-memory StatementRepository for testing.
 type MockStatementRepo struct {
 	records map[string]*StatementRow
+	listErr error
+	findErr error
 }
 
 // NewMockStatementRepo creates a MockStatementRepo pre-populated with the given rows.
@@ -82,8 +84,19 @@ func NewMockStatementRepo(rows ...*StatementRow) *MockStatementRepo {
 	return m
 }
 
+func (m *MockStatementRepo) SetListError(err error) {
+	m.listErr = err
+}
+
+func (m *MockStatementRepo) SetFindError(err error) {
+	m.findErr = err
+}
+
 // FindByID returns the StatementRow with the given ID, or ErrNotFound.
 func (m *MockStatementRepo) FindByID(_ context.Context, id string) (*StatementRow, error) {
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
 	row, ok := m.records[id]
 	if !ok {
 		return nil, ErrNotFound
@@ -93,11 +106,40 @@ func (m *MockStatementRepo) FindByID(_ context.Context, id string) (*StatementRo
 
 // ListByCustomerID returns statement rows for the customer matching the query.
 func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID string, q StatementQuery) ([]*StatementRow, int, error) {
+	if m.listErr != nil {
+		return nil, 0, m.listErr
+	}
 	out := make([]*StatementRow, 0)
 	for _, r := range m.records {
-		if r.CustomerID == customerID {
-			out = append(out, r)
+		if r.CustomerID != customerID {
+			continue
 		}
+		if q.SubscriptionID != "" && r.SubscriptionID != q.SubscriptionID {
+			continue
+		}
+		if q.Kind != "" && r.Kind != q.Kind {
+			continue
+		}
+		if q.Status != "" && r.Status != q.Status {
+			continue
+		}
+		// Basic simulated filtering for period checks
+		if q.StartAfter != "" && r.PeriodStart < q.StartAfter {
+			continue
+		}
+		if q.EndBefore != "" && r.PeriodEnd > q.EndBefore {
+			continue
+		}
+
+		out = append(out, r)
 	}
-	return out, len(out), nil
+	totalCount := len(out)
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, totalCount, nil
 }

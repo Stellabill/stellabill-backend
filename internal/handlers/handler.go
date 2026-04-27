@@ -19,6 +19,8 @@ type SubscriptionService interface {
 type Handler struct {
 	Plans         PlanService
 	Subscriptions SubscriptionService
+	Database      interface{} // DBPinger - dependency for health checks
+	Outbox        interface{} // OutboxHealther - dependency for queue health checks
 }
 
 // NewHandler creates a new Handler with the given dependencies
@@ -26,5 +28,20 @@ func NewHandler(plans PlanService, subscriptions SubscriptionService) *Handler {
 	return &Handler{
 		Plans:         plans,
 		Subscriptions: subscriptions,
+	}
+}
+
+// NewHandlerWithDependencies creates a new Handler with all dependencies
+func NewHandlerWithDependencies(
+	plans PlanService,
+	subscriptions SubscriptionService,
+	db interface{},
+	outbox interface{},
+) *Handler {
+	return &Handler{
+		Plans:         plans,
+		Subscriptions: subscriptions,
+		Database:      db,
+		Outbox:        outbox,
 	}
 }

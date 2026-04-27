@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var planTracer = otel.Tracer("repository/postgres/plan")
+var planTracer = otel.Tracer("repository/postgres")
 
 // PlanRepo implements repository.PlanRepository against a live Postgres database.
 type PlanRepo struct {

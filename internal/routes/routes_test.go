@@ -15,6 +15,7 @@ func TestRegister_HealthAndCORS(t *testing.T) {
 	Register(engine)
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/health", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
 	rec := httptest.NewRecorder()
 	engine.ServeHTTP(rec, req)
 
@@ -43,6 +44,8 @@ func TestRegister_CORSPreflight(t *testing.T) {
 	Register(engine)
 
 	req := httptest.NewRequest(http.MethodOptions, "http://localhost:8080/api/health", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	rec := httptest.NewRecorder()
 	engine.ServeHTTP(rec, req)
 
@@ -60,6 +63,7 @@ func TestRegister_GetSubscriptionShape(t *testing.T) {
 	Register(engine)
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/subscriptions/sub_123", nil)
+	req.Header.Set("X-Role", "admin")
 	rec := httptest.NewRecorder()
 	engine.ServeHTTP(rec, req)
 
@@ -78,5 +82,42 @@ func TestRegister_GetSubscriptionShape(t *testing.T) {
 	}
 	if _, ok := payload["customer"]; !ok {
 		t.Fatalf("expected payload.customer to be present")
+	}
+}
+
+func TestRegister_RBACMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	Register(engine)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		role   string
+		want   int
+	}{
+		{name: "health public", method: http.MethodGet, path: "/api/health", want: http.StatusOK},
+		{name: "plans requires auth", method: http.MethodGet, path: "/api/plans", want: http.StatusUnauthorized},
+		{name: "plans allows customer", method: http.MethodGet, path: "/api/plans", role: "customer", want: http.StatusOK},
+		{name: "subscriptions allows merchant", method: http.MethodGet, path: "/api/subscriptions", role: "merchant", want: http.StatusOK},
+		{name: "subscriptions denies customer", method: http.MethodGet, path: "/api/subscriptions", role: "customer", want: http.StatusForbidden},
+		{name: "subscription detail allows admin", method: http.MethodGet, path: "/api/subscriptions/sub_123", role: "admin", want: http.StatusOK},
+		{name: "admin diagnostics denies merchant", method: http.MethodGet, path: "/api/admin/diagnostics", role: "merchant", want: http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "http://localhost:8080"+tt.path, nil)
+			if tt.role != "" {
+				req.Header.Set("X-Role", tt.role)
+			}
+			rec := httptest.NewRecorder()
+			engine.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Fatalf("status: got %d want %d", rec.Code, tt.want)
+			}
+		})
 	}
 }

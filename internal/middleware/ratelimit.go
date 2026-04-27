@@ -2,9 +2,12 @@ package middleware
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
+
+	"stellarbill-backend/internal/timeutil"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,13 +31,22 @@ type TokenBucket struct {
 	burstCapacity int64      // Maximum burst capacity
 }
 
+// RouteSpecificConfig holds per-route rate limiting configuration
+type RouteSpecificConfig struct {
+	Path           string // Route path pattern
+	RequestsPerSec int64  // Requests per second for this route
+	BurstSize      int64  // Burst size for this route
+}
+
 // RateLimiterConfig holds configuration for rate limiting
 type RateLimiterConfig struct {
-	Mode           RateLimitMode // Rate limiting mode
-	RequestsPerSec int64         // Base requests per second
-	BurstSize      int64         // Maximum burst size
-	WhitelistPaths []string      // Paths to exclude from rate limiting
-	Enabled        bool          // Enable/disable rate limiting
+	Mode               RateLimitMode          // Rate limiting mode
+	RequestsPerSec     int64                  // Base requests per second
+	BurstSize          int64                  // Maximum burst size
+	WhitelistPaths     []string               // Paths to exclude from rate limiting
+	Enabled            bool                   // Enable/disable rate limiting
+	RouteConfigs       map[string]RouteSpecificConfig // Per-route overrides
+	LogRateLimitHits   bool                   // Log when rate limits are hit
 }
 
 // APIRateLimiter manages multiple token buckets for rate limiting
@@ -54,7 +66,7 @@ func NewTokenBucket(capacity, refillRate, burstCapacity int64) *TokenBucket {
 		tokens:        burstCapacity, // Start with burst capacity
 		refillRate:    refillRate,
 		burstCapacity: burstCapacity,
-		lastRefill:    time.Now(),
+		lastRefill:    timeutil.NowUTC(),
 	}
 }
 
@@ -63,7 +75,7 @@ func (tb *TokenBucket) refill() {
 	tb.mutex.Lock()
 	defer tb.mutex.Unlock()
 
-	now := time.Now()
+	now := timeutil.NowUTC()
 	elapsed := now.Sub(tb.lastRefill).Seconds()
 	tokensToAdd := int64(elapsed * float64(tb.refillRate))
 
@@ -100,6 +112,10 @@ func NewAPIRateLimiter(config RateLimiterConfig) *APIRateLimiter {
 		stopChan: make(chan struct{}),
 	}
 
+	if config.RouteConfigs == nil {
+		rl.config.RouteConfigs = make(map[string]RouteSpecificConfig)
+	}
+
 	// Start cleanup goroutine
 	go rl.cleanupExpiredBuckets()
 
@@ -112,7 +128,7 @@ func (rl *APIRateLimiter) cleanupExpiredBuckets() {
 		select {
 		case <-rl.cleanup.C:
 			rl.mutex.Lock()
-			now := time.Now()
+			now := timeutil.NowUTC()
 
 			for key, bucket := range rl.buckets {
 				bucket.mutex.Lock()
@@ -138,22 +154,32 @@ func (rl *APIRateLimiter) Stop() {
 	}
 }
 
-// getBucket retrieves or creates a token bucket for the given key
-func (rl *APIRateLimiter) getBucket(key string) *TokenBucket {
+// getBucket retrieves or creates a token bucket for the given key with route-specific config
+func (rl *APIRateLimiter) getBucket(key string, path string) *TokenBucket {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 
-	if bucket, exists := rl.buckets[key]; exists {
+	bucketKey := key + ":" + path
+	if bucket, exists := rl.buckets[bucketKey]; exists {
 		return bucket
+	}
+
+	// Check for route-specific config
+	rps := rl.config.RequestsPerSec
+	burst := rl.config.BurstSize
+
+	if routeConfig, exists := rl.config.RouteConfigs[path]; exists {
+		rps = routeConfig.RequestsPerSec
+		burst = routeConfig.BurstSize
 	}
 
 	// Create new bucket with configured parameters
 	bucket := NewTokenBucket(
-		rl.config.RequestsPerSec,
-		rl.config.RequestsPerSec,
-		rl.config.BurstSize,
+		rps,
+		rps,
+		burst,
 	)
-	rl.buckets[key] = bucket
+	rl.buckets[bucketKey] = bucket
 	return bucket
 }
 
@@ -242,14 +268,20 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 		}
 
 		key := limiter.getKey(c)
-		bucket := limiter.getBucket(key)
+		path := c.Request.URL.Path
+		bucket := limiter.getBucket(key, path)
 
 		if !bucket.allowRequest() {
 			// Rate limit exceeded
 			c.Header("X-RateLimit-Limit", "0")
 			c.Header("X-RateLimit-Remaining", "0")
-			c.Header("X-RateLimit-Reset", time.Now().Add(time.Second).Format(time.RFC3339))
+			c.Header("X-RateLimit-Reset", timeutil.FormatRFC3339UTC(timeutil.NowUTC().Add(time.Second)))
 			c.Header("Retry-After", "1")
+
+			// Log rate limit hit if enabled
+			if config.LogRateLimitHits {
+				log.Printf("[RATE_LIMIT] path=%s key=%s mode=%s", path, key, config.Mode)
+			}
 
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":   "rate limit exceeded",
@@ -268,7 +300,7 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 
 		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
 		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
-		c.Header("X-RateLimit-Reset", time.Now().Add(time.Second).Format(time.RFC3339))
+		c.Header("X-RateLimit-Reset", timeutil.FormatRFC3339UTC(timeutil.NowUTC().Add(time.Second)))
 
 		c.Next()
 	}

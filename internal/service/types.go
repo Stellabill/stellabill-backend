@@ -1,5 +1,9 @@
 package service
 
+import (
+	"encoding/json"
+)
+
 // PlanMetadata is the plan subset embedded in the response.
 type PlanMetadata struct {
 	PlanID      string `json:"plan_id"`
@@ -75,9 +79,12 @@ type ResponseEnvelopeWithPagination struct {
 	Pagination PaginationMetadata `json:"pagination"`
 }
 
-// PaginationMetadata holds pagination info for list responses.
+// PaginationMetadata holds cursor-based pagination info.
 type PaginationMetadata struct {
-	Page     int `json:"page"`
-	PageSize int `json:"page_size"`
-	Count    int `json:"count"`
+	NextCursor     string `json:"next_cursor,omitempty"`
+	PreviousCursor string `json:"previous_cursor,omitempty"`
+	HasMore        bool   `json:"has_more"`
+	TotalCount     int    `json:"total_count,omitempty"`
+	Limit          int    `json:"limit"`
 }
+

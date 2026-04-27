@@ -1,168 +1,264 @@
-# Database Outage Runbook
+# Runbook: Database Outages
 
-## Overview
+**Service:** Stellabill Backend (Go/Gin + PostgreSQL)
+**Owner:** On-call engineer
+**Last updated:** 2026-04-23
+**Related docs:** [`docs/outbox-pattern.md`](../outbox-pattern.md), [`docs/migrations.md`](../migrations.md)
 
-This runbook covers database connectivity and availability issues in the Stellabill backend. The service uses PostgreSQL with a repository layer abstraction for data access.
+---
 
-## Detection
+## 1. Overview
 
-### Automated Alerts
-- Health check failures: `GET /api/health` returns non-200 status
-- Database connection pool exhaustion
-- Increased error rates on endpoints: `/api/subscriptions`, `/api/plans`
-- Worker job failures (billing operations stuck in pending state)
+This runbook covers PostgreSQL connectivity loss, connection pool exhaustion, replica lag, and slow query incidents affecting the Stellabill backend. The service connects via `DATABASE_URL` (never logged). The outbox pattern is used for transactional event publishing — a DB outage also halts event delivery.
 
-### Manual Detection
-- API responses showing database-related errors:
-  - "connection refused"
-  - "connection timeout"
-  - "server closed the connection unexpectedly"
-- Background worker logs showing DB connection failures
-- Monitoring dashboard showing DB connection metrics
+When healthy, the `/api/health` endpoint returns:
+```json
+{"status": "ok", "db": "up", "worker": "running"}
+```
 
-### Impact Assessment
-- **Low**: Single read queries failing, service remains partially operational
-- **Medium**: Write operations failing, subscription modifications blocked
-- **High**: Complete DB unavailability, all data-dependent endpoints failing
-- **Critical**: Background billing jobs failing, potential revenue impact
+During a DB outage `"db"` becomes `"degraded"` or `"down"`.
 
-## Mitigation
+---
 
-### Immediate Actions (5-10 minutes)
+## 2. Alert Thresholds
 
-1. **Check Database Status**
-   ```bash
-   # Check if PostgreSQL is running
-   systemctl status postgresql
+All thresholds use a **1-minute evaluation window** unless noted.
 
-   # Check database connectivity
-   psql -h localhost -U stellarbill -d stellarbill -c "SELECT 1;"
-   ```
+| Alert | Condition | Severity | Pager? | Response SLA |
+|-------|-----------|----------|--------|--------------|
+| `db_connection_warning` | Connection errors > **5** per minute | ⚠️ Warning | No | 30 min |
+| `db_connection_critical` | Connection errors > **20** per minute | 🔴 Critical | Yes | 10 min |
+| `db_pool_exhaustion` | Available connections < **10 %** of pool max | 🔴 Critical | Yes | 10 min |
+| `db_query_slow_warning` | p99 query latency > **500 ms** (5 min window) | ⚠️ Warning | No | 30 min |
+| `db_query_slow_critical` | p99 query latency > **2 000 ms** (5 min window) | 🔴 Critical | Yes | 15 min |
+| `db_health_check_fail` | `/api/health` returns `"db": "down"` for > **2 min** | 🔴 Critical | Yes | 5 min |
+| `db_replica_lag_warning` | Replication lag > **30 s** | ⚠️ Warning | No | 30 min |
+| `db_replica_lag_critical` | Replication lag > **5 min** | 🔴 Critical | Yes | 10 min |
+| `worker_job_failures` | Background worker job failures > **10** in 5 min | ⚠️ Warning | No | 30 min |
 
-2. **Restart Application** (if connection pool issues)
-   ```bash
-   # Graceful restart to clear connection pools
-   systemctl restart stellarbill-backend
-   ```
+> **Pool max default:** Go `sql.DB` defaults to unlimited; confirm `DB_MAX_OPEN_CONNS` is set in your deployment config.
 
-3. **Enable Read-Only Mode** (if partial DB access)
-   - Set environment variable: `DB_READONLY=true`
-   - This allows read operations while blocking writes
+---
 
-### Short-term Recovery (15-30 minutes)
+## 3. What to Check First (Triage Checklist)
 
-1. **Database Restart**
-   ```bash
-   # If PostgreSQL is down
-   systemctl restart postgresql
+Run through this list **in order**.
 
-   # Check logs for startup issues
-   journalctl -u postgresql -n 50
-   ```
+- [ ] **1. Is PostgreSQL process running?**  
+  A down process is the most common cause — check it before anything else.
 
-2. **Connection Pool Reset**
-   - Application automatically handles pool recovery on restart
-   - Monitor connection pool metrics post-restart
+- [ ] **2. Can the API host reach PostgreSQL at all?**  
+  Network partition vs. PostgreSQL crash are treated differently.
 
-3. **Failover Check** (if using replication)
-   - Verify primary database is healthy
-   - Check replica lag if applicable
+- [ ] **3. Are connections exhausted, or is PostgreSQL refusing connections?**  
+  Pool exhaustion (connection count at max) vs. PostgreSQL `max_connections` limit hit vs. process down are three distinct failure modes.
 
-## Recovery
+- [ ] **4. Is the primary affected, or only a replica?**  
+  Read-only replicas failing affects reads. Primary down halts all writes, outbox delivery, and worker jobs.
 
-### Full Service Restoration
+- [ ] **5. Did a migration run recently?**  
+  Long-running DDL migrations lock tables and can look like a partial outage. Check migration history.
 
-1. **Verify Database Health**
-   ```sql
-   -- Run basic health checks
-   SELECT version();
-   SELECT COUNT(*) FROM subscriptions;
-   SELECT COUNT(*) FROM plans;
-   ```
+- [ ] **6. Is disk space a factor?**  
+  PostgreSQL stops writing when the disk is full — check disk before restarting.
 
-2. **Test API Endpoints**
-   ```bash
-   # Test health endpoint
-   curl -H "Authorization: Bearer <test-token>" \
-        -H "X-Tenant-ID: test-tenant" \
-        http://localhost:8080/api/health
+---
 
-   # Test data endpoints
-   curl -H "Authorization: Bearer <test-token>" \
-        -H "X-Tenant-ID: test-tenant" \
-        http://localhost:8080/api/subscriptions
-   ```
+## 4. Log Queries
 
-3. **Restart Background Workers**
-   ```bash
-   # Ensure billing workers are processing jobs
-   systemctl restart stellarbill-worker
-   ```
+### 4.1 Count DB connection errors (last 30 min)
 
-4. **Monitor Recovery**
-   - Watch error rates return to baseline
-   - Verify billing job queue is processing
-   - Check tenant isolation is working
+```bash
+journalctl -u stellabill-backend --since "30 minutes ago" --no-pager -o json \
+  | jq -r 'select(.level == "error") | select(.message | test("database|connection|sql|pgx|pool")) | .message' \
+  | sort | uniq -c | sort -rn
+```
 
-### Rollback Plan
-- If database corruption suspected, restore from backup
-- Coordinate with DBA team for point-in-time recovery
-- Notify affected tenants of data restoration timeline
+### 4.2 Find slow query log entries
 
-## Observability
+```bash
+journalctl -u stellabill-backend --since "1 hour ago" --no-pager -o json \
+  | jq -r 'select(.duration_ms != null) | select(.duration_ms > 500) | {time: .REALTIME_TIMESTAMP, query: .query_name, duration_ms: .duration_ms, trace: .trace_id}'
+```
 
-### Key Metrics
-- Database connection count: `db_connections_active`
-- Query latency: `db_query_duration_seconds`
-- Error rate by endpoint: `http_requests_total{status=~"5.."}`
-- Worker job success rate: `worker_jobs_completed_total`
+### 4.3 Worker job failures linked to DB
 
-### Dashboards
-- [Database Performance Dashboard](https://monitoring.example.com/db-performance)
-- [API Health Dashboard](https://monitoring.example.com/api-health)
-- [Worker Jobs Dashboard](https://monitoring.example.com/worker-jobs)
+```bash
+journalctl -u stellabill-worker --since "1 hour ago" --no-pager -o json \
+  | jq -r 'select(.level == "error") | {time: .REALTIME_TIMESTAMP, job: .job_type, error: .error}'
+```
 
-### Logs
-- Application logs: `/var/log/stellarbill/backend.log`
-- Database logs: `/var/log/postgresql/postgresql-*.log`
-- Worker logs: `/var/log/stellarbill/worker.log`
+### 4.4 Check PostgreSQL logs directly
 
-## Post-Incident Review Checklist
+```bash
+# Adjust path for your PostgreSQL installation
+sudo journalctl -u postgresql --since "1 hour ago" --no-pager | grep -E "ERROR|FATAL|PANIC|connection"
+```
 
-### Technical Analysis
-- [ ] Root cause identified (network, disk space, configuration, etc.)
-- [ ] Database logs reviewed for error patterns
-- [ ] Connection pool settings validated
-- [ ] Backup/recovery procedures tested
+> **Security note:** `DATABASE_URL` (which contains credentials) is never written to logs. If you find it in any log entry, treat this as a security incident and rotate credentials immediately.
 
-### Process Improvements
-- [ ] Alert thresholds reviewed and adjusted
-- [ ] Monitoring coverage gaps identified
-- [ ] Runbook accuracy verified
-- [ ] On-call rotation feedback collected
+---
 
-### Prevention Measures
-- [ ] Database maintenance windows scheduled
-- [ ] Connection pool monitoring enhanced
-- [ ] Automated failover testing implemented
-- [ ] Capacity planning updated based on incident
+## 5. Diagnostic Commands
 
-### Communication
-- [ ] Incident timeline documented
-- [ ] Customer impact assessed and communicated
-- [ ] Follow-up actions assigned with owners
-- [ ] Retrospective meeting scheduled
+```bash
+# 1. Is PostgreSQL running?
+systemctl status postgresql
 
-## Security Notes
+# 2. Can we connect? (use a non-privileged read-only user for this check)
+psql "$DATABASE_URL" -c "SELECT 1;" 2>&1
 
-- Database credentials never logged in application logs
-- Direct database access limited to authorized personnel only
-- All database queries use parameterized statements to prevent SQL injection
-- Tenant isolation enforced at repository layer prevents cross-tenant data access
+# 3. How many connections are open?
+psql "$DATABASE_URL" -c "SELECT count(*), state FROM pg_stat_activity GROUP BY state;"
 
-## Related Documentation
+# 4. What is the max_connections setting?
+psql "$DATABASE_URL" -c "SHOW max_connections;"
 
-- [Database Configuration](../config/database.md)
-- [Health Check Implementation](../../internal/handlers/health.go)
-- [Repository Layer](../../internal/repository/)</content>
-<parameter name="filePath">/workspaces/stellabill-backend/docs/ops/db-outage-runbook.md
+# 5. Are any queries blocked (lock waits)?
+psql "$DATABASE_URL" -c "
+  SELECT pid, now() - pg_stat_activity.query_start AS duration, query, state
+  FROM pg_stat_activity
+  WHERE state != 'idle' AND query_start < now() - interval '30 seconds'
+  ORDER BY duration DESC LIMIT 10;"
+
+# 6. Replication lag (if replicas are configured)
+psql "$DATABASE_URL" -c "
+  SELECT client_addr, state, sent_lsn, write_lsn,
+         (sent_lsn - write_lsn) AS lag_bytes
+  FROM pg_stat_replication;"
+
+# 7. Disk space
+df -h /var/lib/postgresql
+```
+
+---
+
+## 6. Dashboard Links
+
+| Dashboard | Purpose |
+|-----------|---------|
+| `https://grafana.internal/d/db-overview` | Connection pool, query latency, error rate |
+| `https://grafana.internal/d/pg-internals` | PostgreSQL connections, lock waits, replication lag |
+| `https://grafana.internal/d/worker-overview` | Background worker job queue depth and failures |
+| `https://grafana.internal/explore?query=error+database` | Live log explorer filtered to DB errors |
+
+---
+
+## 7. Mitigation Steps
+
+### 7.1 PostgreSQL process is down
+
+```bash
+# Attempt restart
+sudo systemctl start postgresql
+sudo systemctl status postgresql
+
+# Monitor startup — watch for "database system is ready to accept connections"
+sudo journalctl -u postgresql -f --no-pager | head -50
+```
+
+### 7.2 Connection pool exhausted
+
+```bash
+# Restart the API to clear stale connections from the pool
+kubectl rollout restart deployment/stellabill-backend
+kubectl rollout status deployment/stellabill-backend
+
+# Optionally terminate idle connections from the PostgreSQL side
+psql "$DATABASE_URL" -c "
+  SELECT pg_terminate_backend(pid)
+  FROM pg_stat_activity
+  WHERE state = 'idle'
+    AND query_start < now() - interval '5 minutes'
+    AND application_name = 'stellabill-backend';"
+```
+
+### 7.3 Activate read-only mode
+
+Use when the primary is unavailable but reads must continue (e.g., listing plans/subscriptions):
+
+```bash
+kubectl set env deployment/stellabill-backend DB_READONLY=true
+# This disables write endpoints and background workers
+# Verify the flag took effect:
+curl -sf https://api.stellabill.internal/api/health | jq .
+```
+
+**Revert read-only mode** once the primary recovers:
+```bash
+kubectl set env deployment/stellabill-backend DB_READONLY-
+kubectl rollout status deployment/stellabill-backend
+```
+
+### 7.4 Long-running migration lock
+
+```bash
+# Find the blocking migration query
+psql "$DATABASE_URL" -c "
+  SELECT pid, query, state, wait_event_type, wait_event
+  FROM pg_stat_activity
+  WHERE wait_event_type = 'Lock';"
+
+# If safe to terminate (confirm with DBA first):
+psql "$DATABASE_URL" -c "SELECT pg_terminate_backend(<pid>);"
+```
+
+### 7.5 Disk full
+
+```bash
+# Free space by cleaning WAL archive if safe
+sudo find /var/lib/postgresql/*/pg_wal -name "*.partial" -mtime +1 -delete
+
+# Alert DBA immediately — do not restart PostgreSQL with a full disk
+```
+
+---
+
+## 8. Verification & Recovery
+
+After applying a fix, confirm full recovery:
+
+```bash
+# 1. Health check (all three fields should be "up"/"running")
+curl -sf https://api.stellabill.internal/api/health | jq .
+
+# 2. Write test (create and immediately cancel a test subscription — or use a staging tenant)
+curl -sf -X POST https://api.stellabill.internal/api/subscriptions \
+     -H "Authorization: Bearer $TEST_TOKEN" \
+     -H "X-Tenant-ID: test-tenant" \
+     -H "Content-Type: application/json" \
+     -d '{"plan_id":"test-plan"}' | jq .
+
+# 3. Confirm connection pool is healthy (error count should be 0 or near 0)
+journalctl -u stellabill-backend --since "5 minutes ago" --no-pager -o json \
+  | jq -r 'select(.message | test("database|connection")) | select(.level == "error")' | wc -l
+```
+
+Declare recovery when:
+- `/api/health` returns `"db": "up"` for **5 consecutive minutes**
+- Connection error rate is below **1 per minute**
+- Worker job failure rate returns to baseline
+
+---
+
+## 9. Escalation
+
+| Condition | Escalate to |
+|-----------|-------------|
+| PostgreSQL won't start after restart | DBA / Infrastructure team |
+| Data loss suspected | DBA + Engineering manager (immediately) |
+| Replication lag > 30 min | DBA |
+| Disk full with no quick path to free space | Infrastructure team |
+| > 30 min at Critical severity with no fix | Engineering manager |
+
+---
+
+## 10. Post-Incident Checklist
+
+- [ ] Root cause documented in incident tracker
+- [ ] `DB_MAX_OPEN_CONNS` and `DB_MAX_IDLE_CONNS` tuning reviewed
+- [ ] Migration process reviewed — are long-running migrations run with lock timeouts?
+- [ ] Replica failover procedure tested (if applicable)
+- [ ] Confirm no credentials were written to logs during investigation
+- [ ] Alert thresholds calibrated against measured p99 latency and connection baseline
+- [ ] Outbox event backlog cleared after recovery (no duplicate events delivered)

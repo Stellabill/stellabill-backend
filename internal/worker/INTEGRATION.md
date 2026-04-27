@@ -14,10 +14,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/routes"
+	"stellarbill-backend/internal/timeutil"
 	"stellarbill-backend/internal/worker"
 )
 
@@ -151,7 +153,7 @@ func ScheduleCharge(c *gin.Context) {
 	}
 
 	if req.ScheduledAt.IsZero() {
-		req.ScheduledAt = time.Now()
+		req.ScheduledAt = timeutil.NowUTC()
 	}
 
 	job, err := scheduler.ScheduleCharge(req.SubscriptionID, req.ScheduledAt, 3)
@@ -303,6 +305,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"stellarbill-backend/internal/timeutil"
 )
 
 type PostgresStore struct {
@@ -324,6 +327,7 @@ func NewPostgresStore(connString string) (*PostgresStore, error) {
 
 func (s *PostgresStore) Create(job *Job) error {
 	payload, _ := json.Marshal(job.Payload)
+	nowUTC := timeutil.NowUTC()
 
 	_, err := s.db.Exec(`
 		INSERT INTO jobs (
@@ -331,7 +335,7 @@ func (s *PostgresStore) Create(job *Job) error {
 			max_attempts, attempts, payload, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, job.ID, job.SubscriptionID, job.Type, job.Status, job.ScheduledAt,
-		job.MaxAttempts, job.Attempts, payload, time.Now(), time.Now())
+		job.MaxAttempts, job.Attempts, payload, nowUTC, nowUTC)
 
 	return err
 }
@@ -364,6 +368,7 @@ func (s *PostgresStore) Get(id string) (*Job, error) {
 
 func (s *PostgresStore) Update(job *Job) error {
 	payload, _ := json.Marshal(job.Payload)
+	nowUTC := timeutil.NowUTC()
 
 	result, err := s.db.Exec(`
 		UPDATE jobs SET
@@ -372,7 +377,7 @@ func (s *PostgresStore) Update(job *Job) error {
 			scheduled_at = $7, updated_at = $8
 		WHERE id = $9
 	`, job.Status, job.StartedAt, job.CompletedAt, job.Attempts,
-		job.LastError, payload, job.ScheduledAt, time.Now(), job.ID)
+		job.LastError, payload, job.ScheduledAt, nowUTC, job.ID)
 
 	if err != nil {
 		return err
@@ -395,7 +400,7 @@ func (s *PostgresStore) ListPending(limit int) ([]*Job, error) {
 		WHERE status = $1 AND scheduled_at <= $2
 		ORDER BY scheduled_at ASC
 		LIMIT $3
-	`, JobStatusPending, time.Now(), limit)
+	`, JobStatusPending, timeutil.NowUTC(), limit)
 
 	if err != nil {
 		return nil, err
@@ -434,7 +439,7 @@ func (s *PostgresStore) AcquireLock(jobID string, workerID string, ttl time.Dura
 		UPDATE jobs
 		SET locked_by = $1, locked_until = $2
 		WHERE id = $3 AND (locked_until IS NULL OR locked_until < NOW())
-	`, workerID, time.Now().Add(ttl), jobID)
+	`, workerID, timeutil.NowUTC().Add(ttl), jobID)
 
 	if err != nil {
 		return false, err

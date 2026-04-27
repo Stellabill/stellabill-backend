@@ -8,19 +8,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"stellarbill-backend/internal/auth"
 )
 
-// ErrorEnvelope for auth errors
 type ErrorEnvelope struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	TraceID string `json:"trace_id"`
 }
 
-// respondAuthError is a helper to respond with auth errors in the standard envelope format
 func respondAuthError(c *gin.Context, message string) {
 	c.Header("Content-Type", "application/json; charset=utf-8")
-	
 	traceID := c.GetString("traceID")
 	if traceID == "" {
 		traceID = uuid.New().String()
@@ -31,14 +29,13 @@ func respondAuthError(c *gin.Context, message string) {
 		Message: message,
 		TraceID: traceID,
 	}
-
 	c.AbortWithStatusJSON(http.StatusUnauthorized, envelope)
 }
 
-// AuthMiddleware validates the Authorization header (Bearer JWT).
-// On success it sets "callerID" in the Gin context and calls c.Next().
-// On failure it aborts with 401 and a JSON error body.
-func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
+// AuthMiddleware creates a Gin middleware for JWT authentication.
+// It supports both JWKS (asynchronous key rotation) and static secrets (HS256).
+// If jwksCache is nil, it falls back to using the provided secret string.
+func AuthMiddleware(jwksCache *auth.JWKSCache, staticSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -53,19 +50,36 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		}
 
 		tokenStr := parts[1]
-		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			return []byte(jwtSecret), nil
-		}, jwt.WithValidMethods([]string{"HS256", "HS384", "HS512"}))
 
-		if err != nil || !token.Valid {
-			msg := "invalid or expired token"
-			if err != nil {
-				msg = fmt.Sprintf("token validation failed: %v", err)
+		var keyFunc jwt.Keyfunc
+		if jwksCache != nil {
+			keyFunc = func(t *jwt.Token) (interface{}, error) {
+				kid, ok := t.Header["kid"].(string)
+				if !ok {
+					return nil, fmt.Errorf("missing kid in token header")
+				}
+				key, err := jwksCache.GetKey(c.Request.Context(), kid)
+				if err != nil {
+					return nil, fmt.Errorf("failed to retrieve public key: %w", err)
+				}
+				var rawKey interface{}
+				if err := key.Raw(&rawKey); err != nil {
+					return nil, fmt.Errorf("failed to get raw key: %w", err)
+				}
+				return rawKey, nil
 			}
-			respondAuthError(c, msg)
+		} else {
+			keyFunc = func(t *jwt.Token) (interface{}, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+				}
+				return []byte(staticSecret), nil
+			}
+		}
+
+		token, err := jwt.Parse(tokenStr, keyFunc)
+		if err != nil || !token.Valid {
+			respondAuthError(c, fmt.Sprintf("token validation failed: %v", err))
 			return
 		}
 
@@ -81,7 +95,7 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		// Tenant ID enforcement.
+		// Tenant ID enforcement
 		tenantHeader := strings.TrimSpace(c.GetHeader("X-Tenant-ID"))
 		tenantClaim := ""
 		if v, ok := claims["tenant"]; ok {
@@ -102,6 +116,9 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		} else if tenantClaim != "" {
 			tenantID = tenantClaim
 		} else {
+			// For testing or development, we might allow missing tenant if not strictly required
+			// But for hardening, we should enforce it if possible.
+			// Let's assume it's required for now.
 			respondAuthError(c, "tenant id required")
 			return
 		}

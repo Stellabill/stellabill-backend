@@ -47,6 +47,33 @@ var (
 		},
 		[]string{"operation", "table", "error"},
 	)
+
+	// ReconciliationTotal tracks total reconciliation attempts
+	ReconciliationTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "reconciliation_total",
+			Help: "Total number of reconciliation attempts",
+		},
+		[]string{"status"},
+	)
+
+	// ReconciliationReportsTotal tracks total reconciliation reports generated
+	ReconciliationReportsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "reconciliation_reports_total",
+			Help: "Total number of reconciliation reports generated",
+		},
+		[]string{"matched"},
+	)
+
+	// ReconciliationLag tracks lag between backend and contract state
+	ReconciliationLag = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "reconciliation_lag_seconds",
+			Help: "Lag between backend and contract state in seconds",
+		},
+		[]string{"subscription_id"},
+	)
 )
 
 func MetricsMiddleware() gin.HandlerFunc {

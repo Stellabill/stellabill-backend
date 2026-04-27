@@ -3,7 +3,8 @@ package ingestion
 import (
 	"context"
 	"errors"
-	"time"
+
+	"stellarbill-backend/internal/timeutil"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -78,7 +79,7 @@ func (s *Service) Consume(ctx context.Context, raw RawEvent) (*ContractEvent, er
 		TenantID:       parsed.TenantID,
 		Payload:        parsed.Payload,
 		OccurredAt:     parsed.OccurredAt,
-		IngestedAt:     time.Now().UTC(),
+		IngestedAt:     timeutil.NowUTC(),
 		SequenceNum:    parsed.SequenceNum,
 		Status:         "processed",
 	}

@@ -1,8 +1,5 @@
 package service
 
-import (
-	"encoding/json"
-)
 
 // PlanMetadata is the plan subset embedded in the response.
 type PlanMetadata struct {

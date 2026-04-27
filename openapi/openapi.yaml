@@ -173,19 +173,6 @@ components:
         service:
           type: string
           example: stellarbill-backend
-    Pagination:
-      type: object
-      required: [limit, has_more]
-      properties:
-        next_cursor:
-          type: string
-          example: eyJpZCI6InBsYW5fMiIsInNvcnRfdmFsdWUiOiJQbGFuIDIifQ==
-        limit:
-          type: integer
-          example: 10
-        has_more:
-          type: boolean
-          example: true
     Plan:
       type: object
       additionalProperties: false

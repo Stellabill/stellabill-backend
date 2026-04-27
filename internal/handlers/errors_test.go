@@ -348,11 +348,11 @@ func TestErrorEnvelope_PIIRedaction(t *testing.T) {
 	// Message should have PII redacted
 	assertFalse := func(cond bool, msg string) {
 		if cond {
-			t.Errorf("PII leaked in message: %s", envelope.Message)
+			t.Errorf("PII leaked in message: %s - %s", envelope.Message, msg)
 		}
 	}
-	assertFalse(strings.Contains(envelope.Message, "cust_sensitive123"))
-	assertFalse(strings.Contains(envelope.Message, "1234.56"))
+	assertFalse(strings.Contains(envelope.Message, "cust_sensitive123"), "customer ID should not be present")
+	assertFalse(strings.Contains(envelope.Message, "1234.56"), "amount should not be present")
 	assertTrue := func(cond bool, msg string) {
 		if !cond {
 			t.Errorf(msg)
@@ -374,5 +374,3 @@ func TestErrorEnvelope_PIIRedaction(t *testing.T) {
 		assertTrue(safe == "ok", "safe field unchanged")
 	}
 }
-
-import "strings"

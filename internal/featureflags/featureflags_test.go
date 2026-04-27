@@ -98,7 +98,7 @@ func TestLoadFromEnvironment_JSON(t *testing.T) {
 		flags: make(map[string]*Flag),
 		db:    make(map[string]bool),
 	}
-	manager.loadFromEnvironment()
+	manager.LoadFromEnvironment()
 
 	if !manager.IsEnabled("json_flag") {
 		t.Error("JSON flag should be true")
@@ -117,7 +117,7 @@ func TestLoadFromEnvironment_FF_Prefix(t *testing.T) {
 		flags: make(map[string]*Flag),
 		db:    make(map[string]bool),
 	}
-	manager.loadFromEnvironment()
+	manager.LoadFromEnvironment()
 
 	if !manager.IsEnabled("test_true") {
 		t.Error("Expected true")

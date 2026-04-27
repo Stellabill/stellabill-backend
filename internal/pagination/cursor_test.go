@@ -65,14 +65,14 @@ func (d dummyItem) GetSortValue() string { return d.val }
 
 func TestPaginateSlice_Empty(t *testing.T) {
 	items := []dummyItem{}
-	page, next, hasMore := PaginateSlice(items, Cursor{}, 10)
-	if len(page) != 0 {
-		t.Errorf("expected 0 items, got %d", len(page))
+	page := PaginateSlice(items, Cursor{}, 10)
+	if len(page.Items) != 0 {
+		t.Errorf("expected 0 items, got %d", len(page.Items))
 	}
-	if hasMore {
+	if page.HasMore {
 		t.Error("expected hasMore false")
 	}
-	if next.ID != "" {
+	if page.NextCursor != "" {
 		t.Error("expected empty next cursor")
 	}
 }
@@ -90,39 +90,43 @@ func TestPaginateSlice_ContinuityAndDuplicates(t *testing.T) {
 	}
 
 	// Page 1: limit 2
-	page1, nextCursor1, hasMore := PaginateSlice(items, Cursor{}, 2)
-	if len(page1) != 2 || page1[0].id != "a" || page1[1].id != "b" {
-		t.Errorf("page1 incorrect: %v", page1)
+	page1 := PaginateSlice(items, Cursor{}, 2)
+	if len(page1.Items) != 2 || page1.Items[0].id != "a" || page1.Items[1].id != "b" {
+		t.Errorf("page1 incorrect: %v", page1.Items)
 	}
-	if !hasMore {
+	if !page1.HasMore {
 		t.Error("expected hasMore true")
 	}
-	if nextCursor1.ID != "b" || nextCursor1.SortValue != "10" {
-		t.Errorf("expected next1 to be b:10, got %v", nextCursor1)
+	
+	next1, _ := Decode(page1.NextCursor)
+	if next1.ID != "b" || next1.SortValue != "10" {
+		t.Errorf("expected next1 to be b:10, got %v", next1)
 	}
 
 	// Page 2: limit 2
-	page2, nextCursor2, hasMore2 := PaginateSlice(items, nextCursor1, 2)
-	if len(page2) != 2 || page2[0].id != "c" || page2[1].id != "d" {
-		t.Errorf("page2 incorrect: %v", page2)
+	page2 := PaginateSlice(items, next1, 2)
+	if len(page2.Items) != 2 || page2.Items[0].id != "c" || page2.Items[1].id != "d" {
+		t.Errorf("page2 incorrect: %v", page2.Items)
 	}
-	if !hasMore2 {
+	if !page2.HasMore {
 		t.Error("expected hasMore true")
 	}
-	if nextCursor2.ID != "d" || nextCursor2.SortValue != "30" {
-		t.Errorf("expected next2 to be d:30, got %v", nextCursor2)
+	
+	next2, _ := Decode(page2.NextCursor)
+	if next2.ID != "d" || next2.SortValue != "30" {
+		t.Errorf("expected next2 to be d:30, got %v", next2)
 	}
 
 	// Page 3: limit 5 (over limits)
-	page3, nextCursor3, hasMore3 := PaginateSlice(items, nextCursor2, 5)
-	if len(page3) != 3 || page3[0].id != "e" || page3[1].id != "f" || page3[2].id != "g" {
-		t.Errorf("page3 incorrect: %v", page3)
+	page3 := PaginateSlice(items, next2, 5)
+	if len(page3.Items) != 3 || page3.Items[0].id != "e" || page3.Items[1].id != "f" || page3.Items[2].id != "g" {
+		t.Errorf("page3 incorrect: %v", page3.Items)
 	}
-	if hasMore3 {
+	if page3.HasMore {
 		t.Error("expected hasMore false")
 	}
-	if nextCursor3.ID != "" {
-		t.Errorf("expected empty next3 cursor, got %v", nextCursor3)
+	if page3.NextCursor != "" {
+		t.Errorf("expected empty next3 cursor, got %v", page3.NextCursor)
 	}
 }
 
@@ -137,11 +141,11 @@ func TestPaginateSlice_StaleCursor(t *testing.T) {
 
 	// Cursor for a deleted "b" with val "20"
 	cursor := Cursor{ID: "b", SortValue: "20"}
-	page, _, _ := PaginateSlice(items, cursor, 2)
+	page := PaginateSlice(items, cursor, 2)
 
 	// Should fetch c and e since their sort value is > 20
-	if len(page) != 2 || page[0].id != "c" || page[1].id != "e" {
-		t.Errorf("stale cursor pagination failed. got: %v", page)
+	if len(page.Items) != 2 || page.Items[0].id != "c" || page.Items[1].id != "e" {
+		t.Errorf("stale cursor pagination failed. got: %v", page.Items)
 	}
 }
 
@@ -151,8 +155,8 @@ func TestPaginateSlice_CursorBeyondData(t *testing.T) {
 	}
 
 	cursor := Cursor{ID: "z", SortValue: "99"}
-	page, next, hasMore := PaginateSlice(items, cursor, 2)
-	if len(page) != 0 || hasMore || next.ID != "" {
-		t.Errorf("expected empty result, got %v, %v, %v", page, next, hasMore)
+	page := PaginateSlice(items, cursor, 2)
+	if len(page.Items) != 0 || page.HasMore || page.NextCursor != "" {
+		t.Errorf("expected empty result, got %v, %v, %v", page.Items, page.NextCursor, page.HasMore)
 	}
 }

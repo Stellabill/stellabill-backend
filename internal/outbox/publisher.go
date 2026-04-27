@@ -2,14 +2,14 @@ package outbox
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
-	"time"
 
+	"go.uber.org/zap"
+	"stellarbill-backend/internal/httpclient"
 	"stellarbill-backend/internal/security"
 )
 
@@ -27,7 +27,7 @@ type HTTPClient interface {
 // DefaultHTTPClient is a simple HTTP client implementation (mock)
 type DefaultHTTPClient struct{}
 
-func (c *DefaultHTTPClient) Post(url string, contentType string, body []byte) (int, error) {
+func (c *DefaultHTTPClient) Post(url string, contentType string, body []byte, idempotencyKey string) (int, error) {
 	// This is a placeholder implementation
 	// In a real implementation, you would use http.Client
 	log.Printf("Would send POST to %s with content-type %s and body: %s", 
@@ -104,7 +104,7 @@ func (p *HTTPPublisher) Publish(event *Event) error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	statusCode, err := p.client.Post(p.endpoint, "application/json", body, event.ID)
+	statusCode, err := p.client.Post(p.endpoint, "application/json", body, event.ID.String())
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -132,7 +132,7 @@ func (p *ConsolePublisher) Publish(event *Event) error {
 	}
 
 	msg := fmt.Sprintf("Publishing event: ID=%s, Type=%s, Data=%+v, AggregateID=%s, AggregateType=%s",
-		security.MaskPII(event.ID),
+		security.MaskPII(event.ID.String()),
 		event.EventType,
 		eventData.Data,
 		safeString(event.AggregateID),

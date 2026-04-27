@@ -1,10 +1,8 @@
 package middleware
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/sha384"
 	"crypto/sha512"
 	"encoding/hex"
 	"errors"
@@ -69,6 +67,10 @@ const (
 	ProviderGitHub     WebhookProvider = "github"
 	ProviderCustom     WebhookProvider = "custom"
 )
+
+func (p WebhookProvider) String() string {
+	return string(p)
+}
 
 // WebhookConfig holds configuration for webhook signature verification for a specific provider.
 type WebhookConfig struct {
@@ -305,7 +307,7 @@ func WebhookVerificationMiddleware(cfg *WebhookConfig) (gin.HandlerFunc, error) 
 		c.Set("webhook_raw_body", rawBody)
 
 		c.Next()
-	},
+	}, nil
 }
 
 // verifySignature verifies the HMAC signature of the payload.
@@ -336,7 +338,7 @@ func verifySignature(payload []byte, signature string, cfg *WebhookConfig) error
 	case HMACSHA256:
 		computedHash = hmac.New(sha256.New, []byte(cfg.SecretKey))
 	case HMACSHA384:
-		computedHash = hmac.New(sha384.New, []byte(cfg.SecretKey))
+		computedHash = hmac.New(sha512.New384, []byte(cfg.SecretKey))
 	case HMACSHA512:
 		computedHash = hmac.New(sha512.New, []byte(cfg.SecretKey))
 	default:

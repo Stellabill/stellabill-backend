@@ -54,50 +54,55 @@ var PIIValuePatterns = []*regexp.Regexp{
 // PIIFields maps regex patterns to masking functions for log message content.
 // Used for unstructured log message scanning.
 var PIIFields = map[string]func(string) string{
-	`^(customer|cust)_?`:    maskCustomerID,     // cust_xxx -> cust_***
-	`^(subscription|sub)_?`: maskSubscriptionID, // sub_xxx -> sub_***
-	`^(job)_?`:              maskJobID,          // job_xxx -> job_***
-	`^amount$`:              maskAmount,         // 19.99 -> $*.**
-	`^(jwt|token|secret|api_key|access_token|refresh_token)$`: func(string) string { return "***REDACTED***" },
+	`(customer|cust)`:    maskCustomerID,
+	`(subscription|sub)`: maskSubscriptionID,
+	`(job)`:              maskJobID,
+	`(jwt|token|secret|api_key|access_token|refresh_token)`: func(string) string { return "***REDACTED***" },
 	`password`: func(string) string { return "***REDACTED***" },
 }
 
-// MaskPII scans a string or log message for PII patterns and masks them.
-// It handles both field names within log messages and inline sensitive data.
 func MaskPII(input string) string {
 	if input == "" {
 		return ""
 	}
 	result := input
 	for pattern, masker := range PIIFields {
-		re := regexp.MustCompile(fmt.Sprintf(`(?i)\b%s[-_]?[a-z0-9]*\b`, pattern))
+		// Match keyword, optional separator, and optional alphanumeric ID
+		re := regexp.MustCompile(fmt.Sprintf(`(?i)\b(%s)([-_]?)([a-z0-9]*)\b`, pattern))
 		result = re.ReplaceAllStringFunc(result, func(match string) string {
-			lower := strings.ToLower(match)
-			// Extract the ID portion after the prefix
-			idPart := strings.TrimPrefix(lower, strings.ToLower(pattern))
-			maskedID := masker(idPart)
-			// Preserve separator style if present
-			if strings.Contains(match, "_") {
-				return pattern + "_" + maskedID
+			groups := re.FindStringSubmatch(match)
+			if len(groups) < 4 {
+				return match
 			}
-			return pattern + maskedID
+			prefix := strings.ToLower(groups[1])
+			sep := groups[2]
+			id := groups[3]
+
+			// If it's just the keyword itself (e.g. "password"), redact it fully
+			if id == "" && sep == "" {
+				return masker(prefix)
+			}
+
+			// Normalize prefixes
+			if strings.HasPrefix(prefix, "cust") {
+				prefix = "cust"
+			} else if strings.HasPrefix(prefix, "sub") {
+				prefix = "sub"
+			}
+
+			return prefix + sep + masker(id)
 		})
 	}
 	// Mask standalone amount-like numbers
 	result = maskAmountRegex.ReplaceAllStringFunc(result, func(amount string) string {
-		// Only mask if it looks like a currency amount (has decimal point or is standalone)
-		if len(amount) <= 10 && (strings.Contains(amount, ".") || len(amount) <= 5) {
+		if (strings.Contains(amount, ".") && len(amount) <= 10) || (len(amount) >= 2 && len(amount) <= 5) {
 			return "$*.**"
 		}
 		return amount
 	})
 	// Mask emails
 	result = emailRegex.ReplaceAllStringFunc(result, func(email string) string {
-		parts := strings.Split(email, "@")
-		if len(parts) == 2 {
-			return "e***@***"
-		}
-		return email
+		return "e***@***"
 	})
 	return result
 }

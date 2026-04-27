@@ -8,9 +8,11 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +34,7 @@ func TestWebhookVerificationMiddleware_Generic(t *testing.T) {
 
 	tests := []struct {
 		name           string
+		skip           bool
 		setupRequest   func() (*httptest.ResponseRecorder, *http.Request)
 		expectedStatus int
 		expectedError  string
@@ -656,7 +659,7 @@ func generateSignature(payload []byte, secret string, algorithm SignatureAlgorit
 	case HMACSHA256:
 		h = hmac.New(sha256.New, []byte(secret))
 	case HMACSHA384:
-		h = hmac.New(sha384.New, []byte(secret))
+		h = hmac.New(sha512.New384, []byte(secret))
 	case HMACSHA512:
 		h = hmac.New(sha512.New, []byte(secret))
 	default:

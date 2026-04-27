@@ -1,9 +1,8 @@
 package middleware
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -40,32 +39,6 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
-func RequestID() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		requestID := sanitizeRequestID(c.GetHeader(RequestIDHeader))
-		if requestID == "" {
-			requestID = newRequestID()
-		}
-
-		c.Set(RequestIDKey, requestID)
-		c.Writer.Header().Set(RequestIDHeader, requestID)
-		c.Next()
-	}
-}
-
-func Recovery(_ *log.Logger) gin.HandlerFunc {
-	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		requestID, _ := c.Get(RequestIDKey)
-		msg := fmt.Sprintf("panic recovered request_id=%v err=%v", requestID, recovered)
-		// Use safe logger that redacts PII
-		logger.SafePrintf(msg)
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error":      "internal server error",
-			"request_id": requestID,
-		})
-	})
-}
-
 func Logging(_ *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -87,6 +60,7 @@ func Logging(_ *log.Logger) gin.HandlerFunc {
 		logger.SafePrintf("%s", msg)
 	}
 }
+
 
 func CORS(allowOrigin string) gin.HandlerFunc {
 	return func(c *gin.Context) {

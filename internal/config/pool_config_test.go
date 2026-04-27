@@ -12,7 +12,8 @@ import (
 func validPoolEnv() map[string]string {
 	return map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   validTestSecret,
+		"JWT_SECRET":   validJWTSecret,
+		"ADMIN_TOKEN":  validAdminToken,
 		"PORT":         "8080",
 		"ENV":          "development",
 	}

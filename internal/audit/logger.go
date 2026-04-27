@@ -5,12 +5,14 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
+
+const redactedValue = "***REDACTED***"
 
 type Logger struct {
 	mu       sync.Mutex
@@ -44,7 +46,10 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) 
 	// 1. Prepare Event Metadata
 	event.Timestamp = event.Timestamp.UTC()
 	if event.Timestamp.IsZero() {
-		event.Timestamp = fmt.Sprint(time.Now().Unix()) // Simple unix timestamp for consistent hashing
+		event.Timestamp = time.Now()
+	}
+	if event.Actor == "" {
+		event.Actor = GetActor(ctx)
 	}
 	
 	// 2. Redaction (PII Protection)

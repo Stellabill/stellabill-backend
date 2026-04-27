@@ -3,8 +3,9 @@ package middleware
 import (
 	"time"
 
-	"stellabill-backend/internal/correlation"
-	"stellabill-backend/internal/logger"
+	"stellarbill-backend/internal/correlation"
+	"stellarbill-backend/internal/logger"
+	"stellarbill-backend/internal/security"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
@@ -22,7 +23,7 @@ func RequestLogger() gin.HandlerFunc {
 		ctx := correlation.WithRequestID(c.Request.Context(), requestID)
 		c.Request = c.Request.WithContext(ctx)
 
-		if span := otel.Tracer("middleware").Start(ctx, "RequestLogger"); span != nil {
+		if _, span := otel.Tracer("middleware").Start(ctx, "RequestLogger"); span != nil {
 			span.SetAttributes(attribute.String("request_id", requestID))
 			defer span.End()
 		}
@@ -46,5 +47,4 @@ func RequestLogger() gin.HandlerFunc {
 		// Use the logger with structured fields (the Logrus hook will redact)
 		logger.Log.WithFields(fields).Info("request completed")
 	}
-}
 }

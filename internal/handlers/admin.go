@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/audit"
+	"stellarbill-backend/internal/validation"
 )
 
 // =============================================================================
@@ -143,10 +144,8 @@ func (h *AdminHandler) authAdmin(c *gin.Context, action string) (actor string, r
 			"reason": "invalid_actor",
 		})
 		RespondWithValidationError(c, "X-Admin-User contains invalid characters or exceeds maximum length",
-			map[string]interface{}{
-				"field":      "X-Admin-User",
-				"max_length": maxActorLen,
-				"allowed":    "alphanumeric, hyphens, underscores, dots",
+			[]validation.FieldError{
+				{Field: "X-Admin-User", Message: fmt.Sprintf("max_length: %d, allowed: alphanumeric, hyphens, underscores, dots", maxActorLen)},
 			})
 		c.Abort()
 		return
@@ -306,10 +305,8 @@ func (h *AdminHandler) PurgeCache(c *gin.Context) {
 			"reason": "invalid_target",
 		}))
 		RespondWithValidationError(c, "target must contain only alphanumeric characters, hyphens, underscores, or dots",
-			map[string]interface{}{
-				"field":      "target",
-				"max_length": maxTargetLen,
-				"allowed":    "alphanumeric, hyphens, underscores, dots",
+			[]validation.FieldError{
+				{Field: "target", Message: fmt.Sprintf("max_length: %d, allowed: alphanumeric, hyphens, underscores, dots", maxTargetLen)},
 			})
 		return
 	}
@@ -323,10 +320,8 @@ func (h *AdminHandler) PurgeCache(c *gin.Context) {
 			"attempt_raw": attemptRaw,
 		}))
 		RespondWithValidationError(c, err.Error(),
-			map[string]interface{}{
-				"field": "attempt",
-				"min":   minAttemptVal,
-				"max":   maxAttemptVal,
+			[]validation.FieldError{
+				{Field: "attempt", Message: fmt.Sprintf("range: [%d, %d]", minAttemptVal, maxAttemptVal)},
 			})
 		return
 	}
@@ -385,7 +380,7 @@ func (h *AdminHandler) BanUser(c *gin.Context) {
 			"reason": "invalid_body",
 		}))
 		RespondWithValidationError(c, "invalid request body",
-			map[string]interface{}{"parse_error": err.Error()})
+			[]validation.FieldError{{Field: "body", Message: err.Error()}})
 		return
 	}
 
@@ -394,7 +389,7 @@ func (h *AdminHandler) BanUser(c *gin.Context) {
 			"reason": "invalid_user_id",
 		}))
 		RespondWithValidationError(c, "user_id must be a valid RFC-4122 UUID",
-			map[string]interface{}{"field": "user_id", "rule": "uuid"})
+			[]validation.FieldError{{Field: "user_id", Message: "must be a valid UUID"}})
 		return
 	}
 
@@ -404,7 +399,7 @@ func (h *AdminHandler) BanUser(c *gin.Context) {
 		}))
 		RespondWithValidationError(c,
 			fmt.Sprintf("reason must not exceed %d characters", maxReasonLen),
-			map[string]interface{}{"field": "reason", "max_length": maxReasonLen})
+			[]validation.FieldError{{Field: "reason", Message: fmt.Sprintf("max_length: %d", maxReasonLen)}})
 		return
 	}
 
@@ -458,7 +453,7 @@ func (h *AdminHandler) UpdatePlanPrice(c *gin.Context) {
 			"reason": "invalid_body",
 		}))
 		RespondWithValidationError(c, "invalid request body",
-			map[string]interface{}{"parse_error": err.Error()})
+			[]validation.FieldError{{Field: "body", Message: err.Error()}})
 		return
 	}
 
@@ -467,7 +462,7 @@ func (h *AdminHandler) UpdatePlanPrice(c *gin.Context) {
 			"reason": "invalid_plan_id",
 		}))
 		RespondWithValidationError(c, "plan_id must be a valid RFC-4122 UUID",
-			map[string]interface{}{"field": "plan_id", "rule": "uuid"})
+			[]validation.FieldError{{Field: "plan_id", Message: "must be a valid UUID"}})
 		return
 	}
 
@@ -477,7 +472,7 @@ func (h *AdminHandler) UpdatePlanPrice(c *gin.Context) {
 		}))
 		RespondWithValidationError(c,
 			"new_price must be a positive decimal with up to 6 integer digits and 2 decimal places",
-			map[string]interface{}{"field": "new_price", "example": "19.99"})
+			[]validation.FieldError{{Field: "new_price", Message: "example: 19.99"}})
 		return
 	}
 
@@ -487,7 +482,7 @@ func (h *AdminHandler) UpdatePlanPrice(c *gin.Context) {
 			"reason": "invalid_currency",
 		}))
 		RespondWithValidationError(c, "currency must be a 3-letter ISO 4217 code",
-			map[string]interface{}{"field": "currency", "example": "USD"})
+			[]validation.FieldError{{Field: "currency", Message: "example: USD"}})
 		return
 	}
 
@@ -538,7 +533,7 @@ func (h *AdminHandler) ReactivateSubscription(c *gin.Context) {
 			"reason": "invalid_body",
 		}))
 		RespondWithValidationError(c, "invalid request body",
-			map[string]interface{}{"parse_error": err.Error()})
+			[]validation.FieldError{{Field: "body", Message: err.Error()}})
 		return
 	}
 
@@ -547,7 +542,7 @@ func (h *AdminHandler) ReactivateSubscription(c *gin.Context) {
 			"reason": "invalid_subscription_id",
 		}))
 		RespondWithValidationError(c, "subscription_id must be a valid RFC-4122 UUID",
-			map[string]interface{}{"field": "subscription_id", "rule": "uuid"})
+			[]validation.FieldError{{Field: "subscription_id", Message: "must be a valid UUID"}})
 		return
 	}
 
@@ -590,11 +585,7 @@ func (h *AdminHandler) GetAuditLog(c *gin.Context) {
 		}))
 		RespondWithValidationError(c,
 			fmt.Sprintf("limit must be an integer between %d and %d", minLimitVal, maxLimitVal),
-			map[string]interface{}{
-				"field": "limit",
-				"min":   minLimitVal,
-				"max":   maxLimitVal,
-			})
+			[]validation.FieldError{{Field: "limit", Message: fmt.Sprintf("range: [%d, %d]", minLimitVal, maxLimitVal)}})
 		return
 	}
 

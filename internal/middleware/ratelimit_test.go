@@ -471,13 +471,13 @@ func TestRateLimiter_CleanupExpiredBuckets(t *testing.T) {
 	c1.Request = httptest.NewRequest("GET", "/", nil)
 	c1.Request.RemoteAddr = "192.168.1.100:12345"
 	key1 := rl.getKey(c1)
-	rl.getBucket(key1)
+	rl.getBucket(key1, "/")
 
 	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c2.Request = httptest.NewRequest("GET", "/", nil)
 	c2.Request.RemoteAddr = "192.168.1.200:12345"
 	key2 := rl.getKey(c2)
-	rl.getBucket(key2)
+	rl.getBucket(key2, "/")
 
 	// Should have 2 buckets
 	rl.mutex.RLock()

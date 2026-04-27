@@ -9,9 +9,16 @@ import (
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/routes"
 	"stellarbill-backend/internal/testutil"
+	"os"
 )
 
 func setupRouter() *gin.Engine {
+	// Initialize required configuration for tests
+	os.Setenv("DATABASE_URL", "postgres://localhost:5432/test")
+	os.Setenv("JWT_SECRET", "Test-Secret-Must-Be-Long-And-Complex-123!")
+	os.Setenv("ADMIN_TOKEN", "Admin-Token-Must-Be-Long-And-Complex-123!")
+	os.Setenv("ENV", "development")
+
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	routes.Register(router)
@@ -41,7 +48,7 @@ func TestHealthEndpointAuthnz(t *testing.T) {
 		},
 	}
 
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
 
 	for _, tt := range tests {
@@ -74,7 +81,7 @@ func TestHealthEndpointAuthnz(t *testing.T) {
 
 func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 	router := setupRouter()
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
 
 	tests := []struct {
@@ -143,7 +150,7 @@ func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 				req = req.WithToken(tt.token)
 			}
 
-			resp := req.Get("/api/plans")
+			resp := req.Get("/api/v1/plans")
 
 			if resp.Status() != tt.expectedStatus {
 				t.Errorf("[%s] expected status %d, got %d", tt.description, tt.expectedStatus, resp.Status())
@@ -162,7 +169,7 @@ func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 
 func TestListSubscriptionsAuthorizationEnforcement(t *testing.T) {
 	router := setupRouter()
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
 
 	tests := []struct {
@@ -224,7 +231,7 @@ func TestListSubscriptionsAuthorizationEnforcement(t *testing.T) {
 				req = req.WithToken(tt.token)
 			}
 
-			resp := req.Get("/api/subscriptions")
+			resp := req.Get("/api/v1/subscriptions")
 
 			if resp.Status() != tt.expectedStatus {
 				t.Errorf("[%s] expected status %d, got %d", tt.description, tt.expectedStatus, resp.Status())
@@ -243,7 +250,7 @@ func TestListSubscriptionsAuthorizationEnforcement(t *testing.T) {
 
 func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 	router := setupRouter()
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
 
 	tests := []struct {
@@ -312,7 +319,7 @@ func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 				req = req.WithToken(tt.token)
 			}
 
-			path := "/api/subscriptions/" + tt.subscriptionID
+			path := "/api/v1/subscriptions/" + tt.subscriptionID
 			resp := req.Get(path)
 
 			if resp.Status() != tt.expectedStatus {
@@ -332,7 +339,7 @@ func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 
 func TestAuthenticationEdgeCases(t *testing.T) {
 	router := setupRouter()
-	cfg := config.Load()
+	cfg, _ := config.Load()
 	_ = testutil.NewTestTokenGenerator(cfg.JWTSecret) // Verify token generator creation works
 
 	tests := []struct {
@@ -366,7 +373,7 @@ func TestAuthenticationEdgeCases(t *testing.T) {
 				req = req.WithToken(tt.token)
 			}
 
-			resp := req.Get("/api/plans")
+			resp := req.Get("/api/v1/plans")
 
 			if resp.Status() != tt.expectedStatus {
 				t.Errorf("[%s] expected status %d, got %d", tt.description, tt.expectedStatus, resp.Status())
@@ -407,6 +414,6 @@ func createTokenWithoutRoles(tg *testutil.TestTokenGenerator) string {
 }
 
 func createTokenWithoutUserID(tg *testutil.TestTokenGenerator) string {
-	token, _ := tg.GenerateTokenWithoutUserID("user@test.com", auth.RoleAdmin)
+	token, _ := tg.GenerateTokenWithoutUserID("user@test.com", string(auth.RoleAdmin))
 	return token
 }

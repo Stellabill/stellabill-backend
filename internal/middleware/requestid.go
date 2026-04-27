@@ -23,6 +23,7 @@ var (
 // RequestID generates or propagates request IDs for tracing
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		panic("DEBUG: RequestID middleware reached")
 		requestID := extractOrGenerateRequestID(c)
 
 		// Store in context for downstream handlers

@@ -33,8 +33,8 @@ func TestDecodeSubscriptionCreatedEvent(t *testing.T) {
 		t.Errorf("expected subscription_id 'sub-1001', got %s", data.SubscriptionID)
 	}
 
-	if data.Amount != 9990 {
-		t.Errorf("expected amount 9990, got %d", data.Amount)
+	if data.Amount != "9990" {
+		t.Errorf("expected amount 9990, got %s", data.Amount)
 	}
 
 	if data.Currency != "USD" {
@@ -53,7 +53,7 @@ func TestDecodeSubscriptionCreatedEvent(t *testing.T) {
 func TestDecodeSubscriptionUpdatedEvent(t *testing.T) {
 	decoder := NewEventDecoder()
 
-	eventData := "eyJ0eXBlIjoic3Vic2NyaXB0aW9uX3VwZGF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSJdLCJkYXRhIjp7InN1YnNjcmlwdGlvbl9pZCI6InN1Yi0xMDAxIiwiYW1vdW50IjoiMTQ5OSIsImN1cnJlbmN5IjoiVVNEIiwic3RhdHVzIjoiY3JlZGl0X3VwZ3JhZGUiLCJpbnRlcnZhbCI6Im1vbnRoIiwidXBkYXRlZEF0IjoxNzAwMDAwMDA1MH0sImxlZGdlIjozMDAwMiwidHhfaGFzaCI6IjB4ZjMzNDU2Nzg5YWJjZGVmZzMzNDU2Nzg5YWJjZGVmZzE zMzQ1Njc4OWFiY2RlZmczMTQzNTY3ODl4eXoifQ=="
+	eventData := "eyJ0eXBlIjoic3Vic2NyaXB0aW9uX3VwZGF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSJdLCJkYXRhIjp7InN1YnNjcmlwdGlvbl9pZCI6InN1Yi0xMDAxIiwiYW1vdW50IjoiMTQ5OTAiLCJjdXJyZW5jeSI6IlVTRCIsInN0YXR1cyI6ImNyZWRpdF91cGdyYWRlIiwiaW50ZXJ2YWwiOiJtb250aCIsInVwZGF0ZWRBdCI6MTcwMDAwMDAwNTB9LCJsZWRnZXIiOjMwMDAyLCJ0eF9oYXNoIjoiMHhmMzM0NTY3ODlhYmNkZWZnMzM0NTY3ODlhYmNkZWZnMTMzNDU2Nzg5YWJjZGVmZzMxNDM1Njc4OXh5eiJ9"
 
 	event, err := decoder.DecodeEvent(eventData)
 	if err != nil {
@@ -73,8 +73,8 @@ func TestDecodeSubscriptionUpdatedEvent(t *testing.T) {
 		t.Errorf("expected subscription_id 'sub-1001', got %s", data.SubscriptionID)
 	}
 
-	if data.Amount != 14990 {
-		t.Errorf("expected amount 14990, got %d", data.Amount)
+	if data.Amount != "14990" {
+		t.Errorf("expected amount 14990, got %s", data.Amount)
 	}
 
 	if data.Status != "credit_upgrade" {
@@ -113,7 +113,7 @@ func TestDecodeSubscriptionCanceledEvent(t *testing.T) {
 func TestDecodeChargeCreatedEvent(t *testing.T) {
 	decoder := NewEventDecoder()
 
-	eventData := "eyJ0eXBlIjoiY2hhcmdlX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSIsImNyZy0xXzEyMzRdXSwiZGF0YSI6eyJjaGFyZ2VfaWQiOiJjcmctMV8xMjM0Iiwic3Vic2NyaXB0aW9uX2lkIjoic3ViLTEwMDEiLCJhbW91bnQiOjk5OTAsImN1cnJlbmN5IjoiVVNEIiwiY3JlYXRlZEF0IjoxNzAwMDAwMDAyMDAiLCJzdGF0dXMiOiJzbGlwcGVkIn0sImxlZGdlIjozMDAwNCwidHhfaGFzaCI6IjB4ZTUzNDU2Nzg5YWJjZGVmZzU1NDU2Nzg5YWJjZGVmZzU1NDU2Nzg5eXoifQ=="
+	eventData := "eyJ0eXBlIjoiY2hhcmdlX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSIsImNyZy0xXzEyMzQiXSwiZGF0YSI6eyJjaGFyZ2VfaWQiOiJjcmctMV8xMjM0Iiwic3Vic2NyaXB0aW9uX2lkIjoic3ViLTEwMDEiLCJhbW91bnQiOiI5OTkwIiwiY3VycmVuY3kiOiJVU0QiLCJjcmVhdGVkQXQiOjE3MDAwMDAwMDIwMCwic3RhdHVzIjoic2xpcHBlZCJ9LCJsZWRnZXIiOjMwMDA0LCJ0eF9oYXNoIjoiMHhlNTM0NTY3ODlhYmNkZWZnNTU0NTY3ODlhYmNkZWZnNTU0NTY3ODl4eXoifQ=="
 
 	event, err := decoder.DecodeEvent(eventData)
 	if err != nil {
@@ -129,12 +129,12 @@ func TestDecodeChargeCreatedEvent(t *testing.T) {
 		t.Fatalf("failed to decode charge created data: %v", err)
 	}
 
-	if data.ChargeID != "charge-1_1234" {
-		t.Errorf("expected charge_id 'charge-1_1234', got %s", data.ChargeID)
+	if data.ChargeID != "crg-1_1234" {
+		t.Errorf("expected charge_id 'crg-1_1234', got %s", data.ChargeID)
 	}
 
-	if data.Amount != 9990 {
-		t.Errorf("expected amount 9990, got %d", data.Amount)
+	if data.Amount != "9990" {
+		t.Errorf("expected amount 9990, got %s", data.Amount)
 	}
 
 	if data.Status != "slipped" {
@@ -145,7 +145,7 @@ func TestDecodeChargeCreatedEvent(t *testing.T) {
 func TestDecodeRefundCreatedEvent(t *testing.T) {
 	decoder := NewEventDecoder()
 
-	eventData := "eyJ0eXBlIjoicmVmdW5kX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSIsImNyZy0xXzEyMzQiLCJyZWYtMV8yNTYzIl0sImRhdGEiOnsicmVmdW5kX2lkIjoicmVmLTVfMjU2MyIsImNoYXJnZV9pZCI6ImNyZy0xXzEyMzQiLCJhbW91bnQiOjQ5OTUsImN1cnJlbmN5IjoiVVNEIiwicmVhc29uIjoiY3JlZGl0X3VwZ3JhZGUiLCJjcmVhdGVkQXQiOjE3MDAwMDAwNTAwIn0sImxlZGdlIjozMDAwNSwidHhfaGFzaCI6IjB4ZjY1NDU2Nzg5YWJjZGVmZzY1NDU2Nzg5YWJjZGVmZzY1NDU2Nzg5eXoifQ=="
+	eventData := "eyJ0eXBlIjoicmVmdW5kX2NyZWF0ZWQiLCJ0b3BpY3MiOlsiZ29vZ2xlLXVzZXItb25lIiwiY3VzdG9tZXIiLCJzdWItMTAwMSIsImNyZy0xXzEyMzQiLCJyZWYtMV8yNTYzIl0sImRhdGEiOnsicmVmdW5kX2lkIjoicmVmLTVfMjU2MyIsImNoYXJnZV9pZCI6ImNyZy0xXzEyMzQiLCJhbW91bnQiOiI0OTk1IiwiY3VycmVuY3kiOiJVU0QiLCJyZWFzb24iOiJjcmVkaXRfdXBncmFkZSIsImNyZWF0ZWRBdCI6MTcwMDAwMDAwNTAwfSwibGVkZ2VyIjozMDAwNSwidHhfaGFzaCI6IjB4ZjY1NDU2Nzg5YWJjZGVmZzY1NDU2Nzg5YWJjZGVmZzY1NDU2Nzg5eXoifQ=="
 
 	event, err := decoder.DecodeEvent(eventData)
 	if err != nil {
@@ -165,8 +165,8 @@ func TestDecodeRefundCreatedEvent(t *testing.T) {
 		t.Errorf("expected refund_id 'ref-5_2563', got %s", data.RefundID)
 	}
 
-	if data.Amount != 4995 {
-		t.Errorf("expected amount 4995, got %d", data.Amount)
+	if data.Amount != "4995" {
+		t.Errorf("expected amount 4995, got %s", data.Amount)
 	}
 
 	if data.Reason != "credit_upgrade" {
@@ -240,7 +240,7 @@ func TestValidateRequiredFields(t *testing.T) {
 }
 
 func TestLoadFixtures(t *testing.T) {
-	fixtureFile := "internal/reconciliation/fixtures/soroban_events.json"
+	fixtureFile := "fixtures/soroban_events.json"
 
 	data, err := os.ReadFile(fixtureFile)
 	if err != nil {

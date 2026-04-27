@@ -155,7 +155,7 @@ func (d *dispatcher) processPendingEvents() {
 	
 	for _, event := range events {
 		if err := d.processEvent(event); err != nil {
-			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to process event %s: %v", security.MaskPII(event.ID), err)))
+			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to process event %s: %v", security.MaskPII(event.ID.String()), err)))
 		}
 	}
 }
@@ -164,7 +164,7 @@ func (d *dispatcher) processPendingEvents() {
 func (d *dispatcher) processEvent(event *Event) error {
 		// Mark as processing to prevent other dispatchers from picking it up
 		if err := d.repository.MarkAsProcessing(event.ID); err != nil {
-			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as processing: %v", security.MaskPII(event.ID), err)))
+			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as processing: %v", security.MaskPII(event.ID.String()), err)))
 			return err
 		}
 	
@@ -186,11 +186,11 @@ func (d *dispatcher) processEvent(event *Event) error {
 		
 		// Mark as completed
 		if err := d.repository.UpdateStatus(event.ID, StatusCompleted, nil); err != nil {
-			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as completed: %v", security.MaskPII(event.ID), err)))
+			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as completed: %v", security.MaskPII(event.ID.String()), err)))
 			return err
 		}
 		
-		log.Printf("%s", security.MaskPII(fmt.Sprintf("Successfully published event %s", security.MaskPII(event.ID))))
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Successfully published event %s", security.MaskPII(event.ID.String()))))
 		return nil
 		
 	case <-ctx.Done():
@@ -208,11 +208,11 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	// Max retries reached, mark as failed
 	errorMsg := err.Error()
 	if updateErr := d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg); updateErr != nil {
-		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as failed: %v", security.MaskPII(event.ID), updateErr)))
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as failed: %v", security.MaskPII(event.ID.String()), updateErr)))
 		return updateErr
 	}
 	
-	log.Printf("%s", security.MaskPII(fmt.Sprintf("Event %s failed after %d retries: %v", security.MaskPII(event.ID), event.RetryCount, err)))
+	log.Printf("%s", security.MaskPII(fmt.Sprintf("Event %s failed after %d retries: %v", security.MaskPII(event.ID.String()), event.RetryCount, err)))
 		return err
 	}
 	
@@ -222,11 +222,11 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	
 	errorMsg := err.Error()
 	if updateErr := d.repository.IncrementRetryCount(event.ID, nextRetryAt, &errorMsg); updateErr != nil {
-		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to increment retry count for event %s: %v", security.MaskPII(event.ID), updateErr)))
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to increment retry count for event %s: %v", security.MaskPII(event.ID.String()), updateErr)))
 		return updateErr
 	}
 	
-	log.Printf("%s", security.MaskPII(fmt.Sprintf("Event %s retry %d scheduled for %v: %v", security.MaskPII(event.ID), event.RetryCount, nextRetryAt, err)))
+	log.Printf("%s", security.MaskPII(fmt.Sprintf("Event %s retry %d scheduled for %v: %v", security.MaskPII(event.ID.String()), event.RetryCount, nextRetryAt, err)))
 	return err
 }
 

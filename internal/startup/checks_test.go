@@ -29,6 +29,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
 	t.Setenv("JWT_SECRET", "TestSecret123!xyz")
+	t.Setenv("ADMIN_TOKEN", "TestAdminToken123!abc")
 }
 
 // stubMigrationStatus returns a MigrationStatusFunc with fixed values.

@@ -13,8 +13,6 @@ import (
 	"go.uber.org/zap"
 	"stellarbill-backend/internal/correlation"
 	"stellarbill-backend/internal/security"
-
-	"go.uber.org/zap"
 )
 
 // Config holds worker configuration
@@ -55,7 +53,8 @@ type JobExecutor interface {
 // Worker manages background job scheduling and execution
 type Worker struct {
 	config   Config
-	store    JobStore
+	store     JobStore
+	executor  JobExecutor
 	executors map[string]JobExecutor
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -226,8 +225,6 @@ func (w *Worker) executeJob(job *Job) {
 
 	w.metrics.mu.Lock()
 	w.metrics.JobsProcessed++
-	w.metrics.mu.Unlock()
-
 	w.metrics.mu.Unlock()
 
 	// Build context with job_id for correlation

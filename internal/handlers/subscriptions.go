@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/subscriptions"
+	"stellarbill-backend/internal/validation"
 )
 
 type Subscription struct {
@@ -83,17 +85,16 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		}
 
 		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
-			RespondWithValidationError(c, "Invalid query parameters", map[string]interface{}{
-				"reason": err.Error(),
+			RespondWithValidationError(c, "Invalid query parameters", []validation.FieldError{
+				{Field: "query", Message: err.Error()},
 			})
 			return
 		}
 
 		id, err := requestparams.NormalizePathID("id", c.Param("id"))
 		if err != nil {
-			RespondWithValidationError(c, "Invalid subscription id", map[string]interface{}{
-				"field":  "id",
-				"reason": err.Error(),
+			RespondWithValidationError(c, "Invalid subscription id", []validation.FieldError{
+				{Field: "id", Message: err.Error()},
 			})
 			return
 		}
@@ -113,9 +114,8 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 func UpdateSubscriptionStatus(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		RespondWithValidationError(c, "subscription id is required", map[string]interface{}{
-			"field":  "id",
-			"reason": "cannot be empty",
+		RespondWithValidationError(c, "subscription id is required", []validation.FieldError{
+			{Field: "id", Message: "cannot be empty"},
 		})
 		return
 	}
@@ -125,9 +125,8 @@ func UpdateSubscriptionStatus(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		RespondWithValidationError(c, "Invalid request body", map[string]interface{}{
-			"field":  "status",
-			"reason": err.Error(),
+		RespondWithValidationError(c, "Invalid request body", []validation.FieldError{
+			{Field: "status", Message: err.Error()},
 		})
 		return
 	}

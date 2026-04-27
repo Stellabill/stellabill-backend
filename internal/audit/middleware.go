@@ -40,8 +40,20 @@ func LogAction(c *gin.Context, action, target, outcome string, metadata map[stri
 	meta["path"] = c.FullPath()
 	meta["method"] = c.Request.Method
 	meta["client_ip"] = c.ClientIP()
+
+	eventMeta := make(map[string]interface{})
+	for k, v := range meta {
+		eventMeta[k] = v
+	}
+
 	actor := ResolveActor(c)
-	logger.Log(c.Request.Context(), actor, action, target, outcome, meta)
+	_, _ = logger.Log(c.Request.Context(), AuditEvent{
+		Actor:    actor,
+		Action:   action,
+		Resource: target,
+		Outcome:  outcome,
+		Metadata: eventMeta,
+	})
 }
 
 // ResolveActor attempts to infer the actor from headers or previously-set values.
@@ -80,8 +92,20 @@ func logAuthFailure(c *gin.Context, logger *Logger, status int) {
 	if reason != "" {
 		meta["reason"] = reason
 	}
+
+	eventMeta := make(map[string]interface{})
+	for k, v := range meta {
+		eventMeta[k] = v
+	}
+
 	actor := ResolveActor(c)
-	logger.Log(c.Request.Context(), actor, "auth_failure", c.FullPath(), fmt.Sprintf("status_%d", status), meta)
+	_, _ = logger.Log(c.Request.Context(), AuditEvent{
+		Actor:    actor,
+		Action:   "auth_failure",
+		Resource: c.FullPath(),
+		Outcome:  fmt.Sprintf("status_%d", status),
+		Metadata: eventMeta,
+	})
 }
 
 func ensureMetadata(meta map[string]string) map[string]string {

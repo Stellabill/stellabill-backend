@@ -2,6 +2,7 @@ package featureflags
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +23,14 @@ type Manager struct {
 	mutex sync.RWMutex
 }
 
+// NewManager returns a fresh, isolated feature flag manager instance.
+func NewManager() *Manager {
+	return &Manager{
+		flags: make(map[string]*Flag),
+		db:    make(map[string]bool),
+	}
+}
+
 var (
 	instance *Manager
 	once     sync.Once
@@ -33,13 +42,13 @@ func GetInstance() *Manager {
 			flags: make(map[string]*Flag),
 			db:    make(map[string]bool),
 		}
-		instance.loadDefaultFlags()
-		instance.loadFromEnvironment()
+		instance.LoadDefaultFlags()
+		instance.LoadFromEnvironment()
 	})
 	return instance
 }
 
-func (m *Manager) loadDefaultFlags() {
+func (m *Manager) LoadDefaultFlags() {
 	defaultFlags := map[string]*Flag{
 		"subscriptions_enabled": {
 			Name:        "subscriptions_enabled",
@@ -72,7 +81,7 @@ func (m *Manager) loadDefaultFlags() {
 	}
 }
 
-func (m *Manager) loadFromEnvironment() {
+func (m *Manager) LoadFromEnvironment() {
 	// JSON-based env
 	if flagsJSON := os.Getenv("FEATURE_FLAGS"); flagsJSON != "" {
 		var envFlags map[string]bool
@@ -228,19 +237,9 @@ func (m *Manager) GetAllFlags() map[string]*Flag {
 	return result
 }
 
-// FIXED: no double locking
+// ReloadFromEnvironment reloads configuration from environment variables.
 func (m *Manager) ReloadFromEnvironment() {
-	m.loadFromEnvironment()
-}
-
-// FIXED
-func (m *Manager) LoadDefaultFlags() {
-	m.loadDefaultFlags()
-}
-
-// FIXED
-func (m *Manager) LoadFromEnvironment() {
-	m.loadFromEnvironment()
+	m.LoadFromEnvironment()
 }
 
 // NEW: sampled logging

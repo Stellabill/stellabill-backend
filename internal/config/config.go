@@ -26,6 +26,20 @@ const (
 	ErrValidationFailed ConfigErrorType = "VALIDATION_FAILED"
 )
 
+const (
+	MinHeaderBytes        = 1024       // 1KB
+	MaxAllowedHeaderBytes = 1048576    // 1MB
+	MinTimeoutSeconds     = 1
+	MaxTimeoutSeconds     = 3600       // 1 hour
+	MinRateLimitRPS       = 1
+	MaxRateLimitRPS       = 10000
+	MinRateLimitBurst     = 1
+	MaxRateLimitBurst     = 100000
+	DefaultMaxRequestSize      = 1048576    // 1MB
+	DefaultMaxGzipUncompressed = 10485760   // 10MB
+	DefaultMaxGzipRatio        = 10.0
+)
+
 // ConfigError represents a typed configuration error
 type ConfigError struct {
 	Type    ConfigErrorType
@@ -47,9 +61,13 @@ type Config struct {
 	Port      int
 	DBConn    string
 	JWTSecret string
+	JWKSURL   string
 	// Add additional secure defaults for optional configs
-	MaxHeaderBytes int
-	ReadTimeout    int
+	MaxHeaderBytes       int
+	MaxRequestSize       int64
+	MaxGzipUncompressed  int64
+	MaxGzipRatio         float64
+	ReadTimeout          int
 	WriteTimeout   int
 	IdleTimeout    int
 	AllowedOrigins string
@@ -64,8 +82,9 @@ type Config struct {
 	TracingExporter    string
 	TracingServiceName string
 	SecurityFrameOpt   string
-	SecurityHSTSMaxAge string
-	Outbox             OutboxConfig
+	SecurityHSTSMaxAge     string
+	SecurityFrameAncestors string
+	Outbox                 OutboxConfig
 	DBPoolMaxConns           int
 	DBPoolMinConns           int
 	DBPoolMaxConnLifetime    int // seconds
@@ -118,7 +137,6 @@ func (c OutboxConfig) GetProcessingTimeout() time.Duration {
 		return 30 * time.Second
 	}
 	return d
-}pstream/main
 }
 
 // ValidationResult holds the result of configuration validation
@@ -197,6 +215,9 @@ var optionalEnvVars = map[string]string{
 	"DB_POOL_CONNECT_TIMEOUT":     "5",
 	"DB_POOL_HEALTH_CHECK_PERIOD": "30",
 	"DB_POOL_METRICS_INTERVAL":    "15",
+	"MAX_REQUEST_SIZE":            "1048576",
+	"MAX_GZIP_UNCOMPRESSED":       "10485760",
+	"MAX_GZIP_RATIO":              "10.0",
 }
 
 // Option configures the Load function.
@@ -236,9 +257,13 @@ func Load(opts ...Option) (Config, error) {
 		Env:            getEnv("ENV", "development"),
 		Port:           DefaultPort,
 		DBConn:         "",
-		JWTSecret:      "",
-		MaxHeaderBytes: MaxHeaderBytes,
-		ReadTimeout:    DefaultReadTimeout,
+		JWTSecret:           "",
+		JWKSURL:             getEnv("JWKS_URL", ""),
+		MaxHeaderBytes:      MaxHeaderBytes,
+		MaxRequestSize:      getEnvInt64("MAX_REQUEST_SIZE", DefaultMaxRequestSize),
+		MaxGzipUncompressed: getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
+		MaxGzipRatio:        getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
+		ReadTimeout:         DefaultReadTimeout,
 		WriteTimeout:   DefaultWriteTimeout,
 		IdleTimeout:    DefaultIdleTimeout,
 		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
@@ -554,6 +579,17 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		c.TracingServiceName = svcName
 	}
 
+	// Validate ALLOWED_ORIGINS
+	allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+	if err := validateAllowedOrigins(allowedOrigins, c.Env); err != nil {
+		result.Errors = append(result.Errors, ConfigError{
+			Type:    ErrInvalidValue,
+			Key:     "ALLOWED_ORIGINS",
+			Message: err.Error(),
+			Value:   allowedOrigins,
+		})
+	}
+
 	// Validate DB pool configuration
 	validateDBPool(c, result)
 
@@ -709,6 +745,24 @@ func getEnvSlice(key string, fallback []string) []string {
 			parts[i] = strings.TrimSpace(part)
 		}
 		return parts
+	}
+	return fallback
+}
+
+func getEnvInt64(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return i
+		}
+	}
+	return fallback
+}
+
+func getEnvFloat64(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
 	}
 	return fallback
 }

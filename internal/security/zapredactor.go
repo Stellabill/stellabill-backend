@@ -30,6 +30,7 @@ func (c *RedactingCore) Enabled(level zapcore.Level) bool {
 
 // Write implements zapcore.Core with field redaction.
 func (c *RedactingCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	entry.Message = MaskPII(entry.Message)
 	redacted := RedactZapCoreFields(fields)
 	return c.inner.Write(entry, redacted)
 }

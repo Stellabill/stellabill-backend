@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"stellabill-backend/internal/logger"
+	"stellarbill-backend/internal/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -63,7 +63,7 @@ func TestRecoveryDoesNotLeakStackToClient(t *testing.T) {
 	defer restore()
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 	router.GET("/panic", func(c *gin.Context) {
 		panic("boom with internals")
 	})
@@ -104,7 +104,7 @@ func TestRecoveryRedactsSecretsInLog(t *testing.T) {
 	defer restore()
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 	router.GET("/panic", func(c *gin.Context) {
 		// A library that echoes incoming headers into an error message is a
 		// realistic source of secret leakage into panics.
@@ -141,7 +141,7 @@ func TestRecoveryRedactsAWSKeyAndJWT(t *testing.T) {
 	defer restore()
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 	router.GET("/panic", func(c *gin.Context) {
 		panic("aws AKIAIOSFODNN7EXAMPLE jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.signaturepart")
 	})
@@ -167,7 +167,7 @@ func TestPanicInMiddlewareChain(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 	router.Use(func(c *gin.Context) {
 		panic("middleware blew up")
 	})
@@ -198,7 +198,7 @@ func TestPanicDuringResponseWrite(t *testing.T) {
 	defer restore()
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 	router.GET("/panic-after-write", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		// Simulate an error during a streaming write.
@@ -235,7 +235,7 @@ func TestRequestIDPropagatedFromHeader(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(nil))
 	router.Use(RequestID())
 	router.GET("/panic", func(c *gin.Context) {
 		panic("noop")
@@ -272,7 +272,7 @@ func TestPlainTextNegotiation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			router := gin.New()
-			router.Use(Recovery())
+			router.Use(Recovery(nil))
 			router.GET("/panic", func(c *gin.Context) { panic("x") })
 
 			req := httptest.NewRequest(http.MethodGet, "/panic", nil)

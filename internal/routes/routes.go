@@ -7,7 +7,9 @@ import (
 	"stellarbill-backend/internal/cors"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/idempotency"
+	"stellarbill-backend/internal/logger"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/repositories"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
@@ -16,6 +18,9 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/security"
+
+	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -32,7 +37,7 @@ func Register(r *gin.Engine) {
 		_, err := tracing.InitTracer(cfg.TracingServiceName)
 		if err != nil {
 			// Log error but continue
-			middleware.Log.Errorf("Failed to initialize tracer: %v", err)
+			logger.Log.Errorf("Failed to initialize tracer: %v", err)
 		}
 	}
 
@@ -42,7 +47,7 @@ func Register(r *gin.Engine) {
 	// response with a correlation id. Both are no-ops if the parent main()
 	// already attached them — Gin will just record duplicate handlers.
 	r.Use(middleware.RequestID())
-	r.Use(middleware.Recovery())
+	r.Use(middleware.Recovery(log.Default())) // Pass a default logger
 
 	// Add OpenTelemetry middleware
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
@@ -82,66 +87,66 @@ func Register(r *gin.Engine) {
 	}))
 
 	store := idempotency.NewStore(idempotency.DefaultTTL)
-	jwtSecret := cfg.JWTSecret
+	jwksCache := auth.NewJWKSCache(cfg.JWKSURL, 1*time.Hour)
 
-	subRepo := repository.NewMockSubscriptionRepo()
-	planRepo := repository.NewMockPlanRepo()
-	svc := service.NewSubscriptionService(subRepo, planRepo)
+	// Old repository mocks for the service layer
+	subRepoOld := repository.NewMockSubscriptionRepo()
+	planRepoOld := repository.NewMockPlanRepo()
+	stmtRepoOld := repository.NewMockStatementRepo()
 
-	// Statement service wiring (in-memory mock for test/dev)
-	stmtRepo := repository.NewMockStatementRepo()
-	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
+	svc := service.NewSubscriptionService(subRepoOld, planRepoOld)
+	stmtSvc := service.NewStatementService(subRepoOld, stmtRepoOld)
 
 	// Admin handler (token from env or default)
 	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
-	// wire planRepo into handlers for list/detail endpoints and optional caching
-	handlers.SetPlanRepository(planRepo)
+	
+	// New repositories mocks for the handler layer
+	subRepo := repositories.NewMockSubscriptionRepository()
+	planRepo := repositories.NewMockPlanRepository()
+
+	// Main handler
+	h := handlers.NewHandler(nil, nil, nil, nil)
+	h.SubRepo = subRepo
+	h.PlanRepo = planRepo
 
 	// Define the API version/group
 	api := r.Group("/api")
+	fmt.Printf("DEBUG: Registering /api group\n")
 	v1 := api.Group("/v1")
+	fmt.Printf("DEBUG: Registering /api/v1 group\n")
 
 	dep := middleware.DeprecationHeaders()
 
 	api.Use(idempotency.Middleware(store))
 	api.Use(middleware.MaintenanceMode())
-	v1.Use(middleware.AuthMiddleware(jwtSecret))
+	v1.Use(middleware.AuthMiddleware(jwksCache))
 	v1.Use(idempotency.Middleware(store))
 	{
 		// Public health check - no authentication required
-		api.GET("/health", dep, handlers.Health)
+		api.GET("/health", dep, h.HealthDetails)
 
 		// Versioned API endpoints (v1) with authentication
 		// Public read (user + admin) - moved to v1 for consistency
 		v1.GET("/plans",
 			dep,
 			auth.RequirePermission(auth.PermReadPlans),
-			handlers.ListPlans,
+			h.ListPlans,
 		)
 
 		v1.GET("/subscriptions",
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
-			handlers.ListSubscriptions,
+			h.ListSubscriptions,
 		)
 
 		v1.GET("/subscriptions/:id",
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
-			handlers.GetSubscription,
+			handlers.NewGetSubscriptionHandler(svc),
 		)
 
-		// Example future admin-only endpoints:
-		// api.POST("/plans", auth.RequirePermission(auth.PermManagePlans), ...)
-		api.GET("/subscriptions", dep, handlers.ListSubscriptions)
-		v1.GET("/subscriptions", handlers.ListSubscriptions)
-		api.GET("/subscriptions/:id", dep, middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		v1.GET("/subscriptions/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		api.GET("/plans", dep, handlers.ListPlans)
-		v1.GET("/plans", handlers.ListPlans)
-
-		api.GET("/statements/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetStatementHandler(stmtSvc))
-		api.GET("/statements", middleware.AuthMiddleware(jwtSecret), handlers.NewListStatementsHandler(stmtSvc))
+		v1.GET("/statements/:id", middleware.AuthMiddleware(jwksCache), handlers.NewGetStatementHandler(stmtSvc))
+		v1.GET("/statements", middleware.AuthMiddleware(jwksCache), handlers.NewListStatementsHandler(stmtSvc))
 
 		admin := api.Group("/admin")
 		{
@@ -158,7 +163,7 @@ func Register(r *gin.Engine) {
 			if contractURL != "" {
 				// Optional auth header via CONTRACT_SNAPSHOT_AUTH (e.g. "Bearer <token>")
 				authHeader := os.Getenv("CONTRACT_SNAPSHOT_AUTH")
-				adapter = reconciliation.NewHTTPAdapter(contractURL, authHeader)
+				adapter = reconciliation.NewHTTPAdapter(contractURL, authHeader, security.DevLogger())
 			} else {
 				// Default to in-memory adapter (empty) — replace or seed as needed in dev.
 				adapter = reconciliation.NewMemoryAdapter()

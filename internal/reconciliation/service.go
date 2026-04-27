@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"stellarbill-backend/internal/metrics"
 )
 
 // Service provides reconciliation operations.
@@ -45,7 +44,7 @@ func (s *Service) Reconcile(ctx context.Context, backendSubs []BackendSubscripti
 		snaps, err := s.Adapter.FetchSnapshots(ctx)
 		if err != nil {
 			lastErr = err
-			metrics.ReconciliationTotal.WithLabelValues("error").Inc()
+			ReconciliationTotal.WithLabelValues("error").Inc()
 			
 			// If this isn't the last attempt, wait before retrying
 			if attempt < options.MaxAttempts-1 {
@@ -77,13 +76,12 @@ func (s *Service) Reconcile(ctx context.Context, backendSubs []BackendSubscripti
 
 		reconciler := New()
 		reports := make([]Report, 0, len(backendSubs))
-		processErr := false
 		
 		for _, b := range backendSubs {
 			rep := reconciler.Compare(b, snapMap[b.SubscriptionID])
 			
 			// Record metrics for each report
-			metrics.ReconciliationReportsTotal.WithLabelValues(fmt.Sprintf("%t", rep.Matched)).Inc()
+			ReconciliationReportsTotal.WithLabelValues(fmt.Sprintf("%t", rep.Matched)).Inc()
 			
 			// Record lag for stale snapshots
 			if rep.Contract.ExportedAt != (time.Time{}) && !rep.Matched {
@@ -91,7 +89,7 @@ func (s *Service) Reconcile(ctx context.Context, backendSubs []BackendSubscripti
 					if mismatch.Field == "snapshot_stale" {
 						lag := b.UpdatedAt.Sub(rep.Contract.ExportedAt).Seconds()
 						if lag > 0 {
-							metrics.ReconciliationLag.WithLabelValues(b.SubscriptionID).Set(lag)
+							ReconciliationLag.WithLabelValues(b.SubscriptionID).Set(lag)
 						}
 					}
 				}
@@ -104,8 +102,7 @@ func (s *Service) Reconcile(ctx context.Context, backendSubs []BackendSubscripti
 		if s.Store != nil {
 			if err := s.Store.SaveReports(reports); err != nil {
 				lastErr = err
-				metrics.ReconciliationTotal.WithLabelValues("error").Inc()
-				processErr = true
+				ReconciliationTotal.WithLabelValues("error").Inc()
 				
 				// If this isn't the last attempt, wait before retrying
 				if attempt < options.MaxAttempts-1 {
@@ -130,7 +127,7 @@ func (s *Service) Reconcile(ctx context.Context, backendSubs []BackendSubscripti
 		}
 		
 		// Success!
-		metrics.ReconciliationTotal.WithLabelValues("success").Inc()
+		ReconciliationTotal.WithLabelValues("success").Inc()
 		return reports, nil
 	}
 	

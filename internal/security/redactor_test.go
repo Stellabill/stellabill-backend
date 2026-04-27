@@ -2,13 +2,48 @@ package security
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
+
+type captureCore struct {
+	zapcore.LevelEnabler
+	entries    *[]zapcore.Entry
+	fieldsList *[][]zapcore.Field
+}
+
+func (c *captureCore) With(fields []zapcore.Field) zapcore.Core {
+	return c
+}
+
+func (c *captureCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	return ce.AddCore(ent, c)
+}
+
+func (c *captureCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
+	*c.entries = append(*c.entries, ent)
+	*c.fieldsList = append(*c.fieldsList, fields)
+	return nil
+}
+
+func (c *captureCore) Sync() error {
+	return nil
+}
+
+type testWriter struct {
+	writeFunc func(p []byte) (n int, err error)
+}
+
+func (w *testWriter) Write(p []byte) (n int, err error) {
+	return w.writeFunc(p)
+}
+
+func (w *testWriter) Sync() error {
+	return nil
+}
 
 func TestMaskPII(t *testing.T) {
 	tests := []struct {
@@ -265,15 +300,11 @@ func TestRedactingCore_Integration(t *testing.T) {
 	var entries []zapcore.Entry
 	var fieldsList [][]zapcore.Field
 
-	innerCore := zapcore.NewCore(
-		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-		zapcore.AddSync(func(entry zapcore.Entry, fields []zapcore.Field) error {
-			entries = append(entries, entry)
-			fieldsList = append(fieldsList, fields)
-			return nil
-		}),
-		zap.NewAtomicLevel(),
-	)
+	innerCore := &captureCore{
+		LevelEnabler: zap.NewAtomicLevel(),
+		entries:      &entries,
+		fieldsList:   &fieldsList,
+	}
 
 	core := NewRedactingCore(innerCore)
 

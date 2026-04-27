@@ -69,7 +69,7 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 	}
 	
 	log.Printf("Event %s stored in outbox: %s", 
-		security.MaskPII(event.ID), 
+		security.MaskPII(event.ID.String()), 
 		security.MaskPII(eventType))
 	return nil
 }
@@ -190,7 +190,7 @@ type SubscriptionCreated struct {
 	CustomerID   string    `json:"customer_id"`
 	PlanID       string    `json:"plan_id"`
 	Status       string    `json:"status"`
-	OccurredAt   time.Time `json:"occurred_at"`
+	Timestamp    time.Time `json:"occurred_at"`
 }
 
 func (e SubscriptionCreated) EventType() string {
@@ -211,7 +211,7 @@ func (e SubscriptionCreated) AggregateType() *string {
 }
 
 func (e SubscriptionCreated) OccurredAt() time.Time {
-	return e.OccurredAt
+	return e.Timestamp
 }
 
 // PaymentProcessed represents a payment processed event
@@ -221,7 +221,7 @@ type PaymentProcessed struct {
 	Amount       float64   `json:"amount"`
 	Currency     string    `json:"currency"`
 	Status       string    `json:"status"`
-	OccurredAt   time.Time `json:"occurred_at"`
+	Timestamp    time.Time `json:"occurred_at"`
 }
 
 func (e PaymentProcessed) EventType() string {
@@ -242,5 +242,5 @@ func (e PaymentProcessed) AggregateType() *string {
 }
 
 func (e PaymentProcessed) OccurredAt() time.Time {
-	return e.OccurredAt
+	return e.Timestamp
 }

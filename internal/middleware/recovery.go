@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"runtime/debug"
@@ -9,10 +10,14 @@ import (
 	"time"
 
 	"stellarbill-backend/internal/logger"
-	"stellarbill-backend/internal/security"
 
 	"github.com/gin-gonic/gin"
 )
+
+var secretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)password|passwd|pwd`),
+	regexp.MustCompile(`(?i)secret|token|key|auth`),
+}
 
 // ErrorResponse is the JSON envelope returned to clients when a panic is
 // recovered. The shape is intentionally narrow: no panic message, no stack
@@ -36,16 +41,6 @@ const (
 	redactedPlaceholder  = "[REDACTED]"
 )
 
-				// Redact error and path
-				redactedErr := security.RedactError(err)
-				redactedPath := security.MaskPII(c.Request.URL.Path)
-
-				logger.Log.WithFields(map[string]interface{}{
-					"level":      "error",
-					"request_id": requestID,
-					"path":       redactedPath,
-					"error":      redactedErr,
-				}).Error("panic recovered")
 
 // Recovery returns a Gin middleware that captures any panic raised by a
 // downstream handler or middleware, logs a structured event with the
@@ -63,7 +58,7 @@ const (
 //     detects this case, logs it explicitly, and aborts the request.
 //   - Stack traces are truncated to maxStackBytes and redacted for
 //     credential-shaped substrings before they reach the log.
-func Recovery() gin.HandlerFunc {
+func Recovery(_ *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -200,5 +195,5 @@ func safePath(c *gin.Context) string {
 //
 // Deprecated: use Recovery instead.
 func RecoveryLogger() gin.HandlerFunc {
-	return Recovery()
+	return Recovery(nil)
 }

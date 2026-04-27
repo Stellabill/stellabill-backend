@@ -97,7 +97,7 @@ func BenchmarkEnforceThreshold_Plans_Small(b *testing.B) {
 
 	ns := b.Elapsed().Nanoseconds()
 	if ns > int64(b.N)*ThresholdPlansSmall.MaxLatencyNs {
-		b.Fatalf("latency %dns exceeds threshold %dns", ns/b.N, ThresholdPlansSmall.MaxLatencyNs)
+		b.Fatalf("latency %dns exceeds threshold %dns", ns/int64(b.N), ThresholdPlansSmall.MaxLatencyNs)
 	}
 }
 
@@ -118,7 +118,7 @@ func BenchmarkEnforceThreshold_Plans_Medium(b *testing.B) {
 
 	ns := b.Elapsed().Nanoseconds()
 	if ns > int64(b.N)*ThresholdPlansMedium.MaxLatencyNs {
-		b.Fatalf("latency %dns exceeds threshold %dns", ns/b.N, ThresholdPlansMedium.MaxLatencyNs)
+		b.Fatalf("latency %dns exceeds threshold %dns", ns/int64(b.N), ThresholdPlansMedium.MaxLatencyNs)
 	}
 }
 
@@ -139,7 +139,7 @@ func BenchmarkEnforceThreshold_Subscriptions_Small(b *testing.B) {
 
 	ns := b.Elapsed().Nanoseconds()
 	if ns > int64(b.N)*ThresholdSubscriptionsSmall.MaxLatencyNs {
-		b.Fatalf("latency %dns exceeds threshold %dns", ns/b.N, ThresholdSubscriptionsSmall.MaxLatencyNs)
+		b.Fatalf("latency %dns exceeds threshold %dns", ns/int64(b.N), ThresholdSubscriptionsSmall.MaxLatencyNs)
 	}
 }
 
@@ -160,6 +160,6 @@ func BenchmarkEnforceThreshold_Subscriptions_Medium(b *testing.B) {
 
 	ns := b.Elapsed().Nanoseconds()
 	if ns > int64(b.N)*ThresholdSubscriptionsMedium.MaxLatencyNs {
-		b.Fatalf("latency %dns exceeds threshold %dns", ns/b.N, ThresholdSubscriptionsMedium.MaxLatencyNs)
+		b.Fatalf("latency %dns exceeds threshold %dns", ns/int64(b.N), ThresholdSubscriptionsMedium.MaxLatencyNs)
 	}
 }

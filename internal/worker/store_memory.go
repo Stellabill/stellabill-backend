@@ -40,8 +40,12 @@ func (s *MemoryStore) Create(job *Job) error {
 	if job.ID == "" {
 		return errors.New("job ID is required")
 	}
-	job.CreatedAt = time.Now()
-	job.UpdatedAt = time.Now()
+	if job.CreatedAt.IsZero() {
+		job.CreatedAt = time.Now()
+	}
+	if job.UpdatedAt.IsZero() {
+		job.UpdatedAt = time.Now()
+	}
 
 	// Deep copy to avoid external mutations
 	jobCopy := *job

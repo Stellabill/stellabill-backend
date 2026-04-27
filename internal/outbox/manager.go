@@ -3,11 +3,9 @@ package outbox
 import (
 	"database/sql"
 	"fmt"
-	"log"
 
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/logger"
-	"stellarbill-backend/internal/security"
 )
 
 // Manager handles the outbox system lifecycle

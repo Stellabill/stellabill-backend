@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"stellabill-backend/internal/auth" // Adjust this import path to your module name
+	"stellarbill-backend/internal/auth" // Adjust this import path to your module name
 )
 
 type ErrorEnvelope struct {
@@ -35,6 +35,7 @@ func respondAuthError(c *gin.Context, message string) {
 // AuthMiddleware now takes the JWKSCache instead of a static secret string.
 func AuthMiddleware(jwksCache *auth.JWKSCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		fmt.Printf("DEBUG: AuthMiddleware entered for path %s\n", c.Request.URL.Path)
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			respondAuthError(c, "authorization header required")
@@ -73,6 +74,7 @@ func AuthMiddleware(jwksCache *auth.JWKSCache) gin.HandlerFunc {
 		})
 
 		if err != nil || !token.Valid {
+			fmt.Printf("DEBUG: token validation failed: %v\n", err)
 			respondAuthError(c, fmt.Sprintf("token validation failed: %v", err))
 			return
 		}

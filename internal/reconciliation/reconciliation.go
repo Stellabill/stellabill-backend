@@ -56,12 +56,6 @@ type Adapter interface {
 	FetchSnapshots(ctx context.Context) ([]Snapshot, error)
 }
 
-// Store is a simple persistence interface for reconciliation reports.
-type Store interface {
-	SaveReports(reports []Report) error
-	ListReports() ([]Report, error)
-	DeleteReportsByJobID(jobID string) error
-}
 
 // Reconciler performs comparisons between backend state and contract snapshots.
 type Reconciler struct {

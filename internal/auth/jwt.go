@@ -27,13 +27,6 @@ type Config struct {
 	Audience string
 }
 
-// Claims represents our custom JWT structure
-type Claims struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email,omitempty"`
-	Role   string `json:"role,omitempty"`
-	jwt.RegisteredClaims
-}
 
 // JWTMiddleware creates a middleware verifying tokens against the provided config
 func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {
@@ -126,7 +119,7 @@ func (tg *TokenGenerator) generateToken(userID, email, role string, expiresAt ti
 	claims := Claims{
 		UserID: userID,
 		Email:  email,
-		Role:   role,
+		Role:   Role(role),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    tg.issuer,
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
@@ -158,3 +151,24 @@ func (tg *TokenGenerator) GenerateCustomerToken(userID, email string) (string, e
 func (tg *TokenGenerator) GenerateExpiredToken(userID, email string, role Role) (string, error) {
 	return tg.generateToken(userID, email, string(role), time.Now().Add(-1*time.Hour))
 }
+
+// GenerateTokenWithoutRoles creates a token with no roles assigned.
+func (tg *TokenGenerator) GenerateTokenWithoutRoles(userID, email string) (string, error) {
+	return tg.generateToken(userID, email, "", time.Now().Add(24*time.Hour))
+}
+
+// GenerateTokenWithoutUserID creates a token missing the user_id/subject claim.
+func (tg *TokenGenerator) GenerateTokenWithoutUserID(email, role string) (string, error) {
+	claims := Claims{
+		Email: email,
+		Role:  Role(role),
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    tg.issuer,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(tg.secret)
+}
+

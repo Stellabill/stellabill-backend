@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// MemorySink implementation for testing
-type MemorySink struct {
-	entries []AuditEvent
-}
-
-func (m *MemorySink) WriteEvent(e AuditEvent) error {
-	m.entries = append(m.entries, e)
-	return nil
-}
-
-func (m *MemorySink) Entries() []AuditEvent {
-	return m.entries
-}
 
 func TestLoggerRedactsSensitiveMetadata(t *testing.T) {
 	sink := &MemorySink{}

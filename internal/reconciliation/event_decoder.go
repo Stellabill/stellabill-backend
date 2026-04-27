@@ -27,7 +27,7 @@ type SubscriptionCreatedData struct {
 	SubscriptionID string `json:"subscription_id"`
 	PlanID          string `json:"plan_id"`
 	Customer        string `json:"customer"`
-	Amount          int64  `json:"amount"`
+	Amount          string `json:"amount"`
 	Currency        string `json:"currency"`
 	Interval        string `json:"interval"`
 	Status          string `json:"status"`
@@ -36,7 +36,7 @@ type SubscriptionCreatedData struct {
 
 type SubscriptionUpdatedData struct {
 	SubscriptionID string `json:"subscription_id"`
-	Amount         int64  `json:"amount,omitempty"`
+	Amount         string `json:"amount,omitempty"`
 	Currency       string `json:"currency,omitempty"`
 	Status        string `json:"status,omitempty"`
 	Interval       string `json:"interval,omitempty"`
@@ -52,7 +52,7 @@ type SubscriptionCanceledData struct {
 type ChargeCreatedData struct {
 	ChargeID        string `json:"charge_id"`
 	SubscriptionID string `json:"subscription_id"`
-	Amount          int64  `json:"amount"`
+	Amount          string `json:"amount"`
 	Currency        string `json:"currency"`
 	CreatedAt       int64  `json:"created_at"`
 	Status         string `json:"status"`
@@ -61,7 +61,7 @@ type ChargeCreatedData struct {
 type RefundCreatedData struct {
 	RefundID      string `json:"refund_id"`
 	ChargeID     string `json:"charge_id"`
-	Amount       int64  `json:"amount"`
+	Amount       string `json:"amount"`
 	Currency     string `json:"currency"`
 	Reason       string `json:"reason,omitempty"`
 	CreatedAt    int64  `json:"created_at"`

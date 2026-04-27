@@ -40,7 +40,7 @@ func setupAdminRouter(token string) (*gin.Engine, *audit.MemorySink) {
 
 // lastEntry returns the most recently written audit entry in the sink.
 // It panics if the sink is empty so a failing assertion surfaces clearly.
-func lastEntry(sink *audit.MemorySink) audit.Entry {
+func lastEntry(sink *audit.MemorySink) audit.AuditEvent {
 	entries := sink.Entries()
 	if len(entries) == 0 {
 		panic("lastEntry: sink is empty")
@@ -95,8 +95,8 @@ func TestAdminPurgeSuccess(t *testing.T) {
 	if entry.Outcome != "success" {
 		t.Fatalf("expected audit outcome 'success', got %q", entry.Outcome)
 	}
-	if entry.Target != "cache" {
-		t.Fatalf("expected audit target 'cache', got %q", entry.Target)
+	if entry.Resource != "cache" {
+		t.Fatalf("expected audit target 'cache', got %q", entry.Resource)
 	}
 	if entry.Metadata["attempt"] != "2" {
 		t.Fatalf("expected attempt metadata '2', got %q", entry.Metadata["attempt"])

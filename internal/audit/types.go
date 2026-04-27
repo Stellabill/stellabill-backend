@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"time"
 )
 
@@ -20,5 +21,34 @@ type AuditEvent struct {
 	Action    string                 `json:"action"`
 	Resource  string                 `json:"resource"`
 	Outcome   string                 `json:"outcome"`
+	PrevHash  string                 `json:"prev_hash,omitempty"`
+	Hash      string                 `json:"hash,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// Sink defines the interface for persisting audit logs.
+type Sink interface {
+	WriteEvent(event AuditEvent) error
+}
+
+type contextKey string
+
+const actorKey contextKey = "audit_actor"
+
+// WithActor injects an actor string into the context.
+func WithActor(ctx context.Context, actor string) context.Context {
+	return context.WithValue(ctx, actorKey, actor)
+}
+
+// GetActor extracts the actor from the context, defaulting to "anonymous".
+func GetActor(ctx context.Context) string {
+	if ctx == nil {
+		return "anonymous"
+	}
+	if v := ctx.Value(actorKey); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return "anonymous"
 }

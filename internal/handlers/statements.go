@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/validation"
 )
 
 // NewGetStatementHandler returns a gin.HandlerFunc that retrieves a full
@@ -24,9 +25,8 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 		// 2. Validate :id path param.
 		id := c.Param("id")
 		if strings.TrimSpace(id) == "" {
-			RespondWithValidationError(c, "statement id is required", map[string]interface{}{
-				"field":  "id",
-				"reason": "cannot be empty",
+			RespondWithValidationError(c, "statement id is required", []validation.FieldError{
+				{Field: "id", Message: "cannot be empty"},
 			})
 			return
 		}

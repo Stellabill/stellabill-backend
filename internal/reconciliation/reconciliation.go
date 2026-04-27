@@ -9,6 +9,7 @@ import (
 // Snapshot represents a single subscription state exported from the contract/ledger.
 type Snapshot struct {
 	SubscriptionID string            `json:"subscription_id"`
+	TenantID       string            `json:"tenant_id"`
 	Status         string            `json:"status"`
 	Amount         int64             `json:"amount"`
 	Currency       string            `json:"currency"`
@@ -20,6 +21,7 @@ type Snapshot struct {
 // BackendSubscription represents the subscription as stored in the backend DB.
 type BackendSubscription struct {
 	SubscriptionID string           `json:"subscription_id"`
+	TenantID       string           `json:"tenant_id"`
 	Status         string           `json:"status"`
 	Amount         int64            `json:"amount"`
 	Currency       string           `json:"currency"`
@@ -37,12 +39,13 @@ type FieldMismatch struct {
 
 // Report contains the reconciliation result for a subscription.
 type Report struct {
-	JobID       string          `json:"job_id,omitempty"`
-	SubscriptionID string          `json:"subscription_id"`
-	Matched     bool            `json:"matched"`
-	Mismatches  []FieldMismatch `json:"mismatches"`
-	Backend     BackendSubscription `json:"backend"`
-	Contract    Snapshot            `json:"contract"`
+	JobID          string              `json:"job_id,omitempty"`
+	SubscriptionID string              `json:"subscription_id"`
+	TenantID       string              `json:"tenant_id"`
+	Matched        bool                `json:"matched"`
+	Mismatches     []FieldMismatch     `json:"mismatches"`
+	Backend        BackendSubscription `json:"backend"`
+	Contract       Snapshot            `json:"contract"`
 }
 
 func (r Report) GetID() string        { return r.SubscriptionID }
@@ -60,6 +63,7 @@ type Adapter interface {
 type Store interface {
 	SaveReports(reports []Report) error
 	ListReports() ([]Report, error)
+	ListReportsByTenant(tenantID string) ([]Report, error)
 	DeleteReportsByJobID(jobID string) error
 	GetReportsByJobID(jobID string) ([]Report, error)
 }
@@ -80,6 +84,7 @@ func New() *Reconciler {
 func (r *Reconciler) Compare(backend BackendSubscription, contract *Snapshot) Report {
 	var rep Report
 	rep.SubscriptionID = backend.SubscriptionID
+	rep.TenantID = backend.TenantID
 	rep.Backend = backend
 	if contract == nil {
 		rep.Matched = false

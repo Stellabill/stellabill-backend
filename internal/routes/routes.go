@@ -2,8 +2,8 @@ package routes
 
 import (
 	"fmt"
-	"net/http"
 
+	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
@@ -97,17 +97,10 @@ func Register(r *gin.Engine) {
 		adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
 		admin.POST("/purge", adminHandler.PurgeCache)
 		
-		// Reconciliation
+		// Reconciliation — scoped by RBAC and tenant
 		adapter := reconciliation.NewMemoryAdapter()
 		reconStore := reconciliation.NewMemoryStore()
-		admin.POST("/reconcile", handlers.NewReconcileHandler(adapter, reconStore))
-		admin.GET("/reports", func(c *gin.Context) {
-			reports, err := reconStore.ListReports()
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load reports"})
-				return
-			}
-			c.JSON(http.StatusOK, gin.H{"reports": reports})
-		})
+		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageReconciliation), handlers.NewReconcileHandler(adapter, reconStore))
+		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
 	}
 }

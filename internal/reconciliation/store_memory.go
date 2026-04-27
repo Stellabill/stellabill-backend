@@ -30,6 +30,20 @@ func (m *MemoryStore) ListReports() ([]Report, error) {
 	return out, nil
 }
 
+// ListReportsByTenant returns reports scoped to a specific tenant.
+func (m *MemoryStore) ListReportsByTenant(tenantID string) ([]Report, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var out []Report
+	for _, r := range m.reports {
+		if r.TenantID == tenantID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // DeleteReportsByJobID removes all reports associated with a job ID.
 func (m *MemoryStore) DeleteReportsByJobID(jobID string) error {
 	m.mu.Lock()

@@ -1,12 +1,10 @@
 package featureflags
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestGetInstance(t *testing.T) {

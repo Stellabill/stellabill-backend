@@ -12,16 +12,20 @@ import (
 	"stellabill-backend/internal/shutdown"
 )
 
+func newRouter() *gin.Engine {
+	router := gin.New()
+	router.Use(gin.Recovery())
+	routes.Register(router)
+	return router
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
-	router := gin.New()
-	router.Use(gin.Recovery())
-
-	routes.Register(router)
+	router := newRouter()
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	srv := &http.Server{

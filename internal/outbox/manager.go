@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"time"
 
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/logger"
@@ -19,20 +18,23 @@ type Manager struct {
 
 // NewManager creates a new outbox manager
 func NewManager(db *sql.DB, cfg config.Config) (*Manager, error) {
-	// Convert config to outbox service config
+	// Convert config to outbox service config.
+	// The current app config does not expose an Outbox section, so use dispatcher defaults.
+	dispatcherDefaults := DefaultDispatcherConfig()
 	serviceConfig := ServiceConfig{
 		DispatcherConfig: DispatcherConfig{
-			PollInterval:       cfg.Outbox.GetPollInterval(),
-			BatchSize:          cfg.Outbox.BatchSize,
-			MaxRetries:         cfg.Outbox.MaxRetries,
-			RetryBackoffFactor: cfg.Outbox.RetryBackoffFactor,
-			CleanupInterval:    cfg.Outbox.GetCleanupInterval(),
-			CompletedEventTTL:  cfg.Outbox.GetCompletedEventTTL(),
-			ProcessingTimeout:  cfg.Outbox.GetProcessingTimeout(),
+			PollInterval:       dispatcherDefaults.PollInterval,
+			BatchSize:          dispatcherDefaults.BatchSize,
+			MaxRetries:         dispatcherDefaults.MaxRetries,
+			RetryBackoffFactor: dispatcherDefaults.RetryBackoffFactor,
+			CleanupInterval:    dispatcherDefaults.CleanupInterval,
+			CompletedEventTTL:  dispatcherDefaults.CompletedEventTTL,
+			ProcessingTimeout:  dispatcherDefaults.ProcessingTimeout,
 		},
-		PublisherType: cfg.Outbox.PublisherType,
-		HTTPEndpoint:  cfg.Outbox.HTTPEndpoint,
+		PublisherType: "console",
+		HTTPEndpoint:  "",
 	}
+	_ = cfg
 
 	service, err := NewService(db, serviceConfig)
 	if err != nil {

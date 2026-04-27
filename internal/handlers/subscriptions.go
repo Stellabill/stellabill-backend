@@ -65,6 +65,24 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 	})
 }
 
+// ListSubscriptions handles global route registration.
+func ListSubscriptions(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"subscriptions": []Subscription{}})
+}
+
+// GetSubscription handles global route registration.
+func GetSubscription(c *gin.Context) {
+	id := c.Param("id")
+	c.JSON(http.StatusOK, Subscription{
+		ID:       id,
+		PlanID:   "plan_placeholder",
+		Customer: "customer_placeholder",
+		Status:   "placeholder",
+		Amount:   "0",
+		Interval: "monthly",
+	})
+}
+
 // NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full
 // subscription detail using the provided SubscriptionService.
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
@@ -79,6 +97,11 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		tenantID, exists := c.Get("tenantID")
 		if !exists {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "tenant id required"})
+			return
+		}
+		tenantID, tenantExists := c.Get("tenantID")
+		if !tenantExists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
 

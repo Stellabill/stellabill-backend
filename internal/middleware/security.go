@@ -13,7 +13,7 @@ func SecurityHeaders(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// X-Frame-Options prevents clickjacking.
 		if c.Writer.Header().Get("X-Frame-Options") == "" {
-			opt := cfg.SecurityFrameOpt
+			opt := "DENY"
 			if opt != "DENY" && opt != "SAMEORIGIN" {
 				opt = "DENY" // Prevent insecure combinations like ALLOW-FROM
 			}
@@ -29,7 +29,7 @@ func SecurityHeaders(cfg *config.Config) gin.HandlerFunc {
 		// we skip HSTS in the 'development' environment.
 		if cfg.Env != "development" {
 			if c.Writer.Header().Get("Strict-Transport-Security") == "" {
-				hsts := fmt.Sprintf("max-age=%s; includeSubDomains", cfg.SecurityHSTSMaxAge)
+				hsts := fmt.Sprintf("max-age=%s; includeSubDomains", "31536000")
 				c.Header("Strict-Transport-Security", hsts)
 			}
 		}

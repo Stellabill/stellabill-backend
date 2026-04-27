@@ -15,11 +15,13 @@ type mockSubscriptionService struct {
 	detail   *service.SubscriptionDetail
 	warnings []string
 	err      error
+	tenantID string
 	callerID string
 	id       string
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+	m.tenantID = tenantID
 	m.callerID = callerID
 	m.id = id
 	return m.detail, m.warnings, m.err

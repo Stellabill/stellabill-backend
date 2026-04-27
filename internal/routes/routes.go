@@ -32,7 +32,7 @@ func Register(r *gin.Engine) {
 		_, err := tracing.InitTracer(cfg.TracingServiceName)
 		if err != nil {
 			// Log error but continue
-			middleware.Log.Errorf("Failed to initialize tracer: %v", err)
+			log.Printf("Failed to initialize tracer: %v", err)
 		}
 	}
 
@@ -49,7 +49,7 @@ func Register(r *gin.Engine) {
 	// Add TraceID middleware to bridge OTEL trace ID to response headers
 	r.Use(middleware.TraceIDMiddleware())
 
-	corsProfile := cors.ProfileForEnv(cfg.Env, cfg.AllowedOrigins)
+	corsProfile := cors.ProfileForEnv(cfg.Env, os.Getenv("ALLOWED_ORIGINS"))
 
 	// Apply rate limiting middleware with per-route overrides for sensitive endpoints
 	rateLimitConfig := middleware.RateLimiterConfig{
@@ -86,7 +86,6 @@ func Register(r *gin.Engine) {
 
 	subRepo := repository.NewMockSubscriptionRepo()
 	planRepo := repository.NewMockPlanRepo()
-	svc := service.NewSubscriptionService(subRepo, planRepo)
 
 	// Statement service wiring (in-memory mock for test/dev)
 	stmtRepo := repository.NewMockStatementRepo()

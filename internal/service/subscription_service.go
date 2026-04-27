@@ -5,6 +5,9 @@ import (
 	"strconv"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/security"
@@ -38,6 +41,7 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 	ctx, span := tracer.Start(ctx, "SubscriptionService.GetDetail",
 		trace.WithAttributes(
 			attribute.String("subscription.id", subscriptionID),
+			attribute.String("tenant.id", tenantID),
 			attribute.String("caller.id", callerID),
 			attribute.String("tenant.id", tenantID),
 		))

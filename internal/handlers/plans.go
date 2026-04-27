@@ -2,9 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
-
-	"stellarbill-backend/internal/pagination"
 
 	"github.com/gin-gonic/gin"
 )
@@ -51,12 +48,32 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	})
 }
 
+// ListPlans handles requests through the Handler dependency interface.
+func (h *Handler) ListPlans(c *gin.Context) {
+	plans, err := h.Plans.ListPlans(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if plans == nil {
+		plans = []Plan{}
+	}
+	c.JSON(http.StatusOK, gin.H{"plans": plans})
+}
+
+// ListPlans handles global route registration by using the configured repository.
+func ListPlans(c *gin.Context) {
+	if planRepo == nil {
+		c.JSON(http.StatusOK, gin.H{"plans": []Plan{}})
+		return
+	}
 
 	rows, err := planRepo.List(c.Request.Context())
 	if err != nil {
 		RespondWithInternalError(c, "Failed to retrieve plans")
 		return
 	}
+
 	out := make([]Plan, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, Plan{

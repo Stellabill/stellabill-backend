@@ -40,7 +40,7 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
-func RequestID() gin.HandlerFunc {
+func RequestIDSimple() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := sanitizeRequestID(c.GetHeader(RequestIDHeader))
 		if requestID == "" {

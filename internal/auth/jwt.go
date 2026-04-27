@@ -27,8 +27,8 @@ type Config struct {
 	Audience string
 }
 
-// Claims represents our custom JWT structure
-type Claims struct {
+// JWTClaims represents our custom JWT structure.
+type JWTClaims struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email,omitempty"`
 	Role   string `json:"role,omitempty"`
@@ -51,9 +51,13 @@ func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {
 				respondWithError(w, http.StatusUnauthorized, "invalid authorization format")
 				return
 			}
+			if strings.TrimSpace(parts[1]) == "" {
+				respondWithError(w, http.StatusUnauthorized, "invalid authorization format")
+				return
+			}
 
 			tokenString := parts[1]
-			claims := &Claims{}
+			claims := &JWTClaims{}
 
 			token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
 				// Validate the signing algorithm

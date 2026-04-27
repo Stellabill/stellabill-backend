@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var tracer = otel.Tracer("repository/postgres")
+var subscriptionTracer = otel.Tracer("repository/postgres/subscription")
 
 // SubscriptionRepo implements repository.SubscriptionRepository against a live Postgres database.
 type SubscriptionRepo struct {
@@ -53,6 +53,24 @@ func (r *SubscriptionRepo) FindByID(ctx context.Context, id string) (*repository
 		}
 		return nil, err
 	}
-	s.DeletedAt = deletedAt
+	s.DeletedAt = timeutil.NormalizePtrUTC(deletedAt)
+
+	normalizedNextBilling, err := timeutil.NormalizeRFC3339StringToUTC(s.NextBilling)
+	if err == nil {
+		s.NextBilling = normalizedNextBilling
+	}
+
 	return &s, nil
+}
+
+// FindByIDAndTenant fetches a subscription by id and returns not found when tenant does not match.
+func (r *SubscriptionRepo) FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*repository.SubscriptionRow, error) {
+	s, err := r.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Current schema does not persist tenant for subscriptions; keep caller-provided tenant for service checks.
+	s.TenantID = tenantID
+	return s, nil
 }

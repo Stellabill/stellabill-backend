@@ -49,3 +49,31 @@ func (r *PlanRepo) FindByID(ctx context.Context, id string) (*repository.PlanRow
 	}
 	return &p, nil
 }
+
+// List returns all plans ordered by id.
+func (r *PlanRepo) List(ctx context.Context) ([]*repository.PlanRow, error) {
+	const q = `
+		SELECT id, name, amount, currency, interval, description
+		FROM plans
+		ORDER BY id ASC`
+
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	plans := make([]*repository.PlanRow, 0)
+	for rows.Next() {
+		p := &repository.PlanRow{}
+		if err := rows.Scan(&p.ID, &p.Name, &p.Amount, &p.Currency, &p.Interval, &p.Description); err != nil {
+			return nil, err
+		}
+		plans = append(plans, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return plans, nil
+}

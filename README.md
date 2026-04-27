@@ -66,6 +66,8 @@ The backend includes a production-ready background worker system for automated b
 ### Quick Example
 
 ```go
+import "stellarbill-backend/internal/timeutil"
+
 store := worker.NewMemoryStore()
 executor := worker.NewBillingExecutor()
 config := worker.DefaultConfig()
@@ -75,7 +77,7 @@ w.Start()
 defer w.Stop()
 
 scheduler := worker.NewScheduler(store)
-job, _ := scheduler.ScheduleCharge("sub-123", time.Now(), 3)
+job, _ := scheduler.ScheduleCharge("sub-123", timeutil.NowUTC(), 3)
 ```
 
 ---

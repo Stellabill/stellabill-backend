@@ -5,12 +5,14 @@ import (
 	"strconv"
 	"strings"
 
+	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/timeutil"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/security"
 )
 
 var tracer = otel.Tracer("service/subscriptions")
@@ -97,7 +99,10 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 	// 6. Build BillingSummary.
 	var nextBillingDate *string
 	if row.NextBilling != "" {
-		nb := row.NextBilling
+		nb, err := timeutil.NormalizeRFC3339StringToUTC(row.NextBilling)
+		if err != nil {
+			nb = row.NextBilling
+		}
 		nextBillingDate = &nb
 	}
 
@@ -121,4 +126,3 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 	// 8. Return detail and warnings.
 	return detail, warnings, nil
 }
-

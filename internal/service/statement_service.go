@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/timeutil"
 )
 
 // StatementService defines the business logic interface for billing statements.
@@ -77,13 +78,17 @@ func (s *statementService) GetDetail(ctx context.Context, callerID string, roles
 	}
 
 	// 4. Build StatementDetail.
+	periodStart := normalizeRFC3339OrKeep(row.PeriodStart)
+	periodEnd := normalizeRFC3339OrKeep(row.PeriodEnd)
+	issuedAt := normalizeRFC3339OrKeep(row.IssuedAt)
+
 	detail := &StatementDetail{
 		ID:             row.ID,
 		SubscriptionID: row.SubscriptionID,
 		Customer:       row.CustomerID,
-		PeriodStart:    row.PeriodStart,
-		PeriodEnd:      row.PeriodEnd,
-		IssuedAt:       row.IssuedAt,
+		PeriodStart:    periodStart,
+		PeriodEnd:      periodEnd,
+		IssuedAt:       issuedAt,
 		TotalAmount:    row.TotalAmount,
 		Currency:       row.Currency,
 		Kind:           row.Kind,
@@ -144,13 +149,17 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 		Statements: make([]*StatementDetail, 0, len(rows)),
 	}
 	for _, row := range rows {
+		periodStart := normalizeRFC3339OrKeep(row.PeriodStart)
+		periodEnd := normalizeRFC3339OrKeep(row.PeriodEnd)
+		issuedAt := normalizeRFC3339OrKeep(row.IssuedAt)
+
 		result.Statements = append(result.Statements, &StatementDetail{
 			ID:             row.ID,
 			SubscriptionID: row.SubscriptionID,
 			Customer:       row.CustomerID,
-			PeriodStart:    row.PeriodStart,
-			PeriodEnd:      row.PeriodEnd,
-			IssuedAt:       row.IssuedAt,
+			PeriodStart:    periodStart,
+			PeriodEnd:      periodEnd,
+			IssuedAt:       issuedAt,
 			TotalAmount:    row.TotalAmount,
 			Currency:       row.Currency,
 			Kind:           row.Kind,
@@ -159,4 +168,12 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 	}
 
 	return result, count, warnings, nil
+}
+
+func normalizeRFC3339OrKeep(raw string) string {
+	normalized, err := timeutil.NormalizeRFC3339StringToUTC(raw)
+	if err != nil {
+		return raw
+	}
+	return normalized
 }

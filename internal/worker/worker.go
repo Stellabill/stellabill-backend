@@ -13,6 +13,9 @@ import (
 	"go.uber.org/zap"
 	"stellarbill-backend/internal/correlation"
 	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/timeutil"
+
+	"go.uber.org/zap"
 )
 
 // Config holds worker configuration
@@ -178,7 +181,7 @@ func (w *Worker) pollAndDispatch() {
 	}
 
 	w.metrics.mu.Lock()
-	w.metrics.LastPollTime = time.Now()
+	w.metrics.LastPollTime = timeutil.NowUTC()
 	w.metrics.mu.Unlock()
 
 	jobs, err := w.store.ListPending(w.config.BatchSize)
@@ -261,7 +264,7 @@ func (w *Worker) executeJob(job *Job) {
 	// Update job status to running
 	job.Status = JobStatusRunning
 	job.Attempts++
-	now := time.Now()
+	now := timeutil.NowUTC()
 	job.StartedAt = &now
 	if err := w.store.Update(job); err != nil {
 		security.ProductionLogger().Error("Error updating job to running",
@@ -291,7 +294,7 @@ func (w *Worker) executeJob(job *Job) {
 // handleJobSuccess marks a job as completed
 func (w *Worker) handleJobSuccess(job *Job) {
 	job.Status = JobStatusCompleted
-	now := time.Now()
+	now := timeutil.NowUTC()
 	job.CompletedAt = &now
 	job.LastError = ""
 
@@ -317,7 +320,7 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 	if job.Attempts >= w.config.MaxAttempts {
 		// Move to dead-letter queue
 		job.Status = JobStatusDeadLetter
-		now := time.Now()
+		now := timeutil.NowUTC()
 		job.CompletedAt = &now
 
 		w.metrics.mu.Lock()
@@ -332,7 +335,7 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 		// Retry with exponential backoff
 		job.Status = JobStatusPending
 		backoff := time.Duration(job.Attempts*job.Attempts) * time.Second
-		job.ScheduledAt = time.Now().Add(backoff)
+		job.ScheduledAt = timeutil.NowUTC().Add(backoff)
 
 		w.metrics.mu.Lock()
 		w.metrics.JobsFailed++
@@ -354,5 +357,5 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 }
 
 func generateWorkerID() string {
-	return fmt.Sprintf("worker-%d", time.Now().UnixNano())
+	return fmt.Sprintf("worker-%d", timeutil.NowUTC().UnixNano())
 }

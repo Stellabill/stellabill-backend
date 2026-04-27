@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"stellarbill-backend/internal/timeutil"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -64,7 +66,7 @@ func NewTokenBucket(capacity, refillRate, burstCapacity int64) *TokenBucket {
 		tokens:        burstCapacity, // Start with burst capacity
 		refillRate:    refillRate,
 		burstCapacity: burstCapacity,
-		lastRefill:    time.Now(),
+		lastRefill:    timeutil.NowUTC(),
 	}
 }
 
@@ -73,7 +75,7 @@ func (tb *TokenBucket) refill() {
 	tb.mutex.Lock()
 	defer tb.mutex.Unlock()
 
-	now := time.Now()
+	now := timeutil.NowUTC()
 	elapsed := now.Sub(tb.lastRefill).Seconds()
 	tokensToAdd := int64(elapsed * float64(tb.refillRate))
 
@@ -126,7 +128,7 @@ func (rl *APIRateLimiter) cleanupExpiredBuckets() {
 		select {
 		case <-rl.cleanup.C:
 			rl.mutex.Lock()
-			now := time.Now()
+			now := timeutil.NowUTC()
 
 			for key, bucket := range rl.buckets {
 				bucket.mutex.Lock()
@@ -273,7 +275,7 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 			// Rate limit exceeded
 			c.Header("X-RateLimit-Limit", "0")
 			c.Header("X-RateLimit-Remaining", "0")
-			c.Header("X-RateLimit-Reset", time.Now().Add(time.Second).Format(time.RFC3339))
+			c.Header("X-RateLimit-Reset", timeutil.FormatRFC3339UTC(timeutil.NowUTC().Add(time.Second)))
 			c.Header("Retry-After", "1")
 
 			// Log rate limit hit if enabled
@@ -298,7 +300,7 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 
 		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
 		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
-		c.Header("X-RateLimit-Reset", time.Now().Add(time.Second).Format(time.RFC3339))
+		c.Header("X-RateLimit-Reset", timeutil.FormatRFC3339UTC(timeutil.NowUTC().Add(time.Second)))
 
 		c.Next()
 	}

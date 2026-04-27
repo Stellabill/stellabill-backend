@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"stellarbill-backend/internal/timeutil"
 )
 
 var (
@@ -154,7 +156,7 @@ func (s *MemoryStore) AcquireLock(jobID string, workerID string, ttl time.Durati
 
 	// Clean up expired locks
 	if lock, exists := s.locks[jobID]; exists {
-		if time.Now().After(lock.expiresAt) {
+		if timeutil.NowUTC().After(lock.expiresAt) {
 			delete(s.locks, jobID)
 		} else if lock.workerID != workerID {
 			return false, nil
@@ -164,7 +166,7 @@ func (s *MemoryStore) AcquireLock(jobID string, workerID string, ttl time.Durati
 	// Acquire or renew lock
 	s.locks[jobID] = &lockInfo{
 		workerID:  workerID,
-		expiresAt: time.Now().Add(ttl),
+		expiresAt: timeutil.NowUTC().Add(ttl),
 	}
 	return true, nil
 }

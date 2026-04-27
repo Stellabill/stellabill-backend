@@ -13,13 +13,13 @@ import (
 
 // DispatcherConfig holds configuration for the dispatcher
 type DispatcherConfig struct {
-	PollInterval        time.Duration
-	BatchSize           int
-	MaxRetries          int
-	RetryBackoffFactor  float64
-	CleanupInterval     time.Duration
-	CompletedEventTTL   time.Duration
-	ProcessingTimeout   time.Duration
+	PollInterval       time.Duration
+	BatchSize          int
+	MaxRetries         int
+	RetryBackoffFactor float64
+	CleanupInterval    time.Duration
+	CompletedEventTTL  time.Duration
+	ProcessingTimeout  time.Duration
 }
 
 // DefaultDispatcherConfig returns default configuration
@@ -40,12 +40,12 @@ type dispatcher struct {
 	repository Repository
 	publisher  Publisher
 	config     DispatcherConfig
-	
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	running    bool
-	mu         sync.RWMutex
+
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	running bool
+	mu      sync.RWMutex
 }
 
 // NewDispatcher creates a new outbox dispatcher
@@ -61,22 +61,22 @@ func NewDispatcher(repository Repository, publisher Publisher, config Dispatcher
 func (d *dispatcher) Start() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	
+
 	if d.running {
 		return nil // Already running
 	}
-	
+
 	d.ctx, d.cancel = context.WithCancel(context.Background())
 	d.running = true
-	
+
 	// Start the main dispatcher goroutine
 	d.wg.Add(1)
 	go d.dispatchLoop()
-	
+
 	// Start the cleanup goroutine
 	d.wg.Add(1)
 	go d.cleanupLoop()
-	
+
 	log.Println("Outbox dispatcher started")
 	return nil
 }
@@ -85,11 +85,11 @@ func (d *dispatcher) Start() error {
 func (d *dispatcher) Stop() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	
+
 	if !d.running {
 		return nil // Already stopped
 	}
-	
+
 	d.cancel()
 	d.wg.Wait()
 	d.running = false
@@ -108,10 +108,10 @@ func (d *dispatcher) IsRunning() bool {
 // dispatchLoop is the main processing loop
 func (d *dispatcher) dispatchLoop() {
 	defer d.wg.Done()
-	
+
 	ticker := time.NewTicker(d.config.PollInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-d.ctx.Done():
@@ -125,10 +125,10 @@ func (d *dispatcher) dispatchLoop() {
 // cleanupLoop handles cleanup of completed events
 func (d *dispatcher) cleanupLoop() {
 	defer d.wg.Done()
-	
+
 	ticker := time.NewTicker(d.config.CleanupInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-d.ctx.Done():
@@ -146,7 +146,7 @@ func (d *dispatcher) processPendingEvents() {
 		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to get pending events: %v", err)))
 		return
 	}
-	
+
 	if len(events) == 0 {
 		return // No events to process
 	}
@@ -171,19 +171,19 @@ func (d *dispatcher) processEvent(event *Event) error {
 	// Create a timeout context for processing
 	ctx, cancel := context.WithTimeout(d.ctx, d.config.ProcessingTimeout)
 	defer cancel()
-	
+
 	// Process in a goroutine to respect timeout
 	done := make(chan error, 1)
 	go func() {
 		done <- d.publisher.Publish(event)
 	}()
-	
+
 	select {
 	case err := <-done:
 		if err != nil {
 			return d.handlePublishError(event, err)
 		}
-		
+
 		// Mark as completed
 		if err := d.repository.UpdateStatus(event.ID, StatusCompleted, nil); err != nil {
 			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as completed: %v", security.MaskPII(event.ID), err)))
@@ -192,7 +192,7 @@ func (d *dispatcher) processEvent(event *Event) error {
 		
 		log.Printf("%s", security.MaskPII(fmt.Sprintf("Successfully published event %s", security.MaskPII(event.ID))))
 		return nil
-		
+
 	case <-ctx.Done():
 		// Processing timeout
 		timeoutErr := "processing timeout"
@@ -203,7 +203,7 @@ func (d *dispatcher) processEvent(event *Event) error {
 // handlePublishError handles publishing errors and implements retry logic
 func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	event.RetryCount++
-	
+
 	if event.RetryCount >= d.config.MaxRetries {
 	// Max retries reached, mark as failed
 	errorMsg := err.Error()
@@ -215,11 +215,11 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	log.Printf("%s", security.MaskPII(fmt.Sprintf("Event %s failed after %d retries: %v", security.MaskPII(event.ID), event.RetryCount, err)))
 		return err
 	}
-	
+
 	// Calculate next retry time with exponential backoff
 	backoffSeconds := math.Pow(d.config.RetryBackoffFactor, float64(event.RetryCount))
-	nextRetryAt := time.Now().Add(time.Duration(backoffSeconds) * time.Second)
-	
+	nextRetryAt := timeutil.NowUTC().Add(time.Duration(backoffSeconds) * time.Second)
+
 	errorMsg := err.Error()
 	if updateErr := d.repository.IncrementRetryCount(event.ID, nextRetryAt, &errorMsg); updateErr != nil {
 		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to increment retry count for event %s: %v", security.MaskPII(event.ID), updateErr)))
@@ -232,13 +232,13 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 
 // cleanupCompletedEvents removes old completed events
 func (d *dispatcher) cleanupCompletedEvents() {
-	cutoff := time.Now().Add(-d.config.CompletedEventTTL)
+	cutoff := timeutil.NowUTC().Add(-d.config.CompletedEventTTL)
 	deleted, err := d.repository.DeleteCompletedEvents(cutoff)
 	if err != nil {
 		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to cleanup completed events: %v", err)))
 		return
 	}
-	
+
 	if deleted > 0 {
 		log.Printf("%s", security.MaskPII(fmt.Sprintf("Cleaned up %d completed events older than %v", deleted, cutoff)))
 	}

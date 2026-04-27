@@ -79,10 +79,12 @@ type ResponseEnvelopeWithPagination struct {
 	Pagination PaginationMetadata `json:"pagination"`
 }
 
-// PaginationMetadata holds pagination info for list responses.
+// PaginationMetadata holds cursor-based pagination info.
 type PaginationMetadata struct {
-	NextCursor string `json:"next_cursor,omitempty"`
-	Limit      int    `json:"limit"`
-	HasMore    bool   `json:"has_more"`
+	NextCursor     string `json:"next_cursor,omitempty"`
+	PreviousCursor string `json:"previous_cursor,omitempty"`
+	HasMore        bool   `json:"has_more"`
+	TotalCount     int    `json:"total_count,omitempty"`
+	Limit          int    `json:"limit"`
 }
 

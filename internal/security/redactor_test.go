@@ -2,12 +2,11 @@ package security
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestMaskPII(t *testing.T) {
@@ -260,42 +259,50 @@ func TestRedactZapFields(t *testing.T) {
 	assert.NotContains(t, err.Error(), "customer_abc")
 }
 
+type testCore struct {
+	zapcore.Core
+	entries    []zapcore.Entry
+	fieldsList [][]zapcore.Field
+}
+
+func (t *testCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	t.entries = append(t.entries, entry)
+	t.fieldsList = append(t.fieldsList, fields)
+	return nil
+}
+
+func (t *testCore) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	return ce.AddCore(entry, t)
+}
+
+func (t *testCore) With(fields []zapcore.Field) zapcore.Core {
+	return t
+}
+
 // TestRedactingCore_Integration tests the full core redaction pipeline.
 func TestRedactingCore_Integration(t *testing.T) {
-	var entries []zapcore.Entry
-	var fieldsList [][]zapcore.Field
-
-	innerCore := zapcore.NewCore(
-		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-		zapcore.AddSync(func(entry zapcore.Entry, fields []zapcore.Field) error {
-			entries = append(entries, entry)
-			fieldsList = append(fieldsList, fields)
-			return nil
-		}),
-		zap.NewAtomicLevel(),
-	)
-
-	core := NewRedactingCore(innerCore)
+	tc := &testCore{}
+	core := NewRedactingCore(tc)
 
 	entry := zapcore.Entry{
 		Message: "Error for customer_abc and amount 99.99",
 		Level:   zapcore.ErrorLevel,
 	}
 	fields := []zapcore.Field{
-		{Key: "customer", Type: zapcore.StringType, String: "cust_123"},
-		{Key: "amount", Type: zapcore.StringType, String: "1999.99"},
-		{Key: "count", Type: zapcore.Int64Type, Integer: 42},
+		zap.String("customer", "cust_123"),
+		zap.String("amount", "1999.99"),
+		zap.Int64("count", 42),
 	}
 
 	_ = core.Write(entry, fields)
 
-	assert.Len(t, entries, 1)
-	assert.NotContains(t, entries[0].Message, "customer_abc")
-	assert.Contains(t, entries[0].Message, "cust_***")
-	assert.Contains(t, entries[0].Message, "$*.**")
+	assert.Len(t, tc.entries, 1)
+	assert.NotContains(t, tc.entries[0].Message, "customer_abc")
+	assert.Contains(t, tc.entries[0].Message, "cust_***")
+	assert.Contains(t, tc.entries[0].Message, "$*.**")
 
-	assert.Len(t, fieldsList, 1)
-	redactedFields := fieldsList[0]
+	assert.Len(t, tc.fieldsList, 1)
+	redactedFields := tc.fieldsList[0]
 	var custVal, amtVal string
 	var countVal int64
 	for _, f := range redactedFields {

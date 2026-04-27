@@ -25,11 +25,11 @@ type mockStatementService struct {
 	capturedCust string
 }
 
-func (m *mockStatementService) GetDetail(_ context.Context, _, _ string) (*service.StatementDetail, []string, error) {
+func (m *mockStatementService) GetDetail(_ context.Context, _ string, _ []string, _ string) (*service.StatementDetail, []string, error) {
 	return m.detail, m.warnings, m.err
 }
 
-func (m *mockStatementService) ListByCustomer(_ context.Context, _ string, customerID string, q repository.StatementQuery) (*service.ListStatementsDetail, int, []string, error) {
+func (m *mockStatementService) ListByCustomer(_ context.Context, _ string, _ []string, customerID string, q repository.StatementQuery) (*service.ListStatementsDetail, int, []string, error) {
 	m.capturedQ = q
 	m.capturedCust = customerID
 	return m.listDetail, m.count, m.warnings, m.err
@@ -38,11 +38,16 @@ func (m *mockStatementService) ListByCustomer(_ context.Context, _ string, custo
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 func stmtRouter(svc service.StatementService, setCallerID bool) *gin.Engine {
+	return stmtRouterWithAuth(svc, setCallerID, "cust-1", []string{"customer"})
+}
+
+func stmtRouterWithAuth(svc service.StatementService, setCallerID bool, callerID string, roles []string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	if setCallerID {
 		r.Use(func(c *gin.Context) {
-			c.Set("callerID", "cust-1")
+			c.Set("callerID", callerID)
+			c.Set("roles", roles)
 			c.Next()
 		})
 	}
@@ -318,14 +323,15 @@ func TestListStatements_HappyPath_Returns200WithPagination(t *testing.T) {
 	if !ok {
 		t.Fatal("expected pagination field")
 	}
-	if pag["page"] != float64(1) {
-		t.Errorf("expected page=1, got %v", pag["page"])
+	// page parameter is now ignored/removed, but let's check what's there
+	if pag["page"] != nil {
+		t.Errorf("expected page to be nil, got %v", pag["page"])
 	}
-	if pag["page_size"] != float64(10) {
-		t.Errorf("expected page_size=10, got %v", pag["page_size"])
+	if pag["page_size"] != nil {
+		t.Errorf("expected page_size to be nil, got %v", pag["page_size"])
 	}
-	if pag["count"] != float64(2) {
-		t.Errorf("expected count=2, got %v", pag["count"])
+	if pag["total_count"] != float64(2) {
+		t.Errorf("expected count=2, got %v", pag["total_count"])
 	}
 
 	data, ok := envelope["data"].(map[string]interface{})
@@ -338,6 +344,50 @@ func TestListStatements_HappyPath_Returns200WithPagination(t *testing.T) {
 	}
 	if len(statements) != 2 {
 		t.Errorf("expected 2 statements, got %d", len(statements))
+	}
+}
+
+func TestListStatements_HasMore(t *testing.T) {
+	svc := &mockStatementService{
+		listDetail: &service.ListStatementsDetail{
+			Statements: []*service.StatementDetail{
+				{ID: "stmt-1"},
+				{ID: "stmt-2"},
+			},
+		},
+		count: 2,
+	}
+	r := stmtRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	// Request with limit=2, so len(Statements) == limit => HasMore=true
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements?limit=2", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	envelope := decodeBody(t, w)
+	pag := envelope["pagination"].(map[string]interface{})
+	if pag["has_more"] != true {
+		t.Errorf("expected has_more=true, got %v", pag["has_more"])
+	}
+	if pag["next_cursor"] != "stmt-2" {
+		t.Errorf("expected next_cursor=stmt-2, got %v", pag["next_cursor"])
+	}
+}
+
+func TestListStatements_InternalError_Returns500(t *testing.T) {
+	svc := &mockStatementService{err: errors.New("something went wrong")}
+	r := stmtRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
 	}
 }
 
@@ -359,11 +409,8 @@ func TestListStatements_DefaultPagination(t *testing.T) {
 
 	envelope := decodeBody(t, w)
 	pag := envelope["pagination"].(map[string]interface{})
-	if pag["page"] != float64(1) {
-		t.Errorf("expected default page=1, got %v", pag["page"])
-	}
-	if pag["page_size"] != float64(10) {
-		t.Errorf("expected default page_size=10, got %v", pag["page_size"])
+	if pag["has_more"] != false {
+		t.Errorf("expected has_more=false, got %v", pag["has_more"])
 	}
 }
 
@@ -398,11 +445,8 @@ func TestListStatements_QueryFiltersPassedToService(t *testing.T) {
 	if q.EndBefore != "2024-12-31" {
 		t.Errorf("EndBefore: got %q, want 2024-12-31", q.EndBefore)
 	}
-	if q.Page != 2 {
-		t.Errorf("Page: got %d, want 2", q.Page)
-	}
-	if q.PageSize != 5 {
-		t.Errorf("PageSize: got %d, want 5", q.PageSize)
+	if q.Limit != 5 {
+		t.Errorf("Limit: got %d, want 5", q.Limit)
 	}
 }
 
@@ -421,22 +465,16 @@ func TestListStatements_InvalidPageParams_Ignored(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Non-numeric values should be ignored (stay at zero), and defaults kick in for the response.
+	// Non-numeric values should be ignored (stay at zero).
 	q := svc.capturedQ
-	if q.Page != 0 {
-		t.Errorf("Page: got %d, want 0 (unparsed)", q.Page)
-	}
-	if q.PageSize != 0 {
-		t.Errorf("PageSize: got %d, want 0 (unparsed)", q.PageSize)
+	if q.Limit != 0 {
+		t.Errorf("Limit: got %d, want 0 (unparsed)", q.Limit)
 	}
 
 	envelope := decodeBody(t, w)
 	pag := envelope["pagination"].(map[string]interface{})
-	if pag["page"] != float64(1) {
-		t.Errorf("response page should default to 1, got %v", pag["page"])
-	}
-	if pag["page_size"] != float64(10) {
-		t.Errorf("response page_size should default to 10, got %v", pag["page_size"])
+	if pag["has_more"] == nil {
+		t.Errorf("response has_more should be present")
 	}
 }
 
@@ -485,3 +523,43 @@ func TestListStatements_WarningsIncluded(t *testing.T) {
 		t.Errorf("unexpected warnings: %v", warns)
 	}
 }
+
+func TestListStatements_BackwardCompatibility(t *testing.T) {
+	svc := &mockStatementService{
+		listDetail: &service.ListStatementsDetail{Statements: []*service.StatementDetail{}},
+		count:      0,
+	}
+	r := stmtRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements?page_size=25", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if svc.capturedQ.Limit != 25 {
+		t.Errorf("expected limit=25 from page_size, got %d", svc.capturedQ.Limit)
+	}
+}
+
+func TestListStatements_AdminAccess(t *testing.T) {
+	svc := &mockStatementService{
+		listDetail: &service.ListStatementsDetail{Statements: []*service.StatementDetail{}},
+		count:      0,
+	}
+	// Admin can request customer_id explicitly
+	r := stmtRouterWithAuth(svc, true, "admin-1", []string{"admin"})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements?customer_id=cust-2", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if svc.capturedCust != "cust-2" {
+		t.Errorf("expected requested customer_id=cust-2, got %q", svc.capturedCust)
+	}
+}
+

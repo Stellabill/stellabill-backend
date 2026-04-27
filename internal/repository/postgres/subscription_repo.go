@@ -10,9 +10,12 @@ import (
 
 	"stellarbill-backend/internal/repository"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("repository/postgres")
 
 // SubscriptionRepo implements repository.SubscriptionRepository against a live Postgres database.
 type SubscriptionRepo struct {

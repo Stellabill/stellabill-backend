@@ -27,7 +27,11 @@ func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerI
 	return m.detail, m.warnings, m.err
 }
 
-func (m *mockSubscriptionService) ListSubscriptions(_ context.Context) ([]Subscription, error) {
+func (m *mockSubscriptionService) ListSubscriptions(_ *gin.Context) ([]Subscription, error) {
+	return nil, nil
+}
+
+func (m *mockSubscriptionService) GetSubscription(_ *gin.Context, _ string) (*Subscription, error) {
 	return nil, nil
 }
 

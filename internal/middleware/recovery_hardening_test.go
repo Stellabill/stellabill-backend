@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"stellabill-backend/internal/logger"
+	"stellarbill-backend/internal/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"

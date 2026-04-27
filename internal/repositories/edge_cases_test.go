@@ -1,7 +1,6 @@
 package repositories
 
 import (
-	"database/sql"
 	"fmt"
 	"testing"
 	"time"

@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/pagination"
 )
 
 type Plan struct {
@@ -18,6 +20,7 @@ type Plan struct {
 func (p Plan) GetID() string        { return p.ID }
 func (p Plan) GetSortValue() string { return p.Name } // Standardize on Name as sort key
 
+// ListPlans handles requests for listing all available plans.
 func (h *Handler) ListPlans(c *gin.Context) {
 	limitStr := c.DefaultQuery("limit", "10")
 	limit, _ := strconv.Atoi(limitStr)
@@ -32,13 +35,14 @@ func (h *Handler) ListPlans(c *gin.Context) {
 		return
 	}
 
+	// Fetch plans from the service/repository
 	allPlans, err := h.Plans.ListPlans(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
 		return
 	}
 
-	// For now, we paginate the slice. In a real DB repo, this would be in the query.
+	// Paginate the slice. In a real DB repo, this would be in the query.
 	page := pagination.PaginateSlice(allPlans, cursor, limit)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -46,44 +50,4 @@ func (h *Handler) ListPlans(c *gin.Context) {
 		"next_cursor": page.NextCursor,
 		"has_more":    page.HasMore,
 	})
-}
-
-// ListPlans handles requests through the Handler dependency interface.
-func (h *Handler) ListPlans(c *gin.Context) {
-	plans, err := h.Plans.ListPlans(c)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if plans == nil {
-		plans = []Plan{}
-	}
-	c.JSON(http.StatusOK, gin.H{"plans": plans})
-}
-
-// ListPlans handles global route registration by using the configured repository.
-func ListPlans(c *gin.Context) {
-	if planRepo == nil {
-		c.JSON(http.StatusOK, gin.H{"plans": []Plan{}})
-		return
-	}
-
-	rows, err := planRepo.List(c.Request.Context())
-	if err != nil {
-		RespondWithInternalError(c, "Failed to retrieve plans")
-		return
-	}
-
-	out := make([]Plan, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, Plan{
-			ID:          r.ID,
-			Name:        r.Name,
-			Amount:      r.Amount,
-			Currency:    r.Currency,
-			Interval:    r.Interval,
-			Description: r.Description,
-		})
-	}
-	c.JSON(http.StatusOK, gin.H{"plans": out})
 }

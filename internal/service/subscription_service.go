@@ -11,9 +11,6 @@ import (
 	"go.uber.org/zap"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/security"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 var tracer = otel.Tracer("service/subscriptions")
@@ -43,7 +40,6 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 			attribute.String("subscription.id", subscriptionID),
 			attribute.String("tenant.id", tenantID),
 			attribute.String("caller.id", callerID),
-			attribute.String("tenant.id", tenantID),
 		))
 	defer span.End()
 

@@ -18,8 +18,8 @@ type eventIDEntry struct {
 }
 
 // EventIDCache provides thread-safe storage for webhook event IDs
-to prevent replay attacks. It automatically expires old entries after
-a configurable TTL (time-to-live).
+// to prevent replay attacks. It automatically expires old entries after
+// a configurable TTL (time-to-live).
 type EventIDCache struct {
 	mu      sync.RWMutex
 	entries map[string]time.Time

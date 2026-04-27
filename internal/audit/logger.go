@@ -5,12 +5,29 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
+
+type auditContextKey string
+
+const (
+	actorKey auditContextKey = "audit_actor"
+)
+
+// WithActor returns a new context with the provided actor ID.
+func WithActor(ctx context.Context, actor string) context.Context {
+	return context.WithValue(ctx, actorKey, actor)
+}
+
+// FromContext extracts the actor ID from the context.
+func FromContext(ctx context.Context) (string, bool) {
+	val, ok := ctx.Value(actorKey).(string)
+	return val, ok
+}
 
 type Logger struct {
 	mu       sync.Mutex
@@ -42,9 +59,10 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) 
 	defer l.mu.Unlock()
 
 	// 1. Prepare Event Metadata
-	event.Timestamp = event.Timestamp.UTC()
 	if event.Timestamp.IsZero() {
-		event.Timestamp = fmt.Sprint(time.Now().Unix()) // Simple unix timestamp for consistent hashing
+		event.Timestamp = time.Now().UTC()
+	} else {
+		event.Timestamp = event.Timestamp.UTC()
 	}
 	
 	// 2. Redaction (PII Protection)
@@ -72,6 +90,8 @@ func (l *Logger) computeHash(e AuditEvent) string {
 	h.Write([]byte(raw))
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+const redactedValue = "[REDACTED]"
 
 func (l *Logger) redact(meta map[string]interface{}) map[string]interface{} {
 	if meta == nil {

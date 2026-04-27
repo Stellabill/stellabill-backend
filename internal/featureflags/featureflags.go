@@ -2,6 +2,7 @@ package featureflags
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -129,8 +130,13 @@ func (m *Manager) loadFromEnvironment() {
 // NEW: DB setter
 func (m *Manager) SetDBFlag(flagName string, enabled bool) {
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	dirty := m.db[flagName] != enabled
 	m.db[flagName] = enabled
+	m.mutex.Unlock()
+	
+	if dirty {
+		// Log if needed
+	}
 }
 
 // CORE: evaluation with precedence

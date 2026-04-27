@@ -127,7 +127,7 @@ func NewTokenGenerator(secret string) *TokenGenerator {
 
 // generateToken creates a token with given claims.
 func (tg *TokenGenerator) generateToken(userID, email, role string, expiresAt time.Time) (string, error) {
-	claims := Claims{
+	claims := JWTClaims{
 		UserID: userID,
 		Email:  email,
 		Role:   role,

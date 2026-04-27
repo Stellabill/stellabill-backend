@@ -62,6 +62,10 @@ type Config struct {
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
+	SecurityFrameAncestors string
+	MaxRequestSize         int64
+	MaxGzipUncompressed    int64
+	MaxGzipRatio           float64
 	// DB connection pool tuning.
 	// All durations are in seconds to keep env-var parsing uniform.
 	//
@@ -134,6 +138,15 @@ const (
 	MaxDBPoolMaxConns = 500
 	MinDBPoolTimeout  = 1   // seconds
 	MaxDBPoolTimeout  = 300 // seconds
+
+	MinHeaderBytes        = 1024        // 1KB
+	MaxAllowedHeaderBytes = 10 << 20    // 10MB
+	MinTimeoutSeconds     = 1
+	MaxTimeoutSeconds     = 600
+	MinRateLimitRPS       = 1
+	MaxRateLimitRPS       = 1000
+	MinRateLimitBurst     = 1
+	MaxRateLimitBurst     = 2000
 )
 
 // Required environment variables
@@ -207,6 +220,10 @@ func Load(opts ...Option) (Config, error) {
 		IdleTimeout:    DefaultIdleTimeout,
 		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10), // 10MB
+		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
+		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
 		// DB pool — safe production defaults
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
@@ -647,6 +664,26 @@ func getEnvInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			return i
+		}
+	}
+	return fallback
+}
+
+// getEnvInt64 retrieves an environment variable as int64 with a fallback value
+func getEnvInt64(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return i
+		}
+	}
+	return fallback
+}
+
+// getEnvFloat64 retrieves an environment variable as float64 with a fallback value
+func getEnvFloat64(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

@@ -51,59 +51,65 @@ var PIIValuePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^[A-Z0-9]{20,}$`),                                  // API keys
 }
 
-// PIIFields maps regex patterns to masking functions for log message content.
-// Used for unstructured log message scanning.
-var PIIFields = map[string]func(string) string{
-	`^(customer|cust)_?`:    maskCustomerID,     // cust_xxx -> cust_***
-	`^(subscription|sub)_?`: maskSubscriptionID, // sub_xxx -> sub_***
-	`^(job)_?`:              maskJobID,          // job_xxx -> job_***
-	`^amount$`:              maskAmount,         // 19.99 -> $*.**
-	`^(jwt|token|secret|api_key|access_token|refresh_token)$`: func(string) string { return "***REDACTED***" },
-	`password`: func(string) string { return "***REDACTED***" },
-}
-
 // MaskPII scans a string or log message for PII patterns and masks them.
-// It handles both field names within log messages and inline sensitive data.
 func MaskPII(input string) string {
 	if input == "" {
 		return ""
 	}
 	result := input
-	for pattern, masker := range PIIFields {
-		re := regexp.MustCompile(fmt.Sprintf(`(?i)\b%s[-_]?[a-z0-9]*\b`, pattern))
+
+	// Mask common ID patterns like cust_xxx, sub_xxx, etc.
+	idPatterns := []struct {
+		prefix string
+		masker func(string) string
+	}{
+		{"customer", maskCustomerID},
+		{"cust", maskCustomerID},
+		{"subscription", maskSubscriptionID},
+		{"sub", maskSubscriptionID},
+		{"job", maskJobID},
+	}
+
+	for _, p := range idPatterns {
+		re := regexp.MustCompile(fmt.Sprintf(`(?i)\b%s[-_]?([a-zA-Z0-9]+)\b`, p.prefix))
 		result = re.ReplaceAllStringFunc(result, func(match string) string {
-			lower := strings.ToLower(match)
-			// Extract the ID portion after the prefix
-			idPart := strings.TrimPrefix(lower, strings.ToLower(pattern))
-			maskedID := masker(idPart)
-			// Preserve separator style if present
-			if strings.Contains(match, "_") {
-				return pattern + "_" + maskedID
+			sub := re.FindStringSubmatch(match)
+			if len(sub) > 1 {
+				return p.prefix + "_" + p.masker(sub[1])
 			}
-			return pattern + maskedID
+			return match
 		})
 	}
+
 	// Mask standalone amount-like numbers
 	result = maskAmountRegex.ReplaceAllStringFunc(result, func(amount string) string {
-		// Only mask if it looks like a currency amount (has decimal point or is standalone)
 		if len(amount) <= 10 && (strings.Contains(amount, ".") || len(amount) <= 5) {
 			return "$*.**"
 		}
 		return amount
 	})
+
 	// Mask emails
 	result = emailRegex.ReplaceAllStringFunc(result, func(email string) string {
-		parts := strings.Split(email, "@")
-		if len(parts) == 2 {
+		if strings.Contains(email, "@") {
 			return "e***@***"
 		}
 		return email
 	})
+
+	// Mask secrets
+	secretPatterns := []string{"jwt", "token", "secret", "api_key", "password"}
+	for _, p := range secretPatterns {
+		re := regexp.MustCompile(fmt.Sprintf(`(?i)\b%s[-_]?([a-zA-Z0-9._-]+)\b`, p))
+		result = re.ReplaceAllStringFunc(result, func(match string) string {
+			return p + "_" + "***REDACTED***"
+		})
+	}
+
 	return result
 }
 
 // RedactMap recursively redacts sensitive keys and values from a map of string->any.
-// It modifies the map in-place and returns it for convenience.
 func RedactMap(data map[string]interface{}) map[string]interface{} {
 	if data == nil {
 		return nil
@@ -113,13 +119,11 @@ func RedactMap(data map[string]interface{}) map[string]interface{} {
 		fullyRedact := fullyRedactedFieldNames[lowerKey]
 		mask := maskedFieldNames[lowerKey]
 
-		// Handle nested maps
 		if nestedMap, ok := val.(map[string]interface{}); ok {
 			RedactMap(nestedMap)
 			continue
 		}
 
-		// Handle slices that may contain maps
 		if slice, ok := val.([]interface{}); ok {
 			for _, item := range slice {
 				if itemMap, ok := item.(map[string]interface{}); ok {
@@ -131,22 +135,16 @@ func RedactMap(data map[string]interface{}) map[string]interface{} {
 		if fullyRedact {
 			data[key] = "***REDACTED***"
 		} else if mask {
-			// Apply partial masking based on field type
 			if str, ok := val.(string); ok {
 				data[key] = maskFieldByKey(lowerKey, str)
-			} else {
-				// Non-string values for masked fields are left as-is or converted?
-				// Keep as-is.
 			}
 		} else if str, ok := val.(string); ok {
-			// For non-PII string fields, still scan for embedded PII patterns
 			data[key] = MaskPII(str)
 		}
 	}
 	return data
 }
 
-// maskFieldByKey applies appropriate masking based on the field's key.
 func maskFieldByKey(key, value string) string {
 	switch {
 	case strings.Contains(key, "customer"):
@@ -158,23 +156,14 @@ func maskFieldByKey(key, value string) string {
 	case strings.Contains(key, "amount"):
 		return maskAmount(value)
 	case strings.Contains(key, "email"):
-		// Mask email to e***@***
-		if atIdx := strings.Index(value, "@"); atIdx > 0 {
-			return "e***@***"
-		}
-		return value
+		return "e***@***"
 	case strings.Contains(key, "phone"):
-		// Mask phone to ***-***-****
-		if len(value) >= 10 {
-			return "***-***-****"
-		}
-		return "***"
+		return "***-***-****"
 	default:
 		return value
 	}
 }
 
-// RedactStringField redacts a single field value based on field name.
 func RedactStringField(fieldName, value string) string {
 	lower := strings.ToLower(fieldName)
 	if fullyRedactedFieldNames[lower] {
@@ -189,7 +178,6 @@ func RedactStringField(fieldName, value string) string {
 	return MaskPII(value)
 }
 
-// Specific maskers
 func maskCustomerID(id string) string {
 	if len(id) <= 4 {
 		return "***"
@@ -220,7 +208,6 @@ var (
 	emailRegex      = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
 )
 
-// LooksSensitiveValue checks if a string value appears to be a token or credential.
 func looksSensitiveValue(v string) bool {
 	v = strings.TrimSpace(strings.ToLower(v))
 	for _, pattern := range PIIValuePatterns {
@@ -231,38 +218,27 @@ func looksSensitiveValue(v string) bool {
 	return false
 }
 
-// RedactError ensures error messages don't contain PII by redacting them.
 func RedactError(err error) error {
 	if err == nil {
 		return nil
 	}
-	redactedMsg := MaskPII(err.Error())
-	return errors.New(redactedMsg)
+	return errors.New(MaskPII(err.Error()))
 }
 
-// ZapRedactHook is a zapcore.Check that redacts PII in log messages.
-// Note: Field-level redaction requires zapcore.EncodableObjectHook or custom encoder.
 func ZapRedactHook(entry zapcore.Entry) error {
 	entry.Message = MaskPII(entry.Message)
 	return nil
 }
 
-// ProductionLogger returns a production-ready zap logger with PII redaction on messages and fields.
 func ProductionLogger() *zap.Logger {
 	config := zap.NewProductionConfig()
 	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	config.InitialFields = map[string]interface{}{
-		"service": "stellarbill-backend",
-		"version": "1.0.0",
-	}
 	logger, _ := config.Build(zap.Hooks(ZapRedactHook))
-	// Wrap with field redaction using zap.WrapCore
 	return logger.WithOptions(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
 		return NewRedactingCore(c)
 	}))
 }
 
-// DevLogger returns a development logger with color and redaction
 func DevLogger() *zap.Logger {
 	config := zap.NewDevelopmentConfig()
 	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
@@ -275,12 +251,7 @@ func DevLogger() *zap.Logger {
 	)
 }
 
-// RedactZapFields redacts a slice of zap.Field, returning a new slice.
-// It handles string fields, errors, and reflective objects.
 func RedactZapFields(fields []zap.Field) []zap.Field {
-	if len(fields) == 0 {
-		return fields
-	}
 	redacted := make([]zap.Field, 0, len(fields))
 	for _, f := range fields {
 		redacted = append(redacted, RedactZapField(f))
@@ -288,20 +259,16 @@ func RedactZapFields(fields []zap.Field) []zap.Field {
 	return redacted
 }
 
-// RedactZapField redacts a single zap.Field.
 func RedactZapField(f zap.Field) zap.Field {
 	switch f.Type {
 	case zapcore.StringType:
-		val := f.String
-		redactedVal := RedactStringField(f.Key, val)
-		return zap.String(f.Key, redactedVal)
+		return zap.String(f.Key, RedactStringField(f.Key, f.String))
 	case zapcore.ErrorType:
 		if err, ok := f.Interface.(error); ok {
-			return zap.Error(errors.New(MaskPII(err.Error())))
+			return zap.Error(RedactError(err))
 		}
 		return f
 	default:
-		// For complex types, marshal and redact
 		if b, err := json.Marshal(f.Interface); err == nil {
 			var m map[string]interface{}
 			if json.Unmarshal(b, &m) == nil {

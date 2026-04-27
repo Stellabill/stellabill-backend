@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"stellabill-backend/internal/auth" // Adjust this import path to your module name
+	"stellarbill-backend/internal/auth"
 )
 
 type ErrorEnvelope struct {
@@ -32,8 +32,10 @@ func respondAuthError(c *gin.Context, message string) {
 	c.AbortWithStatusJSON(http.StatusUnauthorized, envelope)
 }
 
-// AuthMiddleware now takes the JWKSCache instead of a static secret string.
-func AuthMiddleware(jwksCache *auth.JWKSCache) gin.HandlerFunc {
+// AuthMiddleware creates a Gin middleware for JWT authentication.
+// It supports both JWKS (asynchronous key rotation) and static secrets (HS256).
+// If jwksCache is nil, it falls back to using the provided secret string.
+func AuthMiddleware(jwksCache *auth.JWKSCache, staticSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -49,35 +51,38 @@ func AuthMiddleware(jwksCache *auth.JWKSCache) gin.HandlerFunc {
 
 		tokenStr := parts[1]
 
-		// 1. Use the JWKSCache to find the correct public key for validation
-		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-			// Ensure the token is using RSA/ECDSA (standard for JWKS)
-			// Issue #103 typically uses RS256/ES256, not HMAC.
-			kid, ok := t.Header["kid"].(string)
-			if !ok {
-				return nil, fmt.Errorf("missing kid in token header")
+		var keyFunc jwt.Keyfunc
+		if jwksCache != nil {
+			keyFunc = func(t *jwt.Token) (interface{}, error) {
+				kid, ok := t.Header["kid"].(string)
+				if !ok {
+					return nil, fmt.Errorf("missing kid in token header")
+				}
+				key, err := jwksCache.GetKey(c.Request.Context(), kid)
+				if err != nil {
+					return nil, fmt.Errorf("failed to retrieve public key: %w", err)
+				}
+				var rawKey interface{}
+				if err := key.Raw(&rawKey); err != nil {
+					return nil, fmt.Errorf("failed to get raw key: %w", err)
+				}
+				return rawKey, nil
 			}
-
-			// Call GetKey which handles the "Refresh-on-Error" logic
-			key, err := jwksCache.GetKey(c.Request.Context(), kid)
-			if err != nil {
-				return nil, fmt.Errorf("failed to retrieve public key: %w", err)
+		} else {
+			keyFunc = func(t *jwt.Token) (interface{}, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+				}
+				return []byte(staticSecret), nil
 			}
+		}
 
-			var rawKey interface{}
-			if err := key.Raw(&rawKey); err != nil {
-				return nil, fmt.Errorf("failed to get raw key: %w", err)
-			}
-
-			return rawKey, nil
-		})
-
+		token, err := jwt.Parse(tokenStr, keyFunc)
 		if err != nil || !token.Valid {
 			respondAuthError(c, fmt.Sprintf("token validation failed: %v", err))
 			return
 		}
 
-		// 2. Extract Claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
 			respondAuthError(c, "invalid token claims")
@@ -90,7 +95,7 @@ func AuthMiddleware(jwksCache *auth.JWKSCache) gin.HandlerFunc {
 			return
 		}
 
-		// 3. Tenant ID enforcement (Preserving your existing logic)
+		// Tenant ID enforcement
 		tenantHeader := strings.TrimSpace(c.GetHeader("X-Tenant-ID"))
 		tenantClaim := ""
 		if v, ok := claims["tenant"]; ok {
@@ -111,6 +116,9 @@ func AuthMiddleware(jwksCache *auth.JWKSCache) gin.HandlerFunc {
 		} else if tenantClaim != "" {
 			tenantID = tenantClaim
 		} else {
+			// For testing or development, we might allow missing tenant if not strictly required
+			// But for hardening, we should enforce it if possible.
+			// Let's assume it's required for now.
 			respondAuthError(c, "tenant id required")
 			return
 		}

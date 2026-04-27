@@ -77,7 +77,6 @@ func (s *Service) Reconcile(ctx context.Context, backendSubs []BackendSubscripti
 
 		reconciler := New()
 		reports := make([]Report, 0, len(backendSubs))
-		processErr := false
 		
 		for _, b := range backendSubs {
 			rep := reconciler.Compare(b, snapMap[b.SubscriptionID])
@@ -105,7 +104,6 @@ func (s *Service) Reconcile(ctx context.Context, backendSubs []BackendSubscripti
 			if err := s.Store.SaveReports(reports); err != nil {
 				lastErr = err
 				metrics.ReconciliationTotal.WithLabelValues("error").Inc()
-				processErr = true
 				
 				// If this isn't the last attempt, wait before retrying
 				if attempt < options.MaxAttempts-1 {

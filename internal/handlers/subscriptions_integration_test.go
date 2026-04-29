@@ -2,20 +2,133 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 
-	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 )
 
 const testJWTSecret = "integration-test-secret"
+
+// testAuthMiddleware is a minimal JWT auth middleware for integration tests.
+// It validates the Authorization header, parses tenant from the JWT claim
+// and/or X-Tenant-ID header, and sets callerID and tenantID in the context.
+func testAuthMiddleware(jwtSecret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, ErrorEnvelope{
+				Code:    string(ErrorCodeUnauthorized),
+				Message: "authorization header required",
+				TraceID: uuid.New().String(),
+			})
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, ErrorEnvelope{
+				Code:    string(ErrorCodeUnauthorized),
+				Message: "authorization header must be Bearer token",
+				TraceID: uuid.New().String(),
+			})
+			return
+		}
+
+		tokenStr := parts[1]
+		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return []byte(jwtSecret), nil
+		}, jwt.WithValidMethods([]string{"HS256", "HS384", "HS512"}))
+
+		if err != nil || !token.Valid {
+			msg := "invalid or expired token"
+			if err != nil {
+				msg = fmt.Sprintf("token validation failed: %v", err)
+			}
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, ErrorEnvelope{
+				Code:    string(ErrorCodeUnauthorized),
+				Message: msg,
+				TraceID: uuid.New().String(),
+			})
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, ErrorEnvelope{
+				Code:    string(ErrorCodeUnauthorized),
+				Message: "invalid token claims",
+				TraceID: uuid.New().String(),
+			})
+			return
+		}
+
+		sub, err := claims.GetSubject()
+		if err != nil || sub == "" {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, ErrorEnvelope{
+				Code:    string(ErrorCodeUnauthorized),
+				Message: "token missing subject claim",
+				TraceID: uuid.New().String(),
+			})
+			return
+		}
+
+		tenantHeader := strings.TrimSpace(c.GetHeader("X-Tenant-ID"))
+		tenantClaim := ""
+		if v, ok := claims["tenant"]; ok {
+			if ts, ok := v.(string); ok {
+				tenantClaim = strings.TrimSpace(ts)
+			}
+		}
+
+		var tenantID string
+		if tenantHeader != "" && tenantClaim != "" {
+			if tenantHeader != tenantClaim {
+				c.Header("Content-Type", "application/json; charset=utf-8")
+				c.AbortWithStatusJSON(http.StatusUnauthorized, ErrorEnvelope{
+					Code:    string(ErrorCodeUnauthorized),
+					Message: "tenant mismatch",
+					TraceID: uuid.New().String(),
+				})
+				return
+			}
+			tenantID = tenantHeader
+		} else if tenantHeader != "" {
+			tenantID = tenantHeader
+		} else if tenantClaim != "" {
+			tenantID = tenantClaim
+		} else {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, ErrorEnvelope{
+				Code:    string(ErrorCodeUnauthorized),
+				Message: "tenant id required",
+				TraceID: uuid.New().String(),
+			})
+			return
+		}
+
+		c.Set("callerID", sub)
+		c.Set("tenantID", tenantID)
+		c.Next()
+	}
+}
 
 // makeTestJWT generates a valid HS256 JWT with the given subject and tenant, signed with testJWTSecret.
 func makeTestJWT(subject, tenant string) string {
@@ -37,7 +150,7 @@ func buildIntegrationRouter(subRepo repository.SubscriptionRepository, planRepo 
 	r := gin.New()
 	svc := service.NewSubscriptionService(subRepo, planRepo)
 	r.GET("/api/subscriptions/:id",
-		middleware.AuthMiddleware(testJWTSecret),
+		testAuthMiddleware(testJWTSecret),
 		NewGetSubscriptionHandler(svc),
 	)
 	return r

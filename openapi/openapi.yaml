@@ -67,11 +67,47 @@ paths:
           description: Subscription identifier
       responses:
         "200":
-          description: Subscription
+          description: Subscription detail with embedded plan metadata and billing summary
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Subscription"
+                $ref: "#/components/schemas/ResponseEnvelope"
+        "400":
+          description: Bad request — malformed subscription ID or unsupported query parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized — missing or invalid authentication credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden — caller does not own the requested subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found — subscription ID does not exist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "410":
+          description: Gone — subscription has been soft-deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error — e.g. unparseable billing amount
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
 components:
   schemas:
     HealthResponse:
@@ -154,3 +190,100 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Subscription"
+    ResponseEnvelope:
+      type: object
+      additionalProperties: false
+      required: [api_version, data]
+      properties:
+        api_version:
+          type: string
+          example: "1"
+        data:
+          $ref: "#/components/schemas/SubscriptionDetail"
+        warnings:
+          type: array
+          items:
+            type: string
+          example: ["plan not found"]
+    SubscriptionDetail:
+      type: object
+      additionalProperties: false
+      required: [id, plan_id, customer, status, interval, billing_summary]
+      properties:
+        id:
+          type: string
+          example: sub_123
+        plan_id:
+          type: string
+          example: plan_basic
+        customer:
+          type: string
+          example: customer_123
+        status:
+          type: string
+          example: active
+        interval:
+          type: string
+          example: monthly
+        plan:
+          $ref: "#/components/schemas/PlanMetadata"
+        billing_summary:
+          $ref: "#/components/schemas/BillingSummary"
+    PlanMetadata:
+      type: object
+      additionalProperties: false
+      required: [plan_id, name, amount, currency, interval]
+      properties:
+        plan_id:
+          type: string
+          example: plan_basic
+        name:
+          type: string
+          example: Pro
+        amount:
+          type: string
+          example: "1999"
+        currency:
+          type: string
+          example: USD
+        interval:
+          type: string
+          example: monthly
+        description:
+          type: string
+          example: The professional tier
+    BillingSummary:
+      type: object
+      additionalProperties: false
+      required: [amount_cents, currency, next_billing_date]
+      properties:
+        amount_cents:
+          type: integer
+          format: int64
+          example: 1999
+        currency:
+          type: string
+          example: USD
+        next_billing_date:
+          type: string
+          nullable: true
+          example: "2024-03-01T00:00:00Z"
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, trace_id]
+      properties:
+        code:
+          type: string
+          example: NOT_FOUND
+        message:
+          type: string
+          example: The requested resource was not found
+        trace_id:
+          type: string
+          example: "abc-123"
+        details:
+          type: object
+          nullable: true
+          example:
+            field: id

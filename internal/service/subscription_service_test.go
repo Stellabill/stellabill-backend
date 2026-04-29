@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 )
@@ -225,5 +227,55 @@ func TestGetDetail_CrossTenantPrevention(t *testing.T) {
 	_, _, err := svc.GetDetail(context.Background(), "tenant-2", "cust-6", "sub-6")
 	if err != service.ErrNotFound {
 		t.Errorf("expected ErrNotFound for cross-tenant query, got %v", err)
+	}
+}
+
+// errRepo is a mock repository that returns a generic error.
+type errRepo struct{}
+
+func (e *errRepo) FindByID(_ context.Context, id string) (*repository.SubscriptionRow, error) {
+	return nil, assert.AnError
+}
+func (e *errRepo) FindByIDAndTenant(_ context.Context, id, tenantID string) (*repository.SubscriptionRow, error) {
+	return nil, assert.AnError
+}
+
+func TestGetDetail_SubRepoGenericError(t *testing.T) {
+	svc := service.NewSubscriptionService(&errRepo{}, repository.NewMockPlanRepo())
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-1", "sub-1")
+	if err == nil || err == service.ErrNotFound {
+		t.Errorf("expected generic error from subRepo, got %v", err)
+	}
+}
+
+// errPlanRepo is a mock plan repository that returns a generic error.
+type errPlanRepo struct{}
+
+func (e *errPlanRepo) FindByID(_ context.Context, id string) (*repository.PlanRow, error) {
+	return nil, assert.AnError
+}
+func (e *errPlanRepo) List(_ context.Context) ([]*repository.PlanRow, error) {
+	return nil, assert.AnError
+}
+
+func TestGetDetail_PlanRepoGenericError(t *testing.T) {
+	sub := &repository.SubscriptionRow{
+		ID:         "sub-7",
+		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
+		CustomerID: "cust-7",
+		Status:     "active",
+		Amount:     "1000",
+		Currency:   "USD",
+		Interval:   "month",
+		DeletedAt:  nil,
+	}
+	svc := service.NewSubscriptionService(
+		repository.NewMockSubscriptionRepo(sub),
+		&errPlanRepo{},
+	)
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-7", "sub-7")
+	if err == nil || err == service.ErrNotFound {
+		t.Errorf("expected generic error from planRepo, got %v", err)
 	}
 }

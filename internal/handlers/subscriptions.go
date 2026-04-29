@@ -45,33 +45,42 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 // subscription detail using the provided SubscriptionService.
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Minimal, safe handler that validates caller and path, then delegates to the service.
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RespondWithAuthError(c, "unauthorized")
+			return
+		}
+
+		tenantID, exists := c.Get("tenantID")
+		if !exists {
+			RespondWithAuthError(c, "tenant id required")
 			return
 		}
 
 		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			RespondWithValidationError(c, err.Error(), nil)
 			return
 		}
 
 		id, err := requestparams.NormalizePathID("id", c.Param("id"))
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			RespondWithValidationError(c, err.Error(), map[string]interface{}{"field": "id"})
 			return
 		}
 
-		// Delegate to service (note: real implementation may include ownership checks)
-		_, _, err = svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		detail, warnings, err := svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id)
 		if err != nil {
-			// Simplified error handling to keep compilation and behavior predictable during tests.
-			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+			status, code, message := MapServiceErrorToResponse(err)
+			RespondWithError(c, status, code, message)
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"id": id})
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.JSON(http.StatusOK, service.ResponseEnvelope{
+			APIVersion: "1",
+			Data:       detail,
+			Warnings:   warnings,
+		})
 	}
 }
 

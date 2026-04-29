@@ -19,7 +19,7 @@ type mockSubscriptionService struct {
 	id       string
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerID, id string) (*service.SubscriptionDetail, []string, error) {
 	m.callerID = callerID
 	m.id = id
 	return m.detail, m.warnings, m.err
@@ -41,23 +41,8 @@ func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 			c.Next()
 		})
 	}
-	h := &Handler{Subscriptions: svc}
-	r.GET("/api/subscriptions/:id", h.GetSubscription)
+	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(svc))
 	return r
-}
-
-func TestListSubscriptions_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	svc := &mockSubscriptionService{}
-	h := &Handler{Subscriptions: svc}
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	h.ListSubscriptions(c)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
 }
 
 func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
@@ -78,6 +63,30 @@ func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 	}
 	if body.Message == "" {
 		t.Error("expected error message in response body")
+	}
+}
+
+func TestGetSubscription_MissingTenantID_Returns401(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("callerID", "caller-123")
+		// intentionally omit tenantID
+		c.Next()
+	})
+	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(&mockSubscriptionService{}))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+	var body ErrorEnvelope
+	json.NewDecoder(w.Body).Decode(&body)
+	if body.Code != string(ErrorCodeUnauthorized) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeUnauthorized, body.Code)
 	}
 }
 

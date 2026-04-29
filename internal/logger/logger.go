@@ -12,7 +12,7 @@ var Log = logrus.New()
 func Init() {
 	Log.SetFormatter(&logrus.JSONFormatter{})
 	Log.SetOutput(os.Stdout)
-	Log.AddHook(otellogrus.NewHook())
+	Log.AddHook(otellogrus.NewHook("stellabill"))
 
 	level := os.Getenv("LOG_LEVEL")
 	switch level {

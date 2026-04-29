@@ -20,10 +20,17 @@ func setupRouter(permission Permission) *gin.Engine {
 }
 
 func TestRequirePermission_AdminAllowed(t *testing.T) {
-	r := setupRouter(PermManagePlans)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	r.GET("/test", func(c *gin.Context) {
+		c.Set(RoleContextKey, string(RoleAdmin))
+		c.Next()
+	}, RequirePermission(PermManagePlans), func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
 
 	req, _ := http.NewRequest("GET", "/test", nil)
-	req.Header.Set("X-Role", "admin")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -34,10 +41,17 @@ func TestRequirePermission_AdminAllowed(t *testing.T) {
 }
 
 func TestRequirePermission_UserDenied(t *testing.T) {
-	r := setupRouter(PermManagePlans)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	r.GET("/test", func(c *gin.Context) {
+		c.Set(RoleContextKey, string(RoleUser))
+		c.Next()
+	}, RequirePermission(PermManagePlans), func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
 
 	req, _ := http.NewRequest("GET", "/test", nil)
-	req.Header.Set("X-Role", "customer")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

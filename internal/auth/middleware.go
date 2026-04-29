@@ -12,6 +12,7 @@ import (
 const RoleContextKey = "role"
 const RolesContextKey = "roles"
 
+// ExtractRole returns the first available role from the request context
 func ExtractRole(c *gin.Context) Role {
 	roles := ExtractRoles(c)
 	if len(roles) == 0 {
@@ -20,16 +21,10 @@ func ExtractRole(c *gin.Context) Role {
 	return roles[0]
 }
 
+// ExtractRoles returns all roles found in the request context (set by JWT middleware)
 func ExtractRoles(c *gin.Context) []Role {
+	// Only get from context (set by hardened JWT middleware)
 	if roles := rolesFromContext(c); len(roles) > 0 {
-		return roles
-	}
-
-	if role := strings.TrimSpace(c.GetHeader("X-Role")); role != "" {
-		return []Role{Role(role)}
-	}
-
-	if roles := rolesFromJWT(c); len(roles) > 0 {
 		return roles
 	}
 
@@ -64,59 +59,6 @@ func rolesFromContext(c *gin.Context) []Role {
 	return nil
 }
 
-func rolesFromJWT(c *gin.Context) []Role {
-	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
-	if authHeader == "" {
-		return nil
-	}
-
-	parts := strings.SplitN(authHeader, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return nil
-	}
-
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		secret = "dev-secret"
-	}
-
-	claims := jwt.MapClaims{}
-	token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return []byte(secret), nil
-	}, jwt.WithValidMethods([]string{"HS256", "HS384", "HS512"}))
-	if err != nil || !token.Valid {
-		return nil
-	}
-
-	roles := make([]Role, 0, 2)
-	if roleValue, ok := claims["role"]; ok {
-		if role, ok := roleValue.(string); ok {
-			roles = append(roles, Role(strings.TrimSpace(role)))
-		}
-	}
-	if rolesValue, ok := claims["roles"]; ok {
-		switch typed := rolesValue.(type) {
-		case []interface{}:
-			for _, candidate := range typed {
-				if role, ok := candidate.(string); ok {
-					roles = append(roles, Role(strings.TrimSpace(role)))
-				}
-			}
-		case []string:
-			for _, role := range typed {
-				roles = append(roles, Role(strings.TrimSpace(role)))
-			}
-		case string:
-			roles = append(roles, Role(strings.TrimSpace(typed)))
-		}
-	}
-
-	return normalizeRoles(roles)
-}
-
 func normalizeRoles(roles []Role) []Role {
 	result := make([]Role, 0, len(roles))
 	seen := map[Role]struct{}{}
@@ -133,13 +75,16 @@ func normalizeRoles(roles []Role) []Role {
 	}
 	return result
 }
+}
 
+// RequirePermission middleware enforces role-based access control
+// Validates that the authenticated user has the required permission
 func RequirePermission(permission Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		roles := ExtractRoles(c)
 		if len(roles) == 0 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "missing role",
+				"error": "missing role - ensure JWT middleware is applied",
 			})
 			return
 		}
@@ -155,7 +100,7 @@ func RequirePermission(permission Permission) gin.HandlerFunc {
 
 		if len(roles) > 0 {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "forbidden",
+				"error": "insufficient permissions for this operation",
 			})
 			return
 		}

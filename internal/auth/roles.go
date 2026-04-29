@@ -36,13 +36,20 @@ var rolePermissions = map[Role][]Permission{
 	RoleMerchant: {
 		PermReadPlans,
 		PermReadSubscriptions,
+		PermManagePlans,
+		PermManageSubscriptions,
 		PermReadStatements,
 		PermManageStatements,
 		PermReadReconciliation,
 	},
 	RoleCustomer: {
 		PermReadPlans,
+		PermReadSubscriptions,
 		PermReadStatements,
+	},
+	RoleUser: {
+		PermReadPlans,
+		PermReadSubscriptions,
 	},
 }
 

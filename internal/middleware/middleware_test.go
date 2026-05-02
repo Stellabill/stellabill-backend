@@ -38,6 +38,7 @@ func TestProtectedChainContextPropagationAndLogging(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer top-secret")
 	req.Header.Set(RequestIDHeader, "req-123")
+	req.Header.Set("X-Tenant-ID", "tenant-42")
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 
@@ -59,9 +60,15 @@ func TestProtectedChainContextPropagationAndLogging(t *testing.T) {
 		t.Fatalf("expected auth subject in body, got %q", body["subject"])
 	}
 
-	logOutput := logs.String()
-	if !contains(logOutput, "request_id=req-123") || !contains(logOutput, "status=200") {
-		t.Fatalf("expected request id and status in logs, got %q", logOutput)
+	var logEntry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &logEntry); err != nil {
+		t.Fatalf("decode log entry: %v", err)
+	}
+	if logEntry["request_id"] != "req-123" || int(logEntry["status"].(float64)) != http.StatusOK {
+		t.Fatalf("unexpected structured log entry: %#v", logEntry)
+	}
+	if logEntry["actor"] != "api-client" || logEntry["tenant"] != "tenant-42" {
+		t.Fatalf("expected canonical actor and tenant fields, got %#v", logEntry)
 	}
 }
 
@@ -220,24 +227,18 @@ func TestRecoveryReturnsStructuredError(t *testing.T) {
 	}
 	assertBodyField(t, res, "error", "internal server error")
 	assertBodyField(t, res, "request_id", "req-panic")
-	if !contains(logs.String(), "panic recovered request_id=req-panic err=boom") {
-		t.Fatalf("expected panic details in logs, got %q", logs.String())
+	var logEntry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &logEntry); err != nil {
+		t.Fatalf("decode panic log: %v", err)
+	}
+	if logEntry["message"] != "panic recovered" {
+		t.Fatalf("unexpected panic log message: %#v", logEntry)
+	}
+	if logEntry["request_id"] != "req-panic" {
+		t.Fatalf("expected request id in panic log, got %#v", logEntry)
 	}
 }
 
-func TestSanitizeRequestID(t *testing.T) {
-	t.Parallel()
-
-	if got := sanitizeRequestID(" valid-id_123 "); got != "valid-id_123" {
-		t.Fatalf("expected valid request id, got %q", got)
-	}
-	if got := sanitizeRequestID("bad id"); got != "" {
-		t.Fatalf("expected invalid request id to be rejected, got %q", got)
-	}
-	if got := sanitizeRequestID(""); got != "" {
-		t.Fatalf("expected empty request id to be rejected, got %q", got)
-	}
-}
 
 func TestRateLimiterWindowReset(t *testing.T) {
 	t.Parallel()

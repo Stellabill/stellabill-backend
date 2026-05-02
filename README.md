@@ -16,6 +16,7 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 - [Database migrations](#database-migrations)
 - [Contributing (open source)](#contributing-open-source)
 - [Project layout](#project-layout)
+- [API Contract & OpenAPI](#api-contract--openapi)
 - [License](#license)
 
 ---
@@ -65,6 +66,8 @@ The backend includes a production-ready background worker system for automated b
 ### Quick Example
 
 ```go
+import "stellarbill-backend/internal/timeutil"
+
 store := worker.NewMemoryStore()
 executor := worker.NewBillingExecutor()
 config := worker.DefaultConfig()
@@ -74,7 +77,7 @@ w.Start()
 defer w.Stop()
 
 scheduler := worker.NewScheduler(store)
-job, _ := scheduler.ScheduleCharge("sub-123", time.Now(), 3)
+job, _ := scheduler.ScheduleCharge("sub-123", timeutil.NowUTC(), 3)
 ```
 
 ---
@@ -102,22 +105,36 @@ cd stellabill-backend
 go mod download
 ```
 
-### 3. (Optional) Environment variables
+### 3. Environment variables (required for secure startup)
 
 Create a `.env` file in the project root (do not commit it; it is in `.gitignore`):
 
 ```bash
-# Optional - defaults shown
+# Required for startup
 ENV=development
 PORT=8080
 DATABASE_URL=postgres://localhost/stellarbill?sslmode=disable
-JWT_SECRET=change-me-in-production
-ADMIN_TOKEN=change-me-admin-token
+JWT_SECRET=ChangeMeNow123!Secure
+ADMIN_TOKEN=AnotherStrongToken123!
+
+# Required in production/staging (comma-separated https origins)
+ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+
+# Optional with validation
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_MODE=ip
+RATE_LIMIT_RPS=10
+RATE_LIMIT_BURST=20
+RATE_LIMIT_WHITELIST=/api/health
+READ_TIMEOUT=30
+WRITE_TIMEOUT=30
+IDLE_TIMEOUT=120
+MAX_HEADER_BYTES=1048576
 AUDIT_HMAC_SECRET=stellarbill-dev-audit
 AUDIT_LOG_PATH=audit.log
 ```
 
-Or export them in your shell. The app will run with the defaults if you do not set anything.
+Or export them in your shell. The app now fails fast when required values are missing or insecure.
 
 ### 4. Run the server
 
@@ -148,8 +165,17 @@ curl -X POST http://localhost:8080/api/outbox/test
 |----------------|----------------------------------------------|--------------------------------|
 | `ENV`          | `development`                                | Environment (e.g. production)  |
 | `PORT`         | `8080`                                       | HTTP server port               |
-| `DATABASE_URL` | `postgres://localhost/stellarbill?sslmode=disable` | PostgreSQL connection string   |
-| `JWT_SECRET`   | `change-me-in-production`                     | Secret for JWT (change in prod)|
+| `DATABASE_URL` | None (required) | PostgreSQL connection string (must be valid URL) |
+| `JWT_SECRET`   | None (required) | Secret for JWT (minimum 12 chars with upper/lower/digit/special) |
+| `ADMIN_TOKEN`  | None (required) | Admin endpoint token (minimum 12 chars with upper/lower/digit/special) |
+| `ALLOWED_ORIGINS` | Required in `production`/`staging` | Comma-separated `https://` origins for CORS |
+| `RATE_LIMIT_MODE` | `ip` | One of: `ip`, `user`, `hybrid` |
+| `RATE_LIMIT_RPS` | `10` | Integer between `1` and `1000` |
+| `RATE_LIMIT_BURST` | `20` | Integer between `1` and `5000`, must be `>= RATE_LIMIT_RPS` |
+| `READ_TIMEOUT` | `30` | Timeout in seconds, range `1` to `3600` |
+| `WRITE_TIMEOUT` | `30` | Timeout in seconds, range `1` to `3600` |
+| `IDLE_TIMEOUT` | `120` | Timeout in seconds, range `1` to `3600` |
+| `MAX_HEADER_BYTES` | `1048576` | Header size in bytes, range `1024` to `16777216` |
 | `FF_DEFAULT_ENABLED` | `false`                                | Default state for unknown flags |
 | `FF_LOG_DISABLED` | `true`                                  | Log when flags block requests  |
 | `FF_CONFIG_FILE` | `""`                                    | Path to feature flags config file |
@@ -219,6 +245,10 @@ router.GET("/feature", middleware.RequireAnyFeatureFlags("flag1", "flag2"), hand
 
 ## Testing
 
+> See **[docs/dev-test-guide.md](docs/dev-test-guide.md)** for the full local
+> development and test execution guide, including common failure
+> troubleshooting.
+
 ### Unit tests
 
 Unit tests cover config validation, service logic, HTTP handler behaviour,
@@ -226,7 +256,7 @@ circuit breaker, and the background worker. They use in-memory mocks and
 require **no external services**.
 
 ```bash
-go test ./...
+go test ./internal/... -count=1 -timeout 60s
 ```
 
 ### Integration tests
@@ -239,8 +269,7 @@ repository to the database — then tear the container down automatically.
 access). No manual database setup is required.
 
 ```bash
-# Run integration tests
-go test -tags integration -v -race -count=1 ./integration/...
+go test -tags integration -v -race -count=1 -timeout 120s ./integration/...
 ```
 
 The test suite in `integration/` covers:
@@ -422,13 +451,68 @@ Security notes:
 
 ---
 
+## Structured logging
+
+Application logs now use newline-delimited JSON with a consistent schema for both HTTP middleware and outbox/retry paths.
+
+- **Canonical fields:** `request_id`, `actor`, `tenant`, `route`, `status`, `duration_ms`
+- **Standard envelope:** every entry also includes `ts`, `level`, and `message`
+- **Redaction rules:** bearer/basic credentials, JWTs, emails, and fields such as `authorization`, `password`, `secret`, `token`, `cookie`, `payload`, `body`, and `event_data` are redacted before write
+- **Retry throttling:** repeated outbox failures are emitted once per throttle window, with `suppressed_count` on the next summary log so partial outages do not spam logs or inflate ingest costs
+- **Safe payload handling:** publishers log metadata like `payload_bytes`, `event_id`, and `event_type` instead of raw request/event bodies
+
+Example request log:
+
+```json
+{
+  "ts": "2026-04-24T12:00:00Z",
+  "level": "info",
+  "message": "request completed",
+  "request_id": "req-123",
+  "actor": "api-client",
+  "tenant": "tenant-42",
+  "route": "/protected",
+  "status": 200,
+  "duration_ms": 14,
+  "method": "GET"
+}
+```
+
+Example throttled retry log:
+
+```json
+{
+  "ts": "2026-04-24T12:00:30Z",
+  "level": "warn",
+  "message": "outbox event scheduled for retry",
+  "request_id": "",
+  "actor": "system",
+  "tenant": "system",
+  "route": "outbox.dispatcher.retry",
+  "status": "retry_scheduled",
+  "duration_ms": 0,
+  "event_type": "subscription.created",
+  "retry_count": 2,
+  "suppressed_count": 17,
+  "error": "db down"
+}
+```
+
+Security assumptions:
+
+- Request logs never include Authorization headers, cookies, request bodies, raw event payloads, or client IPs.
+- If actor-like values contain emails or bearer-style tokens, the logger redacts them before serialization.
+- Retry-loop logs are bounded by time window, which reduces noisy duplicate writes during downstream outages.
+
+---
+
 ## Testing
 
 ```
 go test ./... -cover
 ```
 
-Tests include redaction coverage, hash chaining, admin action logging, and middleware auth-failure logging. Coverage currently exceeds 95%.
+Tests include redaction coverage, hash chaining, admin action logging, middleware logging, and outbox log throttling behaviour. Coverage currently exceeds 95% in CI for `./internal/...`.
 
 ---
 
@@ -569,6 +653,31 @@ Run tests with: `go test ./...`
 
 ---
 
+## API Contract & OpenAPI
+
+This project follows a **spec-first** approach using OpenAPI 3.0.3. The specification is maintained in `openapi/openapi.yaml` and serves as the source of truth for all `/api/*` routes.
+
+### Key Points
+- **Contract Tests**: Automatically validate that implementation matches the spec (`go test ./internal/contract/...`).
+- **CI Enforcement**: Pull requests are checked for undocumented endpoints via `go run ./cmd/openapi-validate`.
+- **Versioning**: Versioned endpoints use `/api/v1/` prefix; unversioned public endpoints (like health) stay at `/api/`.
+- **Contributor Checklist**: See `docs/OPENAPI_GUIDE.md` for the full checklist when modifying API endpoints.
+
+### Useful Commands
+```bash
+# Validate OpenAPI spec and check for undocumented routes
+go run ./cmd/openapi-validate
+
+# Run contract tests
+go test ./internal/contract/... -v
+
+# Run all tests with coverage
+go test ./... -cover
+```
+
+---
+
 ## License
 
 See the LICENSE file in the repository (if present). If none, assume proprietary until stated otherwise.
+"# Test" 

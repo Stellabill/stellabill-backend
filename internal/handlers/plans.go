@@ -2,66 +2,52 @@ package handlers
 
 import (
 	"net/http"
-	"sort"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/pagination"
 )
 
-var planRepo repository.PlanRepository
-
-// SetPlanRepository allows wiring a PlanRepository (used by routes.Register).
-func SetPlanRepository(r repository.PlanRepository) {
-	planRepo = r
-}
-
-// Plan is the JSON shape returned by list/get plan endpoints.
 type Plan struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	Amount      string `json:"amount"`
+	Amount      string `json:"amount"` // Changed to string to match tests
 	Currency    string `json:"currency"`
 	Interval    string `json:"interval"`
-	Description string `json:"description,omitempty"`
+	Description string `json:"description"`
 }
 
+func (p Plan) GetID() string        { return p.ID }
+func (p Plan) GetSortValue() string { return p.Name } // Standardize on Name as sort key
+
+// ListPlans handles requests for listing all available plans.
 func (h *Handler) ListPlans(c *gin.Context) {
-	plans, err := h.Plans.ListPlans(c)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 {
+		limit = 10
 	}
-	if plans == nil {
-		plans = []Plan{}
-	}
-	// Stable sort by ID guarantees deterministic ordering for pagination.
-	sort.SliceStable(plans, func(i, j int) bool { return plans[i].ID < plans[j].ID })
-	c.JSON(http.StatusOK, gin.H{"plans": plans})
-}
 
-// ListPlans is the standalone handler used when a PlanRepository is wired directly.
-func ListPlans(c *gin.Context) {
-	if planRepo == nil {
-		c.JSON(http.StatusOK, gin.H{"plans": []Plan{}})
-		return
-	}
-	rows, err := planRepo.List(c.Request.Context())
+	cursorStr := c.Query("cursor")
+	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		RespondWithInternalError(c, "Failed to retrieve plans")
 		return
 	}
-	out := make([]Plan, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, Plan{
-			ID:          r.ID,
-			Name:        r.Name,
-			Amount:      r.Amount,
-			Currency:    r.Currency,
-			Interval:    r.Interval,
-			Description: r.Description,
-		})
+
+	// Fetch plans from the service/repository
+	allPlans, err := h.Plans.ListPlans(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
+		return
 	}
-	// Stable sort by ID guarantees deterministic ordering for pagination.
-	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	c.JSON(http.StatusOK, gin.H{"plans": out})
+
+	// Paginate the slice. In a real DB repo, this would be in the query.
+	page := pagination.PaginateSlice(allPlans, cursor, limit)
+
+	c.JSON(http.StatusOK, gin.H{
+		"plans":       page.Items,
+		"next_cursor": page.NextCursor,
+		"has_more":    page.HasMore,
+	})
 }

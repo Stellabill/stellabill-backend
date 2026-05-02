@@ -20,10 +20,17 @@ func setupRouter(permission Permission) *gin.Engine {
 }
 
 func TestRequirePermission_AdminAllowed(t *testing.T) {
-	r := setupRouter(PermManagePlans)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	r.GET("/test", func(c *gin.Context) {
+		c.Set(RoleContextKey, string(RoleAdmin))
+		c.Next()
+	}, RequirePermission(PermManagePlans), func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
 
 	req, _ := http.NewRequest("GET", "/test", nil)
-	req.Header.Set("X-Role", "admin")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -34,10 +41,17 @@ func TestRequirePermission_AdminAllowed(t *testing.T) {
 }
 
 func TestRequirePermission_UserDenied(t *testing.T) {
-	r := setupRouter(PermManagePlans)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	r.GET("/test", func(c *gin.Context) {
+		c.Set(RoleContextKey, string(RoleUser))
+		c.Next()
+	}, RequirePermission(PermManagePlans), func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
 
 	req, _ := http.NewRequest("GET", "/test", nil)
-	req.Header.Set("X-Role", "user")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -63,5 +77,24 @@ func TestRequirePermission_MissingRole(t *testing.T) {
 func TestHasPermission_DefaultDeny(t *testing.T) {
 	if HasPermission(Role("unknown"), PermReadPlans) {
 		t.Fatal("expected false for unknown role")
+	}
+}
+
+func TestRequirePermission_MultipleRolesAllowed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/test", func(c *gin.Context) {
+		c.Set(RolesContextKey, []string{"customer", "merchant"})
+		c.Next()
+	}, RequirePermission(PermReadSubscriptions), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	req, _ := http.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }

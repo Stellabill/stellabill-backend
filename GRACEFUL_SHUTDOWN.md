@@ -219,6 +219,27 @@ gs.Wait()
 - [ ] Health check during shutdown
 - [ ] Graceful degradation modes
 
+## Security notes
+
+- System handles shutdown safely
+- No data loss during interruption
+- Uses atomic operations / locks
+- Prevents partial writes
+
+## Runbook Docs
+
+## Reconciliation Service Runbook
+
+## Recommended Settings
+**Batch size**: 100
+**Timeout**: 30s
+**Retry attempts**: 3
+
+## Shutdown Behavior
+- Graceful shutdown supported
+- In-progress batch is stopped safely
+- Restart resumes from last checkpoint
+
 ## References
 
 - [Go http.Server graceful shutdown](https://golang.org/pkg/net/http/#Server.Shutdown)

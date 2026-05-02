@@ -2,9 +2,10 @@ package handlers
 
 import (
 	"net/http"
-	"sort"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/subscriptions"
@@ -20,22 +21,56 @@ type Subscription struct {
 	NextBilling string `json:"next_billing,omitempty"`
 }
 
+func (s Subscription) GetID() string        { return s.ID }
+func (s Subscription) GetSortValue() string { return s.Customer } // Sort by customer for now
+
 func (h *Handler) ListSubscriptions(c *gin.Context) {
-	// Delegate to the injected service/repo. Keep behavior minimal and compatible with tests.
-	subs, err := h.Subscriptions.ListSubscriptions(c)
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 {
+		limit = 10
+	}
+
+	cursorStr := c.Query("cursor")
+	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor format"})
 		return
 	}
-	if subs == nil {
-		subs = []Subscription{}
+
+	allSubs, err := h.Subscriptions.ListSubscriptions(c)
+	if err != nil {
+		RespondWithInternalError(c, "Failed to retrieve subscriptions")
+		return
 	}
-	// Stable sort by ID guarantees deterministic ordering for pagination.
-	sort.SliceStable(subs, func(i, j int) bool { return subs[i].ID < subs[j].ID })
-	c.JSON(http.StatusOK, gin.H{"subscriptions": subs})
+
+	page := pagination.PaginateSlice(allSubs, cursor, limit)
+
+	c.JSON(http.StatusOK, gin.H{
+		"subscriptions": page.Items,
+		"next_cursor":   page.NextCursor,
+		"has_more":      page.HasMore,
+	})
 }
 
+
 func (h *Handler) GetSubscription(c *gin.Context) {
+	id := c.Param("id")
+	sub, err := h.Subscriptions.GetSubscription(c, id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	c.JSON(http.StatusOK, sub)
+}
+
+// ListSubscriptions handles global route registration.
+func ListSubscriptions(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"subscriptions": []Subscription{}})
+}
+
+// GetSubscription handles global route registration.
+func GetSubscription(c *gin.Context) {
 	id := c.Param("id")
 	c.JSON(http.StatusOK, Subscription{
 		ID:       id,
@@ -54,25 +89,40 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		// Minimal, safe handler that validates caller and path, then delegates to the service.
 		callerID, exists := c.Get("callerID")
 		if !exists {
+			RespondWithAuthError(c, "Missing authentication credentials")
+			return
+		}
+
+		tenantID, exists := c.Get("tenantID")
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tenant id required"})
+			return
+		}
+		tenantID, tenantExists := c.Get("tenantID")
+		if !tenantExists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
 
 		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			RespondWithValidationError(c, "Invalid query parameters", map[string]interface{}{
+				"reason": err.Error(),
+			})
 			return
 		}
 
 		id, err := requestparams.NormalizePathID("id", c.Param("id"))
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			RespondWithValidationError(c, "Invalid subscription id", map[string]interface{}{
+				"field":  "id",
+				"reason": err.Error(),
+			})
 			return
 		}
 
-		// Delegate to service (note: real implementation may include ownership checks)
-		_, _, err = svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		// Delegate to service
+		_, _, err = svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id)
 		if err != nil {
-			// Simplified error handling to keep compilation and behavior predictable during tests.
 			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
 			return
 		}
@@ -85,7 +135,10 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 func UpdateSubscriptionStatus(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
+		RespondWithValidationError(c, "subscription id is required", map[string]interface{}{
+			"field":  "id",
+			"reason": "cannot be empty",
+		})
 		return
 	}
 
@@ -94,7 +147,10 @@ func UpdateSubscriptionStatus(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		RespondWithValidationError(c, "Invalid request body", map[string]interface{}{
+			"field":  "status",
+			"reason": err.Error(),
+		})
 		return
 	}
 
@@ -102,8 +158,10 @@ func UpdateSubscriptionStatus(c *gin.Context) {
 	currentStatus := "active" // placeholder
 
 	if err := subscriptions.CanTransition(currentStatus, payload.Status); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"error": err.Error(),
+		RespondWithErrorDetails(c, http.StatusConflict, ErrorCodeConflict, "Invalid status transition", map[string]interface{}{
+			"current_status": currentStatus,
+			"requested_status": payload.Status,
+			"reason": err.Error(),
 		})
 		return
 	}

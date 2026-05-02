@@ -60,6 +60,27 @@ func TestIngestHandler_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestIngestHandler_UnknownFieldRejected(t *testing.T) {
+	r, _, _ := setupRouter()
+	raw := validRawEvent()
+	// Encode manually so we can inject an extra field.
+	b, _ := json.Marshal(raw)
+	var m map[string]interface{}
+	_ = json.Unmarshal(b, &m)
+	m["unexpected_field"] = "should be rejected"
+	body, _ := json.Marshal(m)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/contract-events", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "UNKNOWN_FIELD", resp["code"])
+}
+
 func TestIngestHandler_MissingField(t *testing.T) {
 	r, _, _ := setupRouter()
 	raw := validRawEvent()

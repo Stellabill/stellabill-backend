@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"stellarbill-backend/internal/auth"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/repository"
@@ -14,40 +15,33 @@ import (
 // statement detail using the provided StatementService.
 func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Read callerID from context (set by AuthMiddleware).
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RespondWithAuthError(c, "Missing authentication credentials")
 			return
 		}
 
-		// 2. Validate :id path param.
+		roles := auth.ExtractRoles(c)
+
+		// Validate :id path param.
 		id := c.Param("id")
 		if strings.TrimSpace(id) == "" {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "statement id required"})
+			RespondWithValidationError(c, "statement id is required", map[string]interface{}{
+				"field":  "id",
+				"reason": "cannot be empty",
+			})
 			return
 		}
 
-		// 3. Call service.
-		detail, warnings, err := svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		// Call service.
+		detail, warnings, err := svc.GetDetail(c.Request.Context(), callerID.(string), rolesToStrings(roles), id)
 		if err != nil {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			switch err {
-			case service.ErrNotFound:
-				c.JSON(http.StatusNotFound, gin.H{"error": "statement not found"})
-			case service.ErrDeleted:
-				c.JSON(http.StatusGone, gin.H{"error": "statement has been deleted"})
-			case service.ErrForbidden:
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			}
+			statusCode, code, message := MapServiceErrorToResponse(err)
+			RespondWithError(c, statusCode, code, message)
 			return
 		}
 
-		// 4. Build response envelope.
+		// Build response envelope.
 		resp := service.ResponseEnvelope{
 			APIVersion: "2025-01-01",
 			Data:       detail,
@@ -63,58 +57,57 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 // statements for a customer using the provided StatementService.
 func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Read callerID from context (set by AuthMiddleware).
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RespondWithAuthError(c, "Missing authentication credentials")
 			return
 		}
 
-		// 2. Build query from optional filters.
+		roles := auth.ExtractRoles(c)
+
+		// Build query from optional filters.
 		q := repository.StatementQuery{
 			SubscriptionID: c.Query("subscription_id"),
 			Kind:           c.Query("kind"),
 			Status:         c.Query("status"),
-			StartAfter:     c.Query("start_after"),
-			EndBefore:      c.Query("end_before"),
+			Order:          c.Query("order"),
 		}
 
-		if ps := c.Query("page_size"); ps != "" {
-			if v, err := strconv.Atoi(ps); err == nil {
-				q.PageSize = v
-			}
+		limitStr := c.DefaultQuery("limit", "10")
+		limit, _ := strconv.Atoi(limitStr)
+		if limit <= 0 || limit > 100 {
+			limit = 10
 		}
-		if p := c.Query("page"); p != "" {
-			if v, err := strconv.Atoi(p); err == nil {
-				q.Page = v
-			}
+		q.Limit = limit
+
+		// Cursor pagination parameters
+		q.StartingAfter = c.Query("starting_after")
+		q.EndingBefore = c.Query("ending_before")
+
+		// Call service.
+		customerID := c.Query("customer_id")
+		if customerID == "" {
+			customerID = callerID.(string)
 		}
 
-		// 3. Call service.
-		detail, count, warnings, err := svc.ListByCustomer(c.Request.Context(), callerID.(string), callerID.(string), q)
+		detail, count, warnings, err := svc.ListByCustomer(c.Request.Context(), callerID.(string), rolesToStrings(roles), customerID, q)
 		if err != nil {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			switch err {
-			case service.ErrForbidden:
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			}
+			statusCode, code, message := MapServiceErrorToResponse(err)
+			RespondWithError(c, statusCode, code, message)
 			return
 		}
 
-		// 4. Normalise pagination values for response.
-		page := q.Page
-		if page <= 0 {
-			page = 1
-		}
-		pageSize := q.PageSize
-		if pageSize <= 0 {
-			pageSize = 10
+		// Build response envelope with cursor pagination.
+		// Deterministic next/prev cursors based on the returned slice.
+		hasMore := len(detail.Statements) >= limit
+		nextCursor := ""
+		prevCursor := ""
+		
+		if len(detail.Statements) > 0 {
+			nextCursor = detail.Statements[len(detail.Statements)-1].ID
+			prevCursor = detail.Statements[0].ID
 		}
 
-		// 5. Build response envelope with pagination.
 		resp := service.ResponseEnvelopeWithPagination{
 			ResponseEnvelope: service.ResponseEnvelope{
 				APIVersion: "2025-01-01",
@@ -122,13 +115,27 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 				Warnings:   warnings,
 			},
 			Pagination: service.PaginationMetadata{
-				Page:     page,
-				PageSize: pageSize,
-				Count:    count,
+				TotalCount: count,
+				HasMore:    hasMore,
+				NextCursor: nextCursor,
+				Limit:      limit,
 			},
+		}
+
+		// Custom header for backward pagination if needed
+		if prevCursor != "" {
+			c.Header("X-Prev-Cursor", prevCursor)
 		}
 
 		c.Header("Content-Type", "application/json; charset=utf-8")
 		c.JSON(http.StatusOK, resp)
 	}
+}
+
+func rolesToStrings(roles []auth.Role) []string {
+	strs := make([]string, len(roles))
+	for i, r := range roles {
+		strs[i] = string(r)
+	}
+	return strs
 }

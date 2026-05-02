@@ -36,7 +36,7 @@ func NewFileSink(path string) *FileSink {
 	return &FileSink{path: path}
 }
 
-func (s *FileSink) WriteEntry(e Entry) error {
+func (s *FileSink) WriteEvent(e AuditEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -112,14 +112,11 @@ func (s *RetryingSink) Metrics() (writes, failures, retries int64) {
 // MemorySink keeps audit entries in-memory, intended for tests.
 type MemorySink struct {
 	mu      sync.Mutex
-	entries []Entry
-	// FailAfter, if > 0, causes WriteEntry to return an error after this many successful writes.
-	FailAfter int
-	writes    int
+	entries []AuditEvent
 }
 
-// WriteEntry satisfies the Sink interface.
-func (s *MemorySink) WriteEntry(e Entry) error {
+// WriteEvent satisfies the Sink interface.
+func (s *MemorySink) WriteEvent(e AuditEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.FailAfter > 0 && s.writes >= s.FailAfter {
@@ -131,10 +128,10 @@ func (s *MemorySink) WriteEntry(e Entry) error {
 }
 
 // Entries returns a copy of stored entries.
-func (s *MemorySink) Entries() []Entry {
+func (s *MemorySink) Entries() []AuditEvent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]Entry, len(s.entries))
+	out := make([]AuditEvent, len(s.entries))
 	copy(out, s.entries)
 	return out
 }

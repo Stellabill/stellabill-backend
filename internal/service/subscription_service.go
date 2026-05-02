@@ -5,11 +5,14 @@ import (
 	"strconv"
 	"strings"
 
-	"go.uber.org/zap"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/timeutil"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 var tracer = otel.Tracer("service/subscriptions")
@@ -32,12 +35,12 @@ func NewSubscriptionService(subRepo repository.SubscriptionRepository, planRepo 
 
 // GetDetail retrieves a full SubscriptionDetail for the given subscriptionID.
 // It enforces ownership (callerID must match the subscription's CustomerID),
-//
- // handles soft-deletes, joins plan metadata, and normalizes billing fields.
-func (s *subscriptionService) GetDetail(ctx context.Context, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
+// handles soft-deletes, joins plan metadata, and normalizes billing fields.
+func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
 	ctx, span := tracer.Start(ctx, "SubscriptionService.GetDetail",
-		otel.WithAttributes(
+		trace.WithAttributes(
 			attribute.String("subscription.id", subscriptionID),
+			attribute.String("tenant.id", tenantID),
 			attribute.String("caller.id", callerID),
 		))
 	defer span.End()
@@ -96,7 +99,10 @@ func (s *subscriptionService) GetDetail(ctx context.Context, callerID string, su
 	// 6. Build BillingSummary.
 	var nextBillingDate *string
 	if row.NextBilling != "" {
-		nb := row.NextBilling
+		nb, err := timeutil.NormalizeRFC3339StringToUTC(row.NextBilling)
+		if err != nil {
+			nb = row.NextBilling
+		}
 		nextBillingDate = &nb
 	}
 
@@ -120,4 +126,3 @@ func (s *subscriptionService) GetDetail(ctx context.Context, callerID string, su
 	// 8. Return detail and warnings.
 	return detail, warnings, nil
 }
-

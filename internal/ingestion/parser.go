@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"stellarbill-backend/internal/timeutil"
 )
 
 // Parser errors.
@@ -60,11 +62,11 @@ func Parse(raw RawEvent) (*ParseResult, error) {
 	if strings.TrimSpace(raw.OccurredAt) == "" {
 		return nil, ErrMissingOccurredAt
 	}
-	occurredAt, err := time.Parse(time.RFC3339, raw.OccurredAt)
+	occurredAt, err := timeutil.ParseRFC3339ToUTC(raw.OccurredAt)
 	if err != nil {
 		return nil, ErrInvalidOccurredAt
 	}
-	if occurredAt.After(time.Now().Add(5 * time.Minute)) {
+	if occurredAt.After(timeutil.NowUTC().Add(5 * time.Minute)) {
 		return nil, ErrFutureOccurredAt
 	}
 

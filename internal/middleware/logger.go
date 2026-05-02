@@ -3,10 +3,13 @@ package middleware
 import (
 	"time"
 
+	"stellarbill-backend/internal/correlation"
 	"stellarbill-backend/internal/logger"
+	"stellarbill-backend/internal/security"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 func RequestLogger() gin.HandlerFunc {
@@ -14,8 +17,17 @@ func RequestLogger() gin.HandlerFunc {
 
 		start := time.Now()
 
-		requestID := uuid.New().String()
+		requestID := correlation.NewID()
 		c.Set("request_id", requestID)
+
+		ctx := correlation.WithRequestID(c.Request.Context(), requestID)
+		c.Request = c.Request.WithContext(ctx)
+
+		ctx, span := otel.Tracer("middleware").Start(ctx, "RequestLogger")
+		if span != nil {
+			span.SetAttributes(attribute.String("request_id", requestID))
+			defer span.End()
+		}
 
 		c.Writer.Header().Set("X-Request-ID", requestID)
 
@@ -23,14 +35,17 @@ func RequestLogger() gin.HandlerFunc {
 
 		latency := time.Since(start)
 
-		logger.Log.WithFields(map[string]interface{}{
+		// Build fields with redaction applied
+		fields := map[string]interface{}{
 			"level":      "info",
 			"request_id": requestID,
 			"method":     c.Request.Method,
-			"path":       c.Request.URL.Path,
+			"path":       security.MaskPII(c.FullPath()),
 			"status":     c.Writer.Status(),
 			"latency_ms": latency.Milliseconds(),
 			"client_ip":  c.ClientIP(),
-		}).Info("request completed")
+		}
+		// Use the logger with structured fields (the Logrus hook will redact)
+		logger.Log.WithFields(fields).Info("request completed")
 	}
 }

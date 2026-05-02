@@ -44,7 +44,9 @@ func buildRouter(pool *pgxpool.Pool) *gin.Engine {
 
 	subRepo := repopostgres.NewSubscriptionRepo(pool)
 	planRepo := repopostgres.NewPlanRepo(pool)
+	stmtRepo := repopostgres.NewStatementRepo(pool)
 	svc := service.NewSubscriptionService(subRepo, planRepo)
+	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
 
 	api := r.Group("/api")
 	api.GET("/health", handlers.Health)
@@ -54,6 +56,14 @@ func buildRouter(pool *pgxpool.Pool) *gin.Engine {
 		handlers.NewGetSubscriptionHandler(svc),
 	)
 	api.GET("/plans", handlers.ListPlans)
+	api.GET("/statements/:id",
+		middleware.AuthMiddleware(testJWTSecret),
+		handlers.NewGetStatementHandler(stmtSvc),
+	)
+	api.GET("/statements",
+		middleware.AuthMiddleware(testJWTSecret),
+		handlers.NewListStatementsHandler(stmtSvc),
+	)
 
 	return r
 }
@@ -108,6 +118,28 @@ func seedSubscription(t *testing.T, pool *pgxpool.Pool, s *repository.Subscripti
 	t.Cleanup(func() {
 		if _, err := pool.Exec(context.Background(), `DELETE FROM subscriptions WHERE id = $1`, s.ID); err != nil {
 			t.Logf("cleanup: delete subscription %q: %v", s.ID, err)
+		}
+	})
+}
+
+// seedStatement inserts a StatementRow into the database and registers a
+// t.Cleanup function that deletes it afterwards (best-effort).
+func seedStatement(t *testing.T, pool *pgxpool.Pool, s *repository.StatementRow) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := pool.Exec(ctx,
+		`INSERT INTO statements
+		   (id, subscription_id, customer_id, period_start, period_end, issued_at, total_amount, currency, kind, status, deleted_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		s.ID, s.SubscriptionID, s.CustomerID, s.PeriodStart, s.PeriodEnd,
+		s.IssuedAt, s.TotalAmount, s.Currency, s.Kind, s.Status, s.DeletedAt,
+	)
+	if err != nil {
+		t.Fatalf("seedStatement %q: %v", s.ID, err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM statements WHERE id = $1`, s.ID); err != nil {
+			t.Logf("cleanup: delete statement %q: %v", s.ID, err)
 		}
 	})
 }

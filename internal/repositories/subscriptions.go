@@ -5,29 +5,31 @@ import (
 	"fmt"
 	"time"
 
+	"stellarbill-backend/internal/timeutil"
+
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
 
 // Subscription represents a customer subscription
 type Subscription struct {
-	ID           string     `json:"id" db:"id"`
-	PlanID       string     `json:"plan_id" db:"plan_id"`
-	CustomerID   string     `json:"customer_id" db:"customer_id"`
-	MerchantID   string     `json:"merchant_id" db:"merchant_id"`
-	Status       string     `json:"status" db:"status"`
-	Amount       string     `json:"amount" db:"amount"`
-	Currency     string     `json:"currency" db:"currency"`
-	Interval     string     `json:"interval" db:"interval"`
-	CurrentPeriodStart time.Time `json:"current_period_start" db:"current_period_start"`
-	CurrentPeriodEnd   time.Time `json:"current_period_end" db:"current_period_end"`
-	CancelAtPeriodEnd  bool      `json:"cancel_at_period_end" db:"cancel_at_period_end"`
+	ID                 string     `json:"id" db:"id"`
+	PlanID             string     `json:"plan_id" db:"plan_id"`
+	CustomerID         string     `json:"customer_id" db:"customer_id"`
+	MerchantID         string     `json:"merchant_id" db:"merchant_id"`
+	Status             string     `json:"status" db:"status"`
+	Amount             string     `json:"amount" db:"amount"`
+	Currency           string     `json:"currency" db:"currency"`
+	Interval           string     `json:"interval" db:"interval"`
+	CurrentPeriodStart time.Time  `json:"current_period_start" db:"current_period_start"`
+	CurrentPeriodEnd   time.Time  `json:"current_period_end" db:"current_period_end"`
+	CancelAtPeriodEnd  bool       `json:"cancel_at_period_end" db:"cancel_at_period_end"`
 	CanceledAt         *time.Time `json:"canceled_at,omitempty" db:"canceled_at"`
-	EndedAt           *time.Time `json:"ended_at,omitempty" db:"ended_at"`
-	TrialStart        *time.Time `json:"trial_start,omitempty" db:"trial_start"`
-	TrialEnd          *time.Time `json:"trial_end,omitempty" db:"trial_end"`
-	CreatedAt         time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at" db:"updated_at"`
+	EndedAt            *time.Time `json:"ended_at,omitempty" db:"ended_at"`
+	TrialStart         *time.Time `json:"trial_start,omitempty" db:"trial_start"`
+	TrialEnd           *time.Time `json:"trial_end,omitempty" db:"trial_end"`
+	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // SubscriptionRepository interface for subscription operations
@@ -59,7 +61,7 @@ func (r *postgresSubscriptionRepository) Create(subscription *Subscription) erro
 	if subscription.ID == "" {
 		subscription.ID = uuid.New().String()
 	}
-	
+
 	query := `
 		INSERT INTO subscriptions (
 			id, plan_id, customer_id, merchant_id, status, amount, currency, interval,
@@ -68,11 +70,18 @@ func (r *postgresSubscriptionRepository) Create(subscription *Subscription) erro
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id
 	`
-	
-	now := time.Now()
+
+	subscription.CurrentPeriodStart = timeutil.NormalizeUTC(subscription.CurrentPeriodStart)
+	subscription.CurrentPeriodEnd = timeutil.NormalizeUTC(subscription.CurrentPeriodEnd)
+	subscription.CanceledAt = timeutil.NormalizePtrUTC(subscription.CanceledAt)
+	subscription.EndedAt = timeutil.NormalizePtrUTC(subscription.EndedAt)
+	subscription.TrialStart = timeutil.NormalizePtrUTC(subscription.TrialStart)
+	subscription.TrialEnd = timeutil.NormalizePtrUTC(subscription.TrialEnd)
+
+	now := timeutil.NowUTC()
 	subscription.CreatedAt = now
 	subscription.UpdatedAt = now
-	
+
 	err := r.db.QueryRow(query,
 		subscription.ID,
 		subscription.PlanID,
@@ -92,11 +101,11 @@ func (r *postgresSubscriptionRepository) Create(subscription *Subscription) erro
 		subscription.CreatedAt,
 		subscription.UpdatedAt,
 	).Scan(&subscription.ID)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to create subscription: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -109,10 +118,10 @@ func (r *postgresSubscriptionRepository) GetByID(id string) (*Subscription, erro
 		FROM subscriptions
 		WHERE id = $1
 	`
-	
+
 	var subscription Subscription
 	var canceledAt, endedAt, trialStart, trialEnd sql.NullTime
-	
+
 	err := r.db.QueryRow(query, id).Scan(
 		&subscription.ID,
 		&subscription.PlanID,
@@ -132,30 +141,35 @@ func (r *postgresSubscriptionRepository) GetByID(id string) (*Subscription, erro
 		&subscription.CreatedAt,
 		&subscription.UpdatedAt,
 	)
-	
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("subscription not found")
 		}
 		return nil, fmt.Errorf("failed to get subscription: %w", err)
 	}
-	
+
 	if canceledAt.Valid {
-		subscription.CanceledAt = &canceledAt.Time
+		subscription.CanceledAt = timeutil.NormalizePtrUTC(&canceledAt.Time)
 	}
-	
+
 	if endedAt.Valid {
-		subscription.EndedAt = &endedAt.Time
+		subscription.EndedAt = timeutil.NormalizePtrUTC(&endedAt.Time)
 	}
-	
+
 	if trialStart.Valid {
-		subscription.TrialStart = &trialStart.Time
+		subscription.TrialStart = timeutil.NormalizePtrUTC(&trialStart.Time)
 	}
-	
+
 	if trialEnd.Valid {
-		subscription.TrialEnd = &trialEnd.Time
+		subscription.TrialEnd = timeutil.NormalizePtrUTC(&trialEnd.Time)
 	}
-	
+
+	subscription.CurrentPeriodStart = timeutil.NormalizeUTC(subscription.CurrentPeriodStart)
+	subscription.CurrentPeriodEnd = timeutil.NormalizeUTC(subscription.CurrentPeriodEnd)
+	subscription.CreatedAt = timeutil.NormalizeUTC(subscription.CreatedAt)
+	subscription.UpdatedAt = timeutil.NormalizeUTC(subscription.UpdatedAt)
+
 	return &subscription, nil
 }
 
@@ -170,13 +184,13 @@ func (r *postgresSubscriptionRepository) GetByCustomerID(customerID string, limi
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
-	
+
 	rows, err := r.db.Query(query, customerID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscriptions: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var subscriptions []*Subscription
 	for rows.Next() {
 		subscription, err := r.scanSubscription(rows)
@@ -185,11 +199,11 @@ func (r *postgresSubscriptionRepository) GetByCustomerID(customerID string, limi
 		}
 		subscriptions = append(subscriptions, subscription)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating subscriptions: %w", err)
 	}
-	
+
 	return subscriptions, nil
 }
 
@@ -204,13 +218,13 @@ func (r *postgresSubscriptionRepository) GetByMerchantID(merchantID string, limi
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
-	
+
 	rows, err := r.db.Query(query, merchantID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscriptions: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var subscriptions []*Subscription
 	for rows.Next() {
 		subscription, err := r.scanSubscription(rows)
@@ -219,11 +233,11 @@ func (r *postgresSubscriptionRepository) GetByMerchantID(merchantID string, limi
 		}
 		subscriptions = append(subscriptions, subscription)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating subscriptions: %w", err)
 	}
-	
+
 	return subscriptions, nil
 }
 
@@ -238,13 +252,13 @@ func (r *postgresSubscriptionRepository) GetByPlanID(planID string, limit, offse
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
-	
+
 	rows, err := r.db.Query(query, planID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscriptions: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var subscriptions []*Subscription
 	for rows.Next() {
 		subscription, err := r.scanSubscription(rows)
@@ -253,11 +267,11 @@ func (r *postgresSubscriptionRepository) GetByPlanID(planID string, limit, offse
 		}
 		subscriptions = append(subscriptions, subscription)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating subscriptions: %w", err)
 	}
-	
+
 	return subscriptions, nil
 }
 
@@ -270,9 +284,15 @@ func (r *postgresSubscriptionRepository) Update(subscription *Subscription) erro
 			trial_start = $7, trial_end = $8, updated_at = $9
 		WHERE id = $10
 	`
-	
-	subscription.UpdatedAt = time.Now()
-	
+
+	subscription.CurrentPeriodStart = timeutil.NormalizeUTC(subscription.CurrentPeriodStart)
+	subscription.CurrentPeriodEnd = timeutil.NormalizeUTC(subscription.CurrentPeriodEnd)
+	subscription.CanceledAt = timeutil.NormalizePtrUTC(subscription.CanceledAt)
+	subscription.EndedAt = timeutil.NormalizePtrUTC(subscription.EndedAt)
+	subscription.TrialStart = timeutil.NormalizePtrUTC(subscription.TrialStart)
+	subscription.TrialEnd = timeutil.NormalizePtrUTC(subscription.TrialEnd)
+	subscription.UpdatedAt = timeutil.NowUTC()
+
 	result, err := r.db.Exec(query,
 		subscription.Status,
 		subscription.CurrentPeriodStart,
@@ -285,20 +305,20 @@ func (r *postgresSubscriptionRepository) Update(subscription *Subscription) erro
 		subscription.UpdatedAt,
 		subscription.ID,
 	)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to update subscription: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return fmt.Errorf("subscription not found")
 	}
-	
+
 	return nil
 }
 
@@ -309,21 +329,21 @@ func (r *postgresSubscriptionRepository) UpdateStatus(id string, status string) 
 		SET status = $1, updated_at = $2
 		WHERE id = $3
 	`
-	
-	result, err := r.db.Exec(query, status, time.Now(), id)
+
+	result, err := r.db.Exec(query, status, timeutil.NowUTC(), id)
 	if err != nil {
 		return fmt.Errorf("failed to update subscription status: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return fmt.Errorf("subscription not found")
 	}
-	
+
 	return nil
 }
 
@@ -334,23 +354,23 @@ func (r *postgresSubscriptionRepository) Cancel(id string, cancelAtPeriodEnd boo
 		SET cancel_at_period_end = $1, canceled_at = $2, updated_at = $3
 		WHERE id = $4
 	`
-	
-	now := time.Now()
-	
-	result, err := r.db.Exec(query, cancelAtPeriodEnd, &now, time.Now(), id)
+
+	now := timeutil.NowUTC()
+
+	result, err := r.db.Exec(query, cancelAtPeriodEnd, &now, now, id)
 	if err != nil {
 		return fmt.Errorf("failed to cancel subscription: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return fmt.Errorf("subscription not found")
 	}
-	
+
 	return nil
 }
 
@@ -364,13 +384,13 @@ func (r *postgresSubscriptionRepository) GetActiveSubscriptionsByMerchantID(merc
 		WHERE merchant_id = $1 AND status IN ('active', 'trialing')
 		ORDER BY created_at DESC
 	`
-	
+
 	rows, err := r.db.Query(query, merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active subscriptions: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var subscriptions []*Subscription
 	for rows.Next() {
 		subscription, err := r.scanSubscription(rows)
@@ -379,11 +399,11 @@ func (r *postgresSubscriptionRepository) GetActiveSubscriptionsByMerchantID(merc
 		}
 		subscriptions = append(subscriptions, subscription)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating active subscriptions: %w", err)
 	}
-	
+
 	return subscriptions, nil
 }
 
@@ -400,13 +420,13 @@ func (r *postgresSubscriptionRepository) GetSubscriptionsDueForBilling(limit int
 		ORDER BY current_period_end ASC
 		LIMIT $2
 	`
-	
-	rows, err := r.db.Query(query, time.Now(), limit)
+
+	rows, err := r.db.Query(query, timeutil.NowUTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscriptions due for billing: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var subscriptions []*Subscription
 	for rows.Next() {
 		subscription, err := r.scanSubscription(rows)
@@ -415,11 +435,11 @@ func (r *postgresSubscriptionRepository) GetSubscriptionsDueForBilling(limit int
 		}
 		subscriptions = append(subscriptions, subscription)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating subscriptions due for billing: %w", err)
 	}
-	
+
 	return subscriptions, nil
 }
 
@@ -427,7 +447,7 @@ func (r *postgresSubscriptionRepository) GetSubscriptionsDueForBilling(limit int
 func (r *postgresSubscriptionRepository) scanSubscription(scanner interface{ Scan(...interface{}) error }) (*Subscription, error) {
 	var subscription Subscription
 	var canceledAt, endedAt, trialStart, trialEnd sql.NullTime
-	
+
 	err := scanner.Scan(
 		&subscription.ID,
 		&subscription.PlanID,
@@ -447,26 +467,31 @@ func (r *postgresSubscriptionRepository) scanSubscription(scanner interface{ Sca
 		&subscription.CreatedAt,
 		&subscription.UpdatedAt,
 	)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan subscription: %w", err)
 	}
-	
+
 	if canceledAt.Valid {
-		subscription.CanceledAt = &canceledAt.Time
+		subscription.CanceledAt = timeutil.NormalizePtrUTC(&canceledAt.Time)
 	}
-	
+
 	if endedAt.Valid {
-		subscription.EndedAt = &endedAt.Time
+		subscription.EndedAt = timeutil.NormalizePtrUTC(&endedAt.Time)
 	}
-	
+
 	if trialStart.Valid {
-		subscription.TrialStart = &trialStart.Time
+		subscription.TrialStart = timeutil.NormalizePtrUTC(&trialStart.Time)
 	}
-	
+
 	if trialEnd.Valid {
-		subscription.TrialEnd = &trialEnd.Time
+		subscription.TrialEnd = timeutil.NormalizePtrUTC(&trialEnd.Time)
 	}
-	
+
+	subscription.CurrentPeriodStart = timeutil.NormalizeUTC(subscription.CurrentPeriodStart)
+	subscription.CurrentPeriodEnd = timeutil.NormalizeUTC(subscription.CurrentPeriodEnd)
+	subscription.CreatedAt = timeutil.NormalizeUTC(subscription.CreatedAt)
+	subscription.UpdatedAt = timeutil.NormalizeUTC(subscription.UpdatedAt)
+
 	return &subscription, nil
 }

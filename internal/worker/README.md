@@ -37,7 +37,12 @@ Pending → Running → Completed
 ### Basic Setup
 
 ```go
-import "stellarbill-backend/internal/worker"
+import (
+    "time"
+
+    "stellarbill-backend/internal/timeutil"
+    "stellarbill-backend/internal/worker"
+)
 
 // Create store and executor
 store := worker.NewMemoryStore()
@@ -54,7 +59,7 @@ w.Start()
 
 // Schedule a billing job
 scheduler := worker.NewScheduler(store)
-job, err := scheduler.ScheduleCharge("sub-123", time.Now(), 3)
+job, err := scheduler.ScheduleCharge("sub-123", timeutil.NowUTC(), 3)
 
 // Graceful shutdown
 w.Stop()

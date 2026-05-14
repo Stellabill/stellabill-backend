@@ -647,11 +647,17 @@ func TestGzipPolicy_ChunkedTransfer(t *testing.T) {
 	req.Header.Set("Content-Encoding", "gzip")
 	res := httptest.NewRecorder()
 
+	done := make(chan struct{})
 	go func() {
 		router.ServeHTTP(res, req)
+		close(done)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for chunked gzip request")
+	}
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200 for chunked gzip, got %d body=%s", res.Code, res.Body.String())
 	}

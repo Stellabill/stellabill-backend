@@ -67,6 +67,9 @@ func (c *JWKSCache) Refresh(ctx context.Context) (jwk.Set, error) {
 		return c.set, nil
 	}
 
+	if c.url == "" {
+		return nil, errors.New("JWKS URL is empty")
+	}
 	set, err := jwk.Fetch(ctx, c.url)
 	if err != nil {
 		c.metrics.RefreshFailures++

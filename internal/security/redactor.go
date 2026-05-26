@@ -65,34 +65,56 @@ func MaskPII(input string) string {
 	if input == "" {
 		return ""
 	}
-	result := input
-	for pattern, masker := range PIIFields {
-		// Match keyword, optional separator, and optional alphanumeric ID
-		re := regexp.MustCompile(fmt.Sprintf(`(?i)\b(%s)([-_]?)([a-z0-9]*)\b`, pattern))
-		result = re.ReplaceAllStringFunc(result, func(match string) string {
-			groups := re.FindStringSubmatch(match)
-			if len(groups) < 4 {
-				return match
-			}
-			prefix := strings.ToLower(groups[1])
-			sep := groups[2]
-			id := groups[3]
-
-			// If it's just the keyword itself (e.g. "password"), redact it fully
-			if id == "" && sep == "" {
-				return masker(prefix)
-			}
-
-			// Normalize prefixes
-			if strings.HasPrefix(prefix, "cust") {
-				prefix = "cust"
-			} else if strings.HasPrefix(prefix, "sub") {
-				prefix = "sub"
-			}
-
-			return prefix + sep + masker(id)
-		})
+	
+	// Combine all keyword patterns into one regex for single-pass matching
+	var keywords []string
+	for k := range PIIFields {
+		keywords = append(keywords, k)
 	}
+	pattern := strings.Join(keywords, "|")
+	re := regexp.MustCompile(fmt.Sprintf(`(?i)\b(%s)([-_]?)([a-z0-9]*)\b`, pattern))
+	
+	result := re.ReplaceAllStringFunc(input, func(match string) string {
+		groups := re.FindStringSubmatch(match)
+		if len(groups) < 4 {
+			return match
+		}
+		
+		prefix := strings.ToLower(groups[1])
+		sep := groups[2]
+		id := groups[3]
+		fmt.Printf("DEBUG: match=%q, prefix=%q, sep=%q, id=%q\n", match, prefix, sep, id)
+		
+		// Find the actual masker to use
+		var masker func(string) string
+		for k, m := range PIIFields {
+			if matched, _ := regexp.MatchString("(?i)^"+k+"$", prefix); matched {
+				masker = m
+				break
+			}
+		}
+		if masker == nil {
+			fmt.Printf("DEBUG: masker nil for prefix %q\n", prefix)
+			return match
+		}
+
+		// If it's just the keyword itself (e.g. "password"), redact it fully
+		if id == "" && sep == "" {
+			return masker(prefix)
+		}
+
+		// Normalize prefixes
+		if strings.HasPrefix(prefix, "cust") {
+			prefix = "cust"
+		} else if strings.HasPrefix(prefix, "sub") {
+			prefix = "sub"
+		}
+
+		res := prefix + sep + masker(id)
+		fmt.Printf("DEBUG: result=%q\n", res)
+		return res
+	})
+
 	// Mask standalone amount-like numbers
 	result = maskAmountRegex.ReplaceAllStringFunc(result, func(amount string) string {
 		if (strings.Contains(amount, ".") && len(amount) <= 10) || (len(amount) >= 2 && len(amount) <= 5) {
@@ -100,10 +122,12 @@ func MaskPII(input string) string {
 		}
 		return amount
 	})
+	
 	// Mask emails
 	result = emailRegex.ReplaceAllStringFunc(result, func(email string) string {
 		return "e***@***"
 	})
+	
 	return result
 }
 
@@ -306,13 +330,24 @@ func RedactZapField(f zap.Field) zap.Field {
 		}
 		return f
 	default:
+		// Check if the field name itself is sensitive
+		lowerKey := strings.ToLower(f.Key)
+		if maskedFieldNames[lowerKey] || fullyRedactedFieldNames[lowerKey] {
+			if fullyRedactedFieldNames[lowerKey] {
+				return zap.String(f.Key, "***REDACTED***")
+			}
+			return f 
+		}
+		
 		// For complex types, marshal and redact
-		if b, err := json.Marshal(f.Interface); err == nil {
-			var m map[string]interface{}
-			if json.Unmarshal(b, &m) == nil {
-				m = RedactMap(m)
-				if b2, err2 := json.Marshal(m); err2 == nil {
-					return zap.String(f.Key, string(b2))
+		if f.Type == zapcore.ReflectType || f.Type == zapcore.ObjectMarshalerType {
+			if b, err := json.Marshal(f.Interface); err == nil {
+				var m map[string]interface{}
+				if json.Unmarshal(b, &m) == nil {
+					m = RedactMap(m)
+					if b2, err2 := json.Marshal(m); err2 == nil {
+						return zap.String(f.Key, string(b2))
+					}
 				}
 			}
 		}

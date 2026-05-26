@@ -21,6 +21,11 @@ func setupRouter() *gin.Engine {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
+
+	// Provide mocks for the handler if needed, though middleware should stop most failures
+	// Note: Register normally initializes its own mocks, but we can override if we want.
+	// For these tests, we just let Register do its thing.
+	
 	routes.Register(router)
 	return router
 }

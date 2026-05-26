@@ -272,13 +272,13 @@ func TestRedactError(t *testing.T) {
 	assert.Nil(t, RedactError(nil))
 }
 
-func TestLooksSensitiveValue(t *testing.T) {
+func TestMaskers(t *testing.T) {
 	assert.Equal(t, "cust***", maskCustomerID("abc123"))
 	assert.Equal(t, "***", maskCustomerID("ab"))
 	assert.Equal(t, "$*.**", maskAmount("19.99"))
 	assert.Equal(t, "$*.**", maskAmount("0"))
-	assert.Equal(t, "sub***", maskSubscriptionID("sub_xyz"))
-	assert.Equal(t, "job***", maskJobID("job_999"))
+	assert.Equal(t, "sub_***", maskSubscriptionID("sub_xyz"))
+	assert.Equal(t, "job_***", maskJobID("job_999"))
 }
 
 func TestRedactZapFields(t *testing.T) {
@@ -290,7 +290,7 @@ func TestRedactZapFields(t *testing.T) {
 	redacted := RedactZapFields(fields)
 	assert.Len(t, redacted, 3)
 	assert.Equal(t, "cust***", redacted[0].String)
-	assert.Equal(t, 5, redacted[1].Integer)
+	assert.Equal(t, int64(5), redacted[1].Integer)
 	err := redacted[2].Interface.(error)
 	assert.NotContains(t, err.Error(), "customer_abc")
 }

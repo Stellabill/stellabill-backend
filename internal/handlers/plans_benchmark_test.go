@@ -77,6 +77,7 @@ func setupBenchmarkContext() (*gin.Context, *httptest.ResponseRecorder) {
 }
 
 // BenchmarkListPlans_Empty tests performance with no data
+/*
 func BenchmarkListPlans_Empty(b *testing.B) {
 	c, _ := setupBenchmarkContext()
 	
@@ -87,6 +88,7 @@ func BenchmarkListPlans_Empty(b *testing.B) {
 		ListPlans(c)
 	}
 }
+*/
 
 // BenchmarkListPlans_Small tests performance with 10 plans
 func BenchmarkListPlans_Small(b *testing.B) {

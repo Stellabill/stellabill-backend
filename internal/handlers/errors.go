@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/validation"
 )
 
 // ErrorCode represents a standardized error code
@@ -15,12 +17,15 @@ type ErrorCode string
 
 const (
 	// Client errors
-	ErrorCodeBadRequest     ErrorCode = "BAD_REQUEST"
-	ErrorCodeUnauthorized   ErrorCode = "UNAUTHORIZED"
-	ErrorCodeForbidden      ErrorCode = "FORBIDDEN"
-	ErrorCodeNotFound       ErrorCode = "NOT_FOUND"
-	ErrorCodeConflict       ErrorCode = "CONFLICT"
+	ErrorCodeBadRequest       ErrorCode = "BAD_REQUEST"
+	ErrorCodeUnauthorized     ErrorCode = "UNAUTHORIZED"
+	ErrorCodeForbidden        ErrorCode = "FORBIDDEN"
+	ErrorCodeNotFound         ErrorCode = "NOT_FOUND"
+	ErrorCodeConflict         ErrorCode = "CONFLICT"
 	ErrorCodeValidationFailed ErrorCode = "VALIDATION_FAILED"
+	// ErrorCodeUnknownField is returned when a mutation request body contains a
+	// field not defined in the API schema. See internal/decoder for details.
+	ErrorCodeUnknownField ErrorCode = "UNKNOWN_FIELD"
 
 	// Server errors
 	ErrorCodeInternalError ErrorCode = "INTERNAL_ERROR"
@@ -50,9 +55,15 @@ func RespondWithErrorDetails(c *gin.Context, statusCode int, code ErrorCode, mes
 		traceID = generateTraceID()
 	}
 
+	// Redact message and details to prevent PII leakage
+	redactedMessage := security.MaskPII(message)
+	if details != nil {
+		details = security.RedactMap(details)
+	}
+
 	envelope := ErrorEnvelope{
 		Code:    string(code),
-		Message: message,
+		Message: redactedMessage,
 		TraceID: traceID,
 		Details: details,
 	}
@@ -81,9 +92,18 @@ func MapServiceErrorToResponse(err error) (int, ErrorCode, string) {
 	}
 }
 
-// RespondWithValidationError sends a validation error response
-func RespondWithValidationError(c *gin.Context, message string, details map[string]interface{}) {
-	RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeValidationFailed, message, details)
+// RespondWithValidationError is kept for compatibility but delegates to RespondWithValidationFields
+func RespondWithValidationError(c *gin.Context, message string, fieldErrors []validation.FieldError) {
+	RespondWithValidationFields(c, message, fieldErrors)
+}
+
+// RespondWithValidationFields sends a validation error response with the specific {error, fields} format
+func RespondWithValidationFields(c *gin.Context, message string, fields []validation.FieldError) {
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error":  message,
+		"fields": fields,
+	})
 }
 
 // RespondWithAuthError sends an authentication error response

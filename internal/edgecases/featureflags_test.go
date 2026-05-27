@@ -32,9 +32,7 @@ func TestInvalidJSONFeatureFlags(t *testing.T) {
 	os.Setenv("FEATURE_FLAGS", invalidJSON)
 	defer os.Unsetenv("FEATURE_FLAGS")
 	
-	manager := &featureflags.Manager{
-		flags: make(map[string]*featureflags.Flag),
-	}
+	manager := featureflags.NewManager()
 	
 	manager.LoadFromEnvironment()
 	
@@ -60,16 +58,14 @@ func TestMalformedEnvironmentVariables(t *testing.T) {
 			os.Setenv(tc.envVar, tc.value)
 			defer os.Unsetenv(tc.envVar)
 			
-			manager := &featureflags.Manager{
-				flags: make(map[string]*featureflags.Flag),
-			}
+			manager := featureflags.NewManager()
 			
 			manager.LoadFromEnvironment()
 			
 			flagName := tc.envVar[3:] // Remove "FF_" prefix
 			flagName = strings.ToLower(flagName)
 			
-			if flag, exists := manager.GetFlag(flagName); exists {
+			if _, exists := manager.GetFlag(flagName); exists {
 				t.Errorf("Malformed flag %s should not be created", tc.name)
 			}
 		})
@@ -119,10 +115,8 @@ func TestStaleConfigHandling(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	
 	// Create a new manager instance (simulating app restart)
-	manager2 := &featureflags.Manager{
-		flags: make(map[string]*featureflags.Flag),
-	}
-	manager2.loadDefaultFlags()
+	manager2 := featureflags.NewManager()
+	manager2.LoadDefaultFlags()
 	
 	// The new manager should have default state, not the stale state
 	if enabled := manager2.IsEnabled("stale_test"); enabled {
@@ -216,9 +210,7 @@ func TestEnvironmentVariablePrecedence(t *testing.T) {
 		os.Unsetenv("FF_PRECEDENCE_TEST")
 	}()
 	
-	manager := &featureflags.Manager{
-		flags: make(map[string]*featureflags.Flag),
-	}
+	manager := featureflags.NewManager()
 	manager.LoadDefaultFlags()
 	manager.LoadFromEnvironment()
 	
@@ -241,9 +233,7 @@ func TestLargeFlagConfiguration(t *testing.T) {
 	os.Setenv("FEATURE_FLAGS", string(flagsJSON))
 	defer os.Unsetenv("FEATURE_FLAGS")
 	
-	manager := &featureflags.Manager{
-		flags: make(map[string]*featureflags.Flag),
-	}
+	manager := featureflags.NewManager()
 	manager.LoadDefaultFlags()
 	manager.LoadFromEnvironment()
 	

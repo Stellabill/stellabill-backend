@@ -23,9 +23,24 @@ func (m *MemoryStore) SaveReports(reports []Report) error {
 
 // ListReports returns a copy of stored reports.
 func (m *MemoryStore) ListReports() ([]Report, error) {
-    m.mu.RLock()
-    defer m.mu.RUnlock()
-    out := make([]Report, len(m.reports))
-    copy(out, m.reports)
-    return out, nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Report, len(m.reports))
+	copy(out, m.reports)
+	return out, nil
 }
+
+// ListReportsByTenant returns reports scoped to a specific tenant.
+func (m *MemoryStore) ListReportsByTenant(tenantID string) ([]Report, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var out []Report
+	for _, r := range m.reports {
+		if r.TenantID == tenantID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+

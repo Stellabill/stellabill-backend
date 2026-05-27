@@ -23,6 +23,7 @@ type Event struct {
 	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 	Version       int        `json:"version" db:"version"`
+	DeduplicationID *string  `json:"deduplication_id,omitempty" db:"deduplication_id"`
 }
 
 // Status represents the status of an outbox event

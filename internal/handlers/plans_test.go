@@ -50,6 +50,6 @@ func TestListPlans(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		var response map[string]string
 		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.Equal(t, "db error", response["error"])
+		assert.Equal(t, "failed to load plans", response["error"])
 	})
 }

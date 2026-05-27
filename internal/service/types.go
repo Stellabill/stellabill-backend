@@ -1,5 +1,6 @@
 package service
 
+
 // PlanMetadata is the plan subset embedded in the response.
 type PlanMetadata struct {
 	PlanID      string `json:"plan_id"`
@@ -28,20 +29,6 @@ type SubscriptionDetail struct {
 	BillingSummary BillingSummary `json:"billing_summary" redacted:"amount"`
 }
 
-// MarshalJSON implements redacted JSON marshaling
-func (sd *SubscriptionDetail) MarshalJSON() ([]byte, error) {
-	type Alias SubscriptionDetail
-	data := struct {
-		*Alias
-		Customer string `json:"customer,omitempty"`
-	}{
-		Alias: (*Alias)(sd),
-	}
-	if data.Customer != "" {
-		data.Customer = "cust_***" // Minimal redaction - hide full ID
-	}
-	return json.Marshal(data)
-}
 
 // StatementDetail is the payload for billing statements.
 type StatementDetail struct {
@@ -75,9 +62,12 @@ type ResponseEnvelopeWithPagination struct {
 	Pagination PaginationMetadata `json:"pagination"`
 }
 
-// PaginationMetadata holds pagination info for list responses.
+// PaginationMetadata holds cursor-based pagination info.
 type PaginationMetadata struct {
-	Page     int `json:"page"`
-	PageSize int `json:"page_size"`
-	Count    int `json:"count"`
+	NextCursor     string `json:"next_cursor,omitempty"`
+	PreviousCursor string `json:"previous_cursor,omitempty"`
+	HasMore        bool   `json:"has_more"`
+	TotalCount     int    `json:"total_count,omitempty"`
+	Limit          int    `json:"limit"`
 }
+

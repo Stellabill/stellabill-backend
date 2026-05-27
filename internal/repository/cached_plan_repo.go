@@ -9,6 +9,13 @@ import (
 	"stellarbill-backend/internal/cache"
 )
 
+// cacheEnvelope wraps the actual data with a stored timestamp so the decorator
+// can detect stale reads after explicit invalidation.
+type cacheEnvelope struct {
+	Data     []byte    `json:"data"`
+	StoredAt time.Time `json:"stored_at"`
+}
+
 // CachedPlanRepo decorates a PlanRepository with a read-through cache.
 // It implements cache.Purgeable so the admin purge endpoint can flush it.
 type CachedPlanRepo struct {
@@ -81,7 +88,7 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	return out, nil
 }
 
-// Delete invalidates a cached plan entry.
+// Delete invalidates a cached plan entry and records the invalidation time.
 func (cpr *CachedPlanRepo) Delete(ctx context.Context, id string) error {
 	if cpr.cache == nil {
 		return nil

@@ -1,0 +1,16 @@
+{
+  "event_type": "subscription_created",
+  "id": "sub_001",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "data": {
+    "subscription_id": "sub_001",
+    "customer_id": "cust_001",
+    "plan_id": "plan_premium",
+    "amount": 2999,
+    "currency": "USD",
+    "interval": "month",
+    "status": "active",
+    "start_date": "2025-01-15T00:00:00Z",
+    "current_period_end": "2025-02-15T00:00:00Z"
+  }
+}

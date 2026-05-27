@@ -66,15 +66,15 @@ func TestGetStatement_MissingCallerID_Returns401(t *testing.T) {
 	r := stmtRouter(&mockStatementService{}, false)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/statements/stmt-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "unauthorized" {
-		t.Errorf("unexpected error: %v", body["error"])
+	if body["message"] != "unauthorized" {
+		t.Errorf("unexpected message: %v", body["message"])
 	}
 }
 
@@ -89,7 +89,7 @@ func TestGetStatement_EmptyID_Returns400(t *testing.T) {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "statement id required" {
+	if body["error"] != "Invalid statement ID" {
 		t.Errorf("unexpected error: %v", body["error"])
 	}
 }
@@ -99,15 +99,15 @@ func TestGetStatement_ErrNotFound_Returns404(t *testing.T) {
 	r := stmtRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/statements/stmt-missing", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "statement not found" {
-		t.Errorf("unexpected error: %v", body["error"])
+	if body["message"] != "The requested resource was not found" {
+		t.Errorf("unexpected message: %v", body["message"])
 	}
 }
 
@@ -116,15 +116,15 @@ func TestGetStatement_ErrDeleted_Returns410(t *testing.T) {
 	r := stmtRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/statements/stmt-del", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusGone {
 		t.Fatalf("expected 410, got %d", w.Code)
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "statement has been deleted" {
-		t.Errorf("unexpected error: %v", body["error"])
+	if body["message"] != "The requested resource has been deleted" {
+		t.Errorf("unexpected message: %v", body["message"])
 	}
 }
 
@@ -133,15 +133,15 @@ func TestGetStatement_ErrForbidden_Returns403(t *testing.T) {
 	r := stmtRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/statements/stmt-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", w.Code)
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "forbidden" {
-		t.Errorf("unexpected error: %v", body["error"])
+	if body["message"] != "You do not have permission to access this resource" {
+		t.Errorf("unexpected message: %v", body["message"])
 	}
 }
 
@@ -150,22 +150,22 @@ func TestGetStatement_UnknownError_Returns500(t *testing.T) {
 	r := stmtRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/statements/stmt-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "internal error" {
-		t.Errorf("unexpected error: %v", body["error"])
+	if body["message"] != "An unexpected error occurred" {
+		t.Errorf("unexpected message: %v", body["message"])
 	}
 }
 
 func TestGetStatement_HappyPath_Returns200WithEnvelope(t *testing.T) {
 	detail := &service.StatementDetail{
-		ID:             "stmt-1",
-		SubscriptionID: "sub-1",
+		ID:             "550e8400-e29b-41d4-a716-446655440000",
+		SubscriptionID: "550e8400-e29b-41d4-a716-446655440001",
 		Customer:       "cust-1",
 		PeriodStart:    "2024-01-01T00:00:00Z",
 		PeriodEnd:      "2024-02-01T00:00:00Z",
@@ -179,7 +179,7 @@ func TestGetStatement_HappyPath_Returns200WithEnvelope(t *testing.T) {
 	r := stmtRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/statements/stmt-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -200,11 +200,11 @@ func TestGetStatement_HappyPath_Returns200WithEnvelope(t *testing.T) {
 	if !ok {
 		t.Fatal("expected data field to be an object")
 	}
-	if data["id"] != "stmt-1" {
-		t.Errorf("expected data.id=stmt-1, got %v", data["id"])
+	if data["id"] != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("expected data.id=550e8400-e29b-41d4-a716-446655440000, got %v", data["id"])
 	}
-	if data["subscription_id"] != "sub-1" {
-		t.Errorf("expected data.subscription_id=sub-1, got %v", data["subscription_id"])
+	if data["subscription_id"] != "550e8400-e29b-41d4-a716-446655440001" {
+		t.Errorf("expected data.subscription_id=550e8400-e29b-41d4-a716-446655440001, got %v", data["subscription_id"])
 	}
 	if data["customer"] != "cust-1" {
 		t.Errorf("expected data.customer=cust-1, got %v", data["customer"])
@@ -224,12 +224,12 @@ func TestGetStatement_HappyPath_Returns200WithEnvelope(t *testing.T) {
 }
 
 func TestGetStatement_HappyPath_WarningsIncluded(t *testing.T) {
-	detail := &service.StatementDetail{ID: "stmt-1"}
+	detail := &service.StatementDetail{ID: "550e8400-e29b-41d4-a716-446655440001"}
 	svc := &mockStatementService{detail: detail, warnings: []string{"subscription missing"}}
 	r := stmtRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/statements/stmt-1", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements/550e8400-e29b-41d4-a716-446655440001", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -375,7 +375,7 @@ func TestListStatements_QueryFiltersPassedToService(t *testing.T) {
 	r := stmtRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/statements?subscription_id=sub-1&kind=invoice&status=paid&start_after=2024-01-01&end_before=2024-12-31&page=2&page_size=5", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements?subscription_id=550e8400-e29b-41d4-a716-446655440001&kind=invoice&status=paid&start_after=2024-01-01T00:00:00Z&end_before=2024-12-31T23:59:59Z&page=2&page_size=5", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -383,8 +383,8 @@ func TestListStatements_QueryFiltersPassedToService(t *testing.T) {
 	}
 
 	q := svc.capturedQ
-	if q.SubscriptionID != "sub-1" {
-		t.Errorf("SubscriptionID: got %q, want sub-1", q.SubscriptionID)
+	if q.SubscriptionID != "550e8400-e29b-41d4-a716-446655440001" {
+		t.Errorf("SubscriptionID: got %q, want 550e8400-e29b-41d4-a716-446655440001", q.SubscriptionID)
 	}
 	if q.Kind != "invoice" {
 		t.Errorf("Kind: got %q, want invoice", q.Kind)
@@ -392,11 +392,11 @@ func TestListStatements_QueryFiltersPassedToService(t *testing.T) {
 	if q.Status != "paid" {
 		t.Errorf("Status: got %q, want paid", q.Status)
 	}
-	if q.StartAfter != "2024-01-01" {
-		t.Errorf("StartAfter: got %q, want 2024-01-01", q.StartAfter)
+	if q.StartAfter != "2024-01-01T00:00:00Z" {
+		t.Errorf("StartAfter: got %q, want 2024-01-01T00:00:00Z", q.StartAfter)
 	}
-	if q.EndBefore != "2024-12-31" {
-		t.Errorf("EndBefore: got %q, want 2024-12-31", q.EndBefore)
+	if q.EndBefore != "2024-12-31T23:59:59Z" {
+		t.Errorf("EndBefore: got %q, want 2024-12-31T23:59:59Z", q.EndBefore)
 	}
 	if q.Page != 2 {
 		t.Errorf("Page: got %d, want 2", q.Page)
@@ -406,37 +406,16 @@ func TestListStatements_QueryFiltersPassedToService(t *testing.T) {
 	}
 }
 
-func TestListStatements_InvalidPageParams_Ignored(t *testing.T) {
-	svc := &mockStatementService{
-		listDetail: &service.ListStatementsDetail{Statements: []*service.StatementDetail{}},
-		count:      0,
-	}
+func TestListStatements_InvalidPageParams_Returns400(t *testing.T) {
+	svc := &mockStatementService{}
 	r := stmtRouter(svc, true)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/statements?page=abc&page_size=xyz", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	// Non-numeric values should be ignored (stay at zero), and defaults kick in for the response.
-	q := svc.capturedQ
-	if q.Page != 0 {
-		t.Errorf("Page: got %d, want 0 (unparsed)", q.Page)
-	}
-	if q.PageSize != 0 {
-		t.Errorf("PageSize: got %d, want 0 (unparsed)", q.PageSize)
-	}
-
-	envelope := decodeBody(t, w)
-	pag := envelope["pagination"].(map[string]interface{})
-	if pag["page"] != float64(1) {
-		t.Errorf("response page should default to 1, got %v", pag["page"])
-	}
-	if pag["page_size"] != float64(10) {
-		t.Errorf("response page_size should default to 10, got %v", pag["page_size"])
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 

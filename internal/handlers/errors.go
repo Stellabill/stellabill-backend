@@ -1,14 +1,15 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/service"
 )
 
 // ErrorCode represents a standardized error code
@@ -27,15 +28,15 @@ const (
 	ErrorCodeUnknownField ErrorCode = "UNKNOWN_FIELD"
 
 	// Server errors
-	ErrorCodeInternalError ErrorCode = "INTERNAL_ERROR"
+	ErrorCodeInternalError      ErrorCode = "INTERNAL_ERROR"
 	ErrorCodeServiceUnavailable ErrorCode = "SERVICE_UNAVAILABLE"
 )
 
 // ErrorEnvelope represents a standardized error response
 type ErrorEnvelope struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	TraceID string `json:"trace_id"`
+	Code    string                 `json:"code"`
+	Message string                 `json:"message"`
+	TraceID string                 `json:"trace_id"`
 	Details map[string]interface{} `json:"details,omitempty"`
 }
 
@@ -77,23 +78,32 @@ func generateTraceID() string {
 
 // MapServiceErrorToResponse maps domain service errors to HTTP status codes and error codes
 func MapServiceErrorToResponse(err error) (int, ErrorCode, string) {
-	switch err {
-	case service.ErrNotFound:
+	switch {
+	case errors.Is(err, service.ErrNotFound):
 		return http.StatusNotFound, ErrorCodeNotFound, "The requested resource was not found"
-	case service.ErrDeleted:
+	case errors.Is(err, service.ErrDeleted):
 		return http.StatusGone, ErrorCodeNotFound, "The requested resource has been deleted"
-	case service.ErrForbidden:
+	case errors.Is(err, service.ErrForbidden):
 		return http.StatusForbidden, ErrorCodeForbidden, "You do not have permission to access this resource"
-	case service.ErrBillingParse:
+	case errors.Is(err, service.ErrBillingParse):
 		return http.StatusInternalServerError, ErrorCodeInternalError, "An internal error occurred while processing your request"
 	default:
 		return http.StatusInternalServerError, ErrorCodeInternalError, "An unexpected error occurred"
 	}
 }
 
-// RespondWithValidationError sends a validation error response
-func RespondWithValidationError(c *gin.Context, message string, details map[string]interface{}) {
-	RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeValidationFailed, message, details)
+// RespondWithValidationError is kept for compatibility but delegates to RespondWithValidationFields
+func RespondWithValidationError(c *gin.Context, message string, fieldErrors []validation.FieldError) {
+	RespondWithValidationFields(c, message, fieldErrors)
+}
+
+// RespondWithValidationFields sends a validation error response with the specific {error, fields} format
+func RespondWithValidationFields(c *gin.Context, message string, fields []validation.FieldError) {
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error":  message,
+		"fields": fields,
+	})
 }
 
 // RespondWithAuthError sends an authentication error response

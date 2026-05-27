@@ -12,6 +12,7 @@ var ErrNotFound = errors.New("not found")
 type SubscriptionRepository interface {
 	FindByID(ctx context.Context, id string) (*SubscriptionRow, error)
 	FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*SubscriptionRow, error)
+	UpdateStatus(ctx context.Context, id string, tenantID string, status string) error
 }
 
 // PlanRepository is the read interface used by the service.

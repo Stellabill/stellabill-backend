@@ -2,7 +2,6 @@ package routes
 
 import (
 	"fmt"
-
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"

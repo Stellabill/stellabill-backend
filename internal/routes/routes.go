@@ -88,6 +88,7 @@ func Register(r *gin.Engine) {
 	{
 		v1.GET("/subscriptions", h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
+		v1.POST("/subscriptions/:id/status", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewChangeSubscriptionStatusHandler(svc))
 		v1.GET("/plans", h.ListPlans)
 		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
@@ -113,6 +114,11 @@ func Register(r *gin.Engine) {
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			h.GetSubscription,
+		)
+		apiProtected.POST("/subscriptions/:id/status",
+			dep,
+			auth.RequirePermission(auth.PermManageSubscriptions),
+			handlers.NewChangeSubscriptionStatusHandler(svc),
 		)
 
 		apiProtected.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))

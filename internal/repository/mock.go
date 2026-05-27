@@ -36,6 +36,19 @@ func (m *MockSubscriptionRepo) FindByIDAndTenant(_ context.Context, id string, t
 	return row, nil
 }
 
+// UpdateStatus updates the subscription status for the tenant-scoped record.
+func (m *MockSubscriptionRepo) UpdateStatus(_ context.Context, id string, tenantID string, status string) error {
+	row, ok := m.records[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.TenantID != tenantID {
+		return ErrNotFound
+	}
+	row.Status = status
+	return nil
+}
+
 // MockPlanRepo is an in-memory PlanRepository for testing.
 type MockPlanRepo struct {
 	records map[string]*PlanRow

@@ -44,6 +44,14 @@ func (sd *SubscriptionDetail) MarshalJSON() ([]byte, error) {
 	return json.Marshal(data)
 }
 
+// SubscriptionStatusChange is returned after a successful status mutation.
+type SubscriptionStatusChange struct {
+	ID             string `json:"id"`
+	PreviousStatus string `json:"previous_status"`
+	Status         string `json:"status"`
+	Changed        bool   `json:"changed"`
+}
+
 // StatementDetail is the payload for billing statements.
 type StatementDetail struct {
 	ID             string `json:"id"`
@@ -84,4 +92,3 @@ type PaginationMetadata struct {
 	TotalCount     int    `json:"total_count,omitempty"`
 	Limit          int    `json:"limit"`
 }
-

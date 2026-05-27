@@ -1,6 +1,9 @@
 package repository
 
-import "context"
+import (
+	"context"
+	"sort"
+)
 
 // MockSubscriptionRepo is an in-memory SubscriptionRepository for testing.
 type MockSubscriptionRepo struct {
@@ -133,6 +136,12 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 
 		out = append(out, r)
 	}
+
+	// Sort by ID to ensure deterministic order (crucial for map iteration, limit and truncation testing)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ID < out[j].ID
+	})
+
 	totalCount := len(out)
 	limit := q.Limit
 	if limit <= 0 {
@@ -143,3 +152,4 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 	}
 	return out, totalCount, nil
 }
+

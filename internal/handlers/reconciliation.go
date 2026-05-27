@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/auth"
@@ -140,10 +139,13 @@ func NewListReportsHandler(store reconciliation.Store) gin.HandlerFunc {
 			return
 		}
 
-		limitStr := c.DefaultQuery("limit", "20")
-		limit, _ := strconv.Atoi(limitStr)
-		if limit <= 0 || limit > 100 {
-			limit = 20
+		limitStr := c.Query("limit")
+		limit, err := pagination.ParseLimit(limitStr, 20)
+		if err != nil {
+			RespondWithValidationError(c, "Invalid pagination limit", map[string]interface{}{
+				"reason": err.Error(),
+			})
+			return
 		}
 
 		var reports []reconciliation.Report

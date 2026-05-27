@@ -14,59 +14,60 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-func TestListPlans(t *testing.T) {
+func TestListSubscriptions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("success", func(t *testing.T) {
-		mockSvc := new(MockPlanService)
-		h := &Handler{Plans: mockSvc}
+		mockSvc := new(MockSubscriptionService)
+		h := &Handler{Subscriptions: mockSvc}
 
-		plans := []Plan{
-			{ID: "plan_1", Name: "Basic", Amount: "10.00", Currency: "USD", Interval: "month"},
+		subs := []Subscription{
+			{ID: "sub_1", PlanID: "plan_1", Customer: "Alice", Status: "active"},
 		}
-		mockSvc.On("ListPlans", mock.Anything).Return(plans, nil)
+		mockSvc.On("ListSubscriptions", mock.Anything).Return(subs, nil)
 
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 
-		h.ListPlans(c)
+		h.ListSubscriptions(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var response map[string][]Plan
+		var response map[string][]Subscription
 		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.Len(t, response["plans"], 1)
-		assert.Equal(t, "plan_1", response["plans"][0].ID)
+		assert.Len(t, response["subscriptions"], 1)
+		assert.Equal(t, "sub_1", response["subscriptions"][0].ID)
 	})
 
 	t.Run("error", func(t *testing.T) {
-		mockSvc := new(MockPlanService)
-		h := &Handler{Plans: mockSvc}
+		mockSvc := new(MockSubscriptionService)
+		h := &Handler{Subscriptions: mockSvc}
 
-		mockSvc.On("ListPlans", mock.Anything).Return(nil, errors.New("db error"))
+		mockSvc.On("ListSubscriptions", mock.Anything).Return(nil, errors.New("db error"))
 
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 
-		h.ListPlans(c)
+		h.ListSubscriptions(c)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		var response map[string]string
+		var response ErrorEnvelope
 		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.Equal(t, "failed to load plans", response["error"])
+		assert.Equal(t, "INTERNAL_ERROR", response.Code)
+		assert.Contains(t, response.Message, "Failed to retrieve subscription")
 	})
 
 	t.Run("invalid limits", func(t *testing.T) {
 		invalidInputs := []string{"abc", "1abc", " ", "  "}
 		for _, input := range invalidInputs {
 			t.Run(input, func(t *testing.T) {
-				mockSvc := new(MockPlanService)
-				h := &Handler{Plans: mockSvc}
+				mockSvc := new(MockSubscriptionService)
+				h := &Handler{Subscriptions: mockSvc}
 
 				w := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(w)
-				c.Request = httptest.NewRequest("GET", "/plans?limit="+url.QueryEscape(input), nil)
+				c.Request = httptest.NewRequest("GET", "/subscriptions?limit="+url.QueryEscape(input), nil)
 
-				h.ListPlans(c)
+				h.ListSubscriptions(c)
 
 				assert.Equal(t, http.StatusBadRequest, w.Code)
 				var response ErrorEnvelope
@@ -95,34 +96,33 @@ func TestListPlans(t *testing.T) {
 
 		for _, tc := range validInputs {
 			t.Run(tc.limitStr, func(t *testing.T) {
-				mockSvc := new(MockPlanService)
-				h := &Handler{Plans: mockSvc}
+				mockSvc := new(MockSubscriptionService)
+				h := &Handler{Subscriptions: mockSvc}
 
-				// Create 105 mock plans to verify pagination slicing limit
-				var plans []Plan
+				// Create 105 mock subscriptions to verify pagination slicing limit
+				var subs []Subscription
 				for i := 1; i <= 105; i++ {
-					plans = append(plans, Plan{
-						ID:   "plan_" + strconv.Itoa(i),
-						Name: "Plan " + strconv.Itoa(i),
+					subs = append(subs, Subscription{
+						ID:       "sub_" + strconv.Itoa(i),
+						Customer: "Customer " + strconv.Itoa(i),
 					})
 				}
-				mockSvc.On("ListPlans", mock.Anything).Return(plans, nil)
+				mockSvc.On("ListSubscriptions", mock.Anything).Return(subs, nil)
 
 				w := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(w)
-				c.Request = httptest.NewRequest("GET", "/plans?limit="+url.QueryEscape(tc.limitStr), nil)
+				c.Request = httptest.NewRequest("GET", "/subscriptions?limit="+url.QueryEscape(tc.limitStr), nil)
 
-				h.ListPlans(c)
+				h.ListSubscriptions(c)
 
 				assert.Equal(t, http.StatusOK, w.Code)
 				var response map[string]interface{}
 				err := json.Unmarshal(w.Body.Bytes(), &response)
 				assert.NoError(t, err)
 
-				items := response["plans"].([]interface{})
+				items := response["subscriptions"].([]interface{})
 				assert.Len(t, items, tc.expectedLimit)
 			})
 		}
 	})
 }
-

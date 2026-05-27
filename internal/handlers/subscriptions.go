@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/pagination"
@@ -23,10 +22,13 @@ func (s Subscription) GetID() string        { return s.ID }
 func (s Subscription) GetSortValue() string { return s.Customer } // Sort by customer for now
 
 func (h *Handler) ListSubscriptions(c *gin.Context) {
-	limitStr := c.DefaultQuery("limit", "10")
-	limit, _ := strconv.Atoi(limitStr)
-	if limit <= 0 {
-		limit = 10
+	limitStr := c.Query("limit")
+	limit, err := pagination.ParseLimit(limitStr, 10)
+	if err != nil {
+		RespondWithValidationError(c, "Invalid pagination limit", map[string]interface{}{
+			"reason": err.Error(),
+		})
+		return
 	}
 
 	cursorStr := c.Query("cursor")

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	AuthSubjectKey = "auth_subject"
+	AuthSubjectKey  = "auth_subject"
 )
 
 type RateLimiter struct {
@@ -36,7 +36,20 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
-func Logging(_ *log.Logger) gin.HandlerFunc {
+
+
+func Recovery(logger *log.Logger) gin.HandlerFunc {
+	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
+		requestID, _ := c.Get(RequestIDKey)
+		logger.Printf("panic recovered request_id=%v err=%v", requestID, recovered)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+			"error":      "internal server error",
+			"request_id": requestID,
+		})
+	})
+}
+
+func Logging(logger *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
@@ -59,27 +72,6 @@ func Logging(_ *log.Logger) gin.HandlerFunc {
 }
 
 
-func CORS(allowOrigin string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		origin := allowOrigin
-		if origin == "" {
-			origin = "*"
-		}
-
-		c.Header("Access-Control-Allow-Origin", origin)
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-		c.Header("Access-Control-Expose-Headers", RequestIDHeader)
-		c.Header("Vary", "Origin")
-
-		if c.Request.Method == http.MethodOptions {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-
-		c.Next()
-	}
-}
 
 func RateLimit(limiter *RateLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {

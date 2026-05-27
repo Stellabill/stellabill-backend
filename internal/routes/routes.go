@@ -40,7 +40,9 @@ func Register(r *gin.Engine) {
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TraceIDMiddleware())
 
-	// Rate limiting
+	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
+
+	// Apply rate limiting middleware
 	rateLimitConfig := middleware.RateLimiterConfig{
 		Enabled:        cfg.RateLimitEnabled,
 		Mode:           middleware.RateLimitMode(cfg.RateLimitMode),
@@ -50,12 +52,11 @@ func Register(r *gin.Engine) {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
-	// Request size and Gzip
-	r.Use(middleware.RequestSizeLimit(cfg.MaxRequestSize))
-	r.Use(middleware.GzipPolicy(middleware.GzipPolicyConfig{
-		MaxUncompressedBytes: cfg.MaxGzipUncompressed,
-		MaxRatio:             cfg.MaxGzipRatio,
-	}))
+	store := idempotency.NewStore(idempotency.DefaultTTL)
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret"
+	}
 
 	// Each cached repo gets its own InMemory cache instance so that Flush is
 	// scoped to its namespace and does not evict entries from other caches.

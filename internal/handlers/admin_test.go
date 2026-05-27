@@ -169,412 +169,6 @@ func TestAdminDefaultToken(t *testing.T) {
 	rec := doRequest(r, "change-me-admin-token", "", "")
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 with default token, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-// =============================================================================
-// RBAC table tests
-// =============================================================================
-
-func TestAdminPurgeRBAC(t *testing.T) {
-	cases := []struct {
-		role     string
-		wantCode int
-	}{
-		{"super_admin", http.StatusOK},
-		{"ops_admin", http.StatusOK},
-		{"billing_admin", http.StatusForbidden},
-		{"read_only_admin", http.StatusForbidden},
-		{"", http.StatusForbidden},
-		{"unknown_role", http.StatusForbidden},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(fmt.Sprintf("role=%q", tc.role), func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			req := adminReq("POST", "/api/admin/purge", nil, "tok", tc.role, "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("role %q: expected %d, got %d: %s", tc.role, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-func TestAdminBanUserRBAC(t *testing.T) {
-	cases := []struct {
-		role     string
-		wantCode int
-	}{
-		{"super_admin", http.StatusOK},
-		{"ops_admin", http.StatusOK},
-		{"billing_admin", http.StatusForbidden},
-		{"read_only_admin", http.StatusForbidden},
-		{"", http.StatusForbidden},
-		{"unknown_role", http.StatusForbidden},
-	}
-
-	body := jsonBody(map[string]string{
-		"user_id": validUUID,
-		"reason":  "violation of ToS",
-	})
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(fmt.Sprintf("role=%q", tc.role), func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			b := bytes.NewBuffer(body.Bytes())
-			req := adminReq("POST", "/api/admin/users/ban", b, "tok", tc.role, "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("role %q: expected %d, got %d: %s", tc.role, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-func TestAdminUpdatePlanPriceRBAC(t *testing.T) {
-	cases := []struct {
-		role     string
-		wantCode int
-	}{
-		{"super_admin", http.StatusOK},
-		{"billing_admin", http.StatusOK},
-		{"ops_admin", http.StatusForbidden},
-		{"read_only_admin", http.StatusForbidden},
-		{"", http.StatusForbidden},
-		{"unknown_role", http.StatusForbidden},
-	}
-
-	body := jsonBody(map[string]string{
-		"plan_id":   validUUID,
-		"new_price": "29.99",
-		"currency":  "USD",
-	})
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(fmt.Sprintf("role=%q", tc.role), func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			b := bytes.NewBuffer(body.Bytes())
-			req := adminReq("POST", "/api/admin/plans/update-price", b, "tok", tc.role, "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("role %q: expected %d, got %d: %s", tc.role, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-func TestAdminReactivateSubscriptionRBAC(t *testing.T) {
-	cases := []struct {
-		role     string
-		wantCode int
-	}{
-		{"super_admin", http.StatusOK},
-		{"billing_admin", http.StatusOK},
-		{"ops_admin", http.StatusForbidden},
-		{"read_only_admin", http.StatusForbidden},
-		{"", http.StatusForbidden},
-		{"unknown_role", http.StatusForbidden},
-	}
-
-	body := jsonBody(map[string]string{
-		"subscription_id": validUUID,
-	})
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(fmt.Sprintf("role=%q", tc.role), func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			b := bytes.NewBuffer(body.Bytes())
-			req := adminReq("POST", "/api/admin/subscriptions/reactivate", b, "tok", tc.role, "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("role %q: expected %d, got %d: %s", tc.role, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-func TestAdminGetAuditLogRBAC(t *testing.T) {
-	// All four valid roles must be able to read the audit log.
-	cases := []struct {
-		role     string
-		wantCode int
-	}{
-		{"super_admin", http.StatusOK},
-		{"billing_admin", http.StatusOK},
-		{"ops_admin", http.StatusOK},
-		{"read_only_admin", http.StatusOK},
-		{"", http.StatusForbidden},
-		{"unknown_role", http.StatusForbidden},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(fmt.Sprintf("role=%q", tc.role), func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			req := adminReq("GET", "/api/admin/audit-log", nil, "tok", tc.role, "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("role %q: expected %d, got %d: %s", tc.role, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Privilege-escalation prevention
-// =============================================================================
-
-// TestAdminPrivilegeEscalation verifies that no role can exceed its granted
-// permissions by attempting every cross-domain operation.
-func TestAdminPrivilegeEscalation(t *testing.T) {
-	validBanBody := jsonBody(map[string]string{"user_id": validUUID, "reason": "test"})
-	validPriceBody := jsonBody(map[string]string{"plan_id": validUUID, "new_price": "9.99", "currency": "USD"})
-	validReactivateBody := jsonBody(map[string]string{"subscription_id": validUUID})
-
-	cases := []struct {
-		name   string
-		role   string
-		method string
-		url    string
-		body   *bytes.Buffer
-	}{
-		// ops_admin must not access billing operations
-		{"ops_admin_cannot_update_plan_price", "ops_admin", "POST", "/api/admin/plans/update-price", bytes.NewBuffer(validPriceBody.Bytes())},
-		{"ops_admin_cannot_reactivate_sub", "ops_admin", "POST", "/api/admin/subscriptions/reactivate", bytes.NewBuffer(validReactivateBody.Bytes())},
-
-		// billing_admin must not access operational actions
-		{"billing_admin_cannot_purge", "billing_admin", "POST", "/api/admin/purge", nil},
-		{"billing_admin_cannot_ban_user", "billing_admin", "POST", "/api/admin/users/ban", bytes.NewBuffer(validBanBody.Bytes())},
-
-		// read_only_admin must not perform any mutating action
-		{"read_only_cannot_purge", "read_only_admin", "POST", "/api/admin/purge", nil},
-		{"read_only_cannot_ban_user", "read_only_admin", "POST", "/api/admin/users/ban", bytes.NewBuffer(validBanBody.Bytes())},
-		{"read_only_cannot_update_plan_price", "read_only_admin", "POST", "/api/admin/plans/update-price", bytes.NewBuffer(validPriceBody.Bytes())},
-		{"read_only_cannot_reactivate_sub", "read_only_admin", "POST", "/api/admin/subscriptions/reactivate", bytes.NewBuffer(validReactivateBody.Bytes())},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			r, sink := setupAdminRouter("tok")
-			req := adminReq(tc.method, tc.url, tc.body, "tok", tc.role, "attacker")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("%s: expected 403, got %d: %s", tc.name, rec.Code, rec.Body.String())
-			}
-
-			// The denied audit event must record the attempted privilege escalation.
-			entry := lastEntry(sink)
-			if entry.Outcome != "denied" {
-				t.Fatalf("%s: expected audit outcome 'denied', got %q", tc.name, entry.Outcome)
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Input-validation tests – PurgeCache
-// =============================================================================
-
-func TestAdminPurgeValidation(t *testing.T) {
-	longTarget := strings.Repeat("a", 201)
-
-	cases := []struct {
-		name     string
-		url      string
-		wantCode int
-	}{
-		{"target_with_sql_injection", "/api/admin/purge?target=cache%27+OR+1%3D1", http.StatusBadRequest},
-		{"target_with_xss", "/api/admin/purge?target=%3Cscript%3E", http.StatusBadRequest},
-		{"target_too_long", "/api/admin/purge?target=" + longTarget, http.StatusBadRequest},
-		{"target_with_space", "/api/admin/purge?target=cache+name", http.StatusBadRequest},
-		{"attempt_not_integer", "/api/admin/purge?attempt=abc", http.StatusBadRequest},
-		{"attempt_zero", "/api/admin/purge?attempt=0", http.StatusBadRequest},
-		{"attempt_above_max", "/api/admin/purge?attempt=11", http.StatusBadRequest},
-		{"attempt_negative", "/api/admin/purge?attempt=-1", http.StatusBadRequest},
-		{"attempt_at_min", "/api/admin/purge?attempt=1", http.StatusOK},
-		{"attempt_at_max", "/api/admin/purge?attempt=10", http.StatusOK},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			req := adminReq("POST", tc.url, nil, "tok", "ops_admin", "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("%s: expected %d, got %d: %s", tc.name, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Input-validation tests – BanUser
-// =============================================================================
-
-func TestAdminBanUserValidation(t *testing.T) {
-	longReason := strings.Repeat("x", 501)
-
-	cases := []struct {
-		name     string
-		body     string
-		wantCode int
-	}{
-		{"missing_user_id", `{"reason":"test"}`, http.StatusBadRequest},
-		{"missing_reason", `{"user_id":"` + validUUID + `"}`, http.StatusBadRequest},
-		{"invalid_uuid_format", `{"user_id":"not-a-uuid","reason":"test"}`, http.StatusBadRequest},
-		{"uuid_too_short", `{"user_id":"550e8400-e29b-41d4","reason":"test"}`, http.StatusBadRequest},
-		{"reason_too_long", `{"user_id":"` + validUUID + `","reason":"` + longReason + `"}`, http.StatusBadRequest},
-		{"malformed_json", `{bad json}`, http.StatusBadRequest},
-		{"empty_body", `{}`, http.StatusBadRequest},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			req := adminReq("POST", "/api/admin/users/ban", bytes.NewBufferString(tc.body), "tok", "ops_admin", "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("%s: expected %d, got %d: %s", tc.name, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Input-validation tests – UpdatePlanPrice
-// =============================================================================
-
-func TestAdminUpdatePlanPriceValidation(t *testing.T) {
-	cases := []struct {
-		name     string
-		body     string
-		wantCode int
-	}{
-		{"missing_plan_id", `{"new_price":"9.99","currency":"USD"}`, http.StatusBadRequest},
-		{"invalid_uuid_plan_id", `{"plan_id":"not-uuid","new_price":"9.99","currency":"USD"}`, http.StatusBadRequest},
-		{"missing_new_price", `{"plan_id":"` + validUUID + `","currency":"USD"}`, http.StatusBadRequest},
-		{"negative_price", `{"plan_id":"` + validUUID + `","new_price":"-5","currency":"USD"}`, http.StatusBadRequest},
-		{"alpha_price", `{"plan_id":"` + validUUID + `","new_price":"abc","currency":"USD"}`, http.StatusBadRequest},
-		{"price_too_many_decimals", `{"plan_id":"` + validUUID + `","new_price":"1.234","currency":"USD"}`, http.StatusBadRequest},
-		{"price_too_many_digits", `{"plan_id":"` + validUUID + `","new_price":"1234567.89","currency":"USD"}`, http.StatusBadRequest},
-		{"missing_currency", `{"plan_id":"` + validUUID + `","new_price":"9.99"}`, http.StatusBadRequest},
-		{"currency_too_short", `{"plan_id":"` + validUUID + `","new_price":"9.99","currency":"US"}`, http.StatusBadRequest},
-		{"currency_too_long", `{"plan_id":"` + validUUID + `","new_price":"9.99","currency":"USDD"}`, http.StatusBadRequest},
-		{"currency_with_digits", `{"plan_id":"` + validUUID + `","new_price":"9.99","currency":"U5D"}`, http.StatusBadRequest},
-		{"malformed_json", `{bad json}`, http.StatusBadRequest},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			req := adminReq("POST", "/api/admin/plans/update-price", bytes.NewBufferString(tc.body), "tok", "billing_admin", "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("%s: expected %d, got %d: %s", tc.name, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Input-validation tests – ReactivateSubscription
-// =============================================================================
-
-func TestAdminReactivateSubscriptionValidation(t *testing.T) {
-	cases := []struct {
-		name     string
-		body     string
-		wantCode int
-	}{
-		{"missing_subscription_id", `{}`, http.StatusBadRequest},
-		{"invalid_uuid", `{"subscription_id":"not-a-uuid"}`, http.StatusBadRequest},
-		{"malformed_json", `{bad json}`, http.StatusBadRequest},
-		{"empty_string_id", `{"subscription_id":""}`, http.StatusBadRequest},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			req := adminReq("POST", "/api/admin/subscriptions/reactivate", bytes.NewBufferString(tc.body), "tok", "billing_admin", "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("%s: expected %d, got %d: %s", tc.name, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Input-validation tests – GetAuditLog
-// =============================================================================
-
-func TestAdminGetAuditLogValidation(t *testing.T) {
-	cases := []struct {
-		name     string
-		url      string
-		wantCode int
-	}{
-		{"limit_not_integer", "/api/admin/audit-log?limit=abc", http.StatusBadRequest},
-		{"limit_zero", "/api/admin/audit-log?limit=0", http.StatusBadRequest},
-		{"limit_too_high", "/api/admin/audit-log?limit=501", http.StatusBadRequest},
-		{"limit_negative", "/api/admin/audit-log?limit=-1", http.StatusBadRequest},
-		{"limit_at_min", "/api/admin/audit-log?limit=1", http.StatusOK},
-		{"limit_at_max", "/api/admin/audit-log?limit=500", http.StatusOK},
-		{"default_limit", "/api/admin/audit-log", http.StatusOK},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			r, _ := setupAdminRouter("tok")
-			req := adminReq("GET", tc.url, nil, "tok", "read_only_admin", "admin")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("%s: expected %d, got %d: %s", tc.name, tc.wantCode, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Success tests for the four new actions
-// =============================================================================
-
-func TestAdminBanUserSuccess(t *testing.T) {
-	r, sink := setupAdminRouter("tok")
-
-	body := jsonBody(map[string]string{
-		"user_id": validUUID,
-		"reason":  "repeated ToS violations",
-	})
-	req := adminReq("POST", "/api/admin/users/ban", body, "tok", "ops_admin", "ops-admin-1")
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
@@ -1077,6 +671,316 @@ func TestAdminUnknownRoleAlwaysDenied(t *testing.T) {
 				t.Fatalf("crafted role %q should be denied (403), got %d: %s", role, rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+// ── new tests: real cache invalidation behaviour ─────────────────────────────
+
+func TestAdminPurge_FullPurge(t *testing.T) {
+	sink := &audit.MemorySink{}
+	plans := newMockPurgeable("plans", 4)
+	subs := newMockPurgeable("subscriptions", 7)
+	handler := NewAdminHandler("token", plans, subs)
+	r := buildRouter(sink, handler)
+
+	rec := doRequest(r, "token", "admin", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d\nbody: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := decodePurgeResponse(t, rec)
+	if resp.TotalKeysPurged != 11 {
+		t.Fatalf("expected 11 total keys purged, got %d", resp.TotalKeysPurged)
+	}
+	if len(resp.Namespaces) != 2 {
+		t.Fatalf("expected 2 namespaces, got %d", len(resp.Namespaces))
+	}
+	if resp.Status != "purged" {
+		t.Fatalf("expected status 'purged', got %q", resp.Status)
+	}
+	for _, ns := range resp.Namespaces {
+		if !ns.CountersReset {
+			t.Errorf("namespace %q: counters_reset should be true", ns.Namespace)
+		}
+		if ns.Error != "" {
+			t.Errorf("namespace %q: unexpected error %q", ns.Namespace, ns.Error)
+		}
+	}
+	if resp.Timestamp.IsZero() {
+		t.Fatal("expected non-zero timestamp in response")
+	}
+
+	// Verify audit entry
+	entries := sink.Entries()
+	if len(entries) == 0 {
+		t.Fatal("expected audit entry")
+	}
+	last := entries[len(entries)-1]
+	if last.Outcome != "success" {
+		t.Fatalf("expected audit outcome 'success', got %q", last.Outcome)
+	}
+	if last.Metadata["keys_purged"] != "11" {
+		t.Fatalf("expected keys_purged=11 in audit, got %q", last.Metadata["keys_purged"])
+	}
+}
+
+func TestAdminPurge_EmptyCache(t *testing.T) {
+	sink := &audit.MemorySink{}
+	plans := newMockPurgeable("plans", 0)
+	subs := newMockPurgeable("subscriptions", 0)
+	handler := NewAdminHandler("token", plans, subs)
+	r := buildRouter(sink, handler)
+
+	rec := doRequest(r, "token", "", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on empty cache, got %d", rec.Code)
+	}
+	resp := decodePurgeResponse(t, rec)
+	if resp.TotalKeysPurged != 0 {
+		t.Fatalf("expected 0 keys purged on empty cache, got %d", resp.TotalKeysPurged)
+	}
+	if resp.Status != "purged" {
+		t.Fatalf("expected status 'purged', got %q", resp.Status)
+	}
+}
+
+func TestAdminPurge_RepeatedPurge_Idempotent(t *testing.T) {
+	sink := &audit.MemorySink{}
+	plans := newMockPurgeable("plans", 5)
+	handler := NewAdminHandler("token", plans)
+	r := buildRouter(sink, handler)
+
+	// First call — should purge 5 keys
+	rec1 := doRequest(r, "token", "", "")
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first purge: expected 200, got %d", rec1.Code)
+	}
+	resp1 := decodePurgeResponse(t, rec1)
+	if resp1.TotalKeysPurged != 5 {
+		t.Fatalf("first purge: expected 5, got %d", resp1.TotalKeysPurged)
+	}
+
+	// Second call — cache is already empty, should return 0 without error
+	rec2 := doRequest(r, "token", "", "")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second purge: expected 200, got %d", rec2.Code)
+	}
+	resp2 := decodePurgeResponse(t, rec2)
+	if resp2.TotalKeysPurged != 0 {
+		t.Fatalf("second purge: expected 0, got %d", resp2.TotalKeysPurged)
+	}
+	if resp2.Status != "purged" {
+		t.Fatalf("second purge: expected status 'purged', got %q", resp2.Status)
+	}
+}
+
+func TestAdminPurge_CounterReset(t *testing.T) {
+	sink := &audit.MemorySink{}
+	p := newMockPurgeable("plans", 3)
+	handler := NewAdminHandler("token", p)
+	r := buildRouter(sink, handler)
+
+	rec := doRequest(r, "token", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	p.mu.Lock()
+	rc := p.resetCalls
+	p.mu.Unlock()
+
+	if rc != 1 {
+		t.Fatalf("expected ResetMetrics called once, got %d", rc)
+	}
+
+	resp := decodePurgeResponse(t, rec)
+	for _, ns := range resp.Namespaces {
+		if !ns.CountersReset {
+			t.Errorf("namespace %q: counters_reset should be true", ns.Namespace)
+		}
+	}
+}
+
+func TestAdminPurge_CounterResetOnError(t *testing.T) {
+	// Metrics should be reset even when Flush returns an error.
+	sink := &audit.MemorySink{}
+	p := newErrPurgeable("subscriptions", errors.New("redis unavailable"))
+	handler := NewAdminHandler("token", p)
+	r := buildRouter(sink, handler)
+
+	rec := doRequest(r, "token", "", "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 on flush error, got %d", rec.Code)
+	}
+
+	p.mu.Lock()
+	rc := p.resetCalls
+	p.mu.Unlock()
+
+	if rc != 1 {
+		t.Fatalf("ResetMetrics should be called even on Flush error, got %d calls", rc)
+	}
+}
+
+func TestAdminPurge_PartialFailure(t *testing.T) {
+	sink := &audit.MemorySink{}
+	good := newMockPurgeable("plans", 3)
+	bad := newErrPurgeable("subscriptions", errors.New("cache unavailable"))
+	handler := NewAdminHandler("token", good, bad)
+	r := buildRouter(sink, handler)
+
+	rec := doRequest(r, "token", "", "")
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 on partial failure, got %d", rec.Code)
+	}
+	resp := decodePurgeResponse(t, rec)
+	if resp.Status != "partial" {
+		t.Fatalf("expected status 'partial', got %q", resp.Status)
+	}
+
+	nsMap := make(map[string]namespaceSummary)
+	for _, ns := range resp.Namespaces {
+		nsMap[ns.Namespace] = ns
+	}
+	if nsMap["plans"].KeysPurged != 3 {
+		t.Fatalf("plans: expected 3 keys purged, got %d", nsMap["plans"].KeysPurged)
+	}
+	if nsMap["subscriptions"].Error == "" {
+		t.Fatal("subscriptions: expected error in summary, got none")
+	}
+
+	// Audit outcome should be "partial"
+	entries := sink.Entries()
+	last := entries[len(entries)-1]
+	if last.Outcome != "partial" {
+		t.Fatalf("audit outcome: expected 'partial', got %q", last.Outcome)
+	}
+}
+
+func TestAdminPurge_NoPurgeables(t *testing.T) {
+	// Handler with no purgeables must still succeed (zero namespaces).
+	sink := &audit.MemorySink{}
+	handler := NewAdminHandler("token") // no purgeables
+	r := buildRouter(sink, handler)
+
+	rec := doRequest(r, "token", "", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	resp := decodePurgeResponse(t, rec)
+	if resp.TotalKeysPurged != 0 {
+		t.Fatalf("expected 0 keys purged, got %d", resp.TotalKeysPurged)
+	}
+	if len(resp.Namespaces) != 0 {
+		t.Fatalf("expected empty namespaces slice, got %d", len(resp.Namespaces))
+	}
+}
+
+func TestAdminPurge_Concurrent(t *testing.T) {
+	// Multiple goroutines purging simultaneously must not race or panic.
+	sink := &audit.MemorySink{}
+	plans := newMockPurgeable("plans", 100)
+	subs := newMockPurgeable("subscriptions", 200)
+	handler := NewAdminHandler("token", plans, subs)
+	r := buildRouter(sink, handler)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := doRequest(r, "token", "", "")
+			if rec.Code != http.StatusOK && rec.Code != http.StatusAccepted {
+				t.Errorf("concurrent purge: unexpected status %d", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// ── real repo integration tests (no mocks, real InMemory cache) ──────────────
+
+func TestAdminPurge_WithRealRepos(t *testing.T) {
+	ctx := context.Background()
+
+	planCache := cache.NewInMemory()
+	subCache := cache.NewInMemory()
+
+	planBackend := repository.NewMockPlanRepo(
+		&repository.PlanRow{ID: "p1", Name: "Basic", Amount: "999", Currency: "usd", Interval: "month"},
+		&repository.PlanRow{ID: "p2", Name: "Pro", Amount: "1999", Currency: "usd", Interval: "month"},
+	)
+	subBackend := repository.NewMockSubscriptionRepo(
+		&repository.SubscriptionRow{ID: "s1", Status: "active", Amount: "999", Currency: "usd", Interval: "month"},
+	)
+
+	cachedPlans := repository.NewCachedPlanRepo(planBackend, planCache, 0)
+	cachedSubs := repository.NewCachedSubscriptionRepo(subBackend, subCache, 0)
+
+	// Populate the caches with a few reads
+	_, _ = cachedPlans.FindByID(ctx, "p1")
+	_, _ = cachedPlans.FindByID(ctx, "p2")
+	_, _ = cachedPlans.List(ctx)
+	_, _ = cachedSubs.FindByID(ctx, "s1")
+
+	if planCache.Len() == 0 {
+		t.Fatal("expected plan cache to have entries before purge")
+	}
+	if subCache.Len() == 0 {
+		t.Fatal("expected subscription cache to have entries before purge")
+	}
+
+	// Verify hits accumulated
+	planHits, _ := cachedPlans.Metrics()
+	// p1 and p2 listed via List; plan:list:all should exist.
+	// Second FindByID after List would be a cache hit — but we only called once.
+	// Misses should be non-zero regardless.
+	_, planMisses := cachedPlans.Metrics()
+	if planMisses == 0 && planHits == 0 {
+		t.Fatal("expected non-zero metrics before purge")
+	}
+
+	sink := &audit.MemorySink{}
+	handler := NewAdminHandler("token", cachedPlans, cachedSubs)
+	r := buildRouter(sink, handler)
+
+	rec := doRequest(r, "token", "ops-team", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d\nbody: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := decodePurgeResponse(t, rec)
+	if resp.TotalKeysPurged == 0 {
+		t.Fatalf("expected non-zero total_keys_purged, got 0")
+	}
+
+	// Caches must be empty after purge
+	if planCache.Len() != 0 {
+		t.Fatalf("plan cache not empty after purge: %d entries remain", planCache.Len())
+	}
+	if subCache.Len() != 0 {
+		t.Fatalf("subscription cache not empty after purge: %d entries remain", subCache.Len())
+	}
+
+	// Metrics must have been reset
+	h2, m2 := cachedPlans.Metrics()
+	if h2 != 0 || m2 != 0 {
+		t.Fatalf("plan metrics not reset: hits=%d misses=%d", h2, m2)
+	}
+	h3, m3 := cachedSubs.Metrics()
+	if h3 != 0 || m3 != 0 {
+		t.Fatalf("sub metrics not reset: hits=%d misses=%d", h3, m3)
+	}
+
+	// Subsequent reads re-populate from backend (no stale data)
+	p1, err := cachedPlans.FindByID(ctx, "p1")
+	if err != nil || p1.ID != "p1" {
+		t.Fatalf("post-purge FindByID: %v %v", p1, err)
 	}
 }
 

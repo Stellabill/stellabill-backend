@@ -88,17 +88,17 @@ func (csr *CachedSubscriptionRepo) FindByIDAndTenant(ctx context.Context, id str
 	return sr, nil
 }
 
-// UpdateStatus delegates the write to the backend and invalidates read-through cache entries.
-func (csr *CachedSubscriptionRepo) UpdateStatus(ctx context.Context, id string, tenantID string, status string) error {
-	if err := csr.backend.UpdateStatus(ctx, id, tenantID, status); err != nil {
-		return err
-	}
-	return csr.Delete(ctx, id, tenantID)
+// Metrics returns hit/miss counters for testing/monitoring.
+func (csr *CachedSubscriptionRepo) Metrics() (hits uint64, misses uint64) {
+	return atomic.LoadUint64(&csr.hits), atomic.LoadUint64(&csr.misses)
 }
 
-// Delete removes cached entries for a subscription and records invalidation times.
-// It clears both the by-id and by-id-and-tenant keys.
-func (csr *CachedSubscriptionRepo) Delete(ctx context.Context, id string, tenantID string) error {
+// --- cache.Purgeable implementation ---
+
+// Flush evicts all subscription cache entries and returns the number of keys removed.
+// If the underlying cache implements cache.Flushable, it is delegated there (O(1), atomic).
+// It is safe to call concurrently and when the cache is already empty.
+func (csr *CachedSubscriptionRepo) Flush(ctx context.Context) (int, error) {
 	if csr.cache == nil {
 		return 0, nil
 	}

@@ -81,62 +81,8 @@ type Config struct {
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
-	SecurityFrameOpt   string
-	SecurityHSTSMaxAge     string
-	SecurityFrameAncestors string
-	Outbox                 OutboxConfig
-	DBPoolMaxConns           int
-	DBPoolMinConns           int
-	DBPoolMaxConnLifetime    int // seconds
-	DBPoolMaxConnIdleTime    int // seconds
-	DBPoolConnectTimeout     int // seconds
-	DBPoolHealthCheckPeriod  int // seconds
-	DBPoolMetricsInterval    int // seconds
-}
-
-// OutboxConfig holds configuration for the outbox system
-type OutboxConfig struct {
-	PollInterval       string
-	BatchSize          int
-	MaxRetries         int
-	RetryBackoffFactor float64
-	CleanupInterval    string
-	CompletedEventTTL  string
-	ProcessingTimeout  string
-	PublisherType      string
-	HTTPEndpoint       string
-}
-
-func (c OutboxConfig) GetPollInterval() time.Duration {
-	d, err := time.ParseDuration(c.PollInterval)
-	if err != nil {
-		return 5 * time.Second
-	}
-	return d
-}
-
-func (c OutboxConfig) GetCleanupInterval() time.Duration {
-	d, err := time.ParseDuration(c.CleanupInterval)
-	if err != nil {
-		return 1 * time.Hour
-	}
-	return d
-}
-
-func (c OutboxConfig) GetCompletedEventTTL() time.Duration {
-	d, err := time.ParseDuration(c.CompletedEventTTL)
-	if err != nil {
-		return 24 * time.Hour
-	}
-	return d
-}
-
-func (c OutboxConfig) GetProcessingTimeout() time.Duration {
-	d, err := time.ParseDuration(c.ProcessingTimeout)
-	if err != nil {
-		return 30 * time.Second
-	}
-	return d
+	// CORS configuration
+	AllowedOrigins string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -277,27 +223,7 @@ func Load(opts ...Option) (Config, error) {
 		IdleTimeout:    DefaultIdleTimeout,
 		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
-		SecurityFrameOpt:   getEnv("SECURITY_FRAME_OPT", "DENY"),
-		SecurityHSTSMaxAge: getEnv("SECURITY_HSTS_MAX_AGE", "31536000"),
-		Outbox: OutboxConfig{
-			PollInterval:       getEnv("OUTBOX_POLL_INTERVAL", "5s"),
-			BatchSize:          getEnvInt("OUTBOX_BATCH_SIZE", 10),
-			MaxRetries:         getEnvInt("OUTBOX_MAX_RETRIES", 3),
-			RetryBackoffFactor: 2.0, // Default
-			CleanupInterval:    getEnv("OUTBOX_CLEANUP_INTERVAL", "1h"),
-			CompletedEventTTL:  getEnv("OUTBOX_COMPLETED_EVENT_TTL", "24h"),
-			ProcessingTimeout:  getEnv("OUTBOX_PROCESSING_TIMEOUT", "30s"),
-			PublisherType:      getEnv("OUTBOX_PUBLISHER_TYPE", "console"),
-			HTTPEndpoint:       getEnv("OUTBOX_HTTP_ENDPOINT", ""),
-		},
-		// DB pool — safe production defaults
-		DBPoolMaxConns:          DefaultDBPoolMaxConns,
-		DBPoolMinConns:          DefaultDBPoolMinConns,
-		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
-		DBPoolMaxConnIdleTime:   DefaultDBPoolMaxConnIdleTime,
-		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
-		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
-		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
+		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
 	}
 
 	// Resolve secrets through the provider

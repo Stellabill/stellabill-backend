@@ -161,6 +161,12 @@ curl -X POST http://localhost:8080/api/outbox/test
 
 ## Configuration
 
+> **Quick start:** copy [`.env.example`](.env.example) to `.env`, fill in the
+> required values marked `[REQUIRED]`, and start the server. Never commit `.env`.
+> The example file is kept in sync with `config.go` and validated by
+> `TestEnvExampleValuesPassValidation` in `internal/config/config_test.go`.
+
+
 | Variable        | Default                                      | Description                    |
 |----------------|----------------------------------------------|--------------------------------|
 | `ENV`          | `development`                                | Environment (e.g. production)  |

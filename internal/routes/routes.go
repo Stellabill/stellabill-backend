@@ -1,9 +1,11 @@
 package routes
 
 import (
-	"fmt"
+	"log"
+	"os"
+	"time"
 
-	"stellarbill-backend/internal/auth"
+	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
@@ -55,21 +57,29 @@ func Register(r *gin.Engine) {
 		MaxRatio:             cfg.MaxGzipRatio,
 	}))
 
-	// Dependencies
-	subRepo := repository.NewMockSubscriptionRepo()
-	planRepo := repository.NewMockPlanRepo()
+	// Each cached repo gets its own InMemory cache instance so that Flush is
+	// scoped to its namespace and does not evict entries from other caches.
+	planCache := cache.NewInMemory()
+	subCache := cache.NewInMemory()
+	const repoCacheTTL = 5 * time.Minute
+
+	rawPlanRepo := repository.NewMockPlanRepo()
+	rawSubRepo := repository.NewMockSubscriptionRepo()
+
+	cachedPlanRepo := repository.NewCachedPlanRepo(rawPlanRepo, planCache, repoCacheTTL)
+	cachedSubRepo := repository.NewCachedSubscriptionRepo(rawSubRepo, subCache, repoCacheTTL)
+
+	svc := service.NewSubscriptionService(cachedSubRepo, cachedPlanRepo)
+
+	// Statement service wiring (in-memory mock for test/dev)
 	stmtRepo := repository.NewMockStatementRepo()
+	stmtSvc := service.NewStatementService(rawSubRepo, stmtRepo)
 
-	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
-	svc := service.NewSubscriptionService(subRepo, planRepo)
-
-	// Create handlers
-	h := handlers.NewHandler(nil, nil)
-	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
-
-	// Auth configuration
-	jwtSecret := cfg.JWTSecret
-	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
+	// Admin handler receives the cached repos so PurgeCache can invalidate them.
+	adminToken := os.Getenv("ADMIN_TOKEN")
+	adminHandler := handlers.NewAdminHandler(adminToken, cachedPlanRepo, cachedSubRepo)
+	// Wire the cached plan repo into the package-level ListPlans handler.
+	handlers.SetPlanRepository(cachedPlanRepo)
 
 	// API Groups
 	api := r.Group("/api")
@@ -137,13 +147,6 @@ func Register(r *gin.Engine) {
 		adapter := reconciliation.NewMemoryAdapter()
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
-		admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
-			reports, err := reconStore.ListReports()
-			if err != nil {
-				c.JSON(500, gin.H{"error": "failed to load reports"})
-				return
-			}
-			c.JSON(200, gin.H{"reports": reports})
-		})
+		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
 	}
 }

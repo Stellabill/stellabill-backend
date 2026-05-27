@@ -204,3 +204,79 @@ func TestIsValidSecretRequiresSpecialCharacter(t *testing.T) {
 		t.Fatal("expected strong secret to pass")
 	}
 }
+// TestEnvExampleValuesPassValidation verifies that every value shown in
+// .env.example produces a valid config when fed through Load().
+// This prevents the example file from going stale relative to config.go.
+func TestEnvExampleValuesPassValidation(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		// Application
+		"ENV":  "development",
+		"PORT": "8080",
+		// HTTP tuning
+		"MAX_HEADER_BYTES": "1048576",
+		"READ_TIMEOUT":     "30",
+		"WRITE_TIMEOUT":    "30",
+		"IDLE_TIMEOUT":     "120",
+		// Request / body size limits
+		"MAX_REQUEST_SIZE":     "10485760",
+		"MAX_GZIP_UNCOMPRESSED": "52428800",
+		"MAX_GZIP_RATIO":       "10.0",
+		// Security headers
+		"SECURITY_FRAME_ANCESTORS": "'none'",
+		// Rate limiting
+		"RATE_LIMIT_ENABLED":   "true",
+		"RATE_LIMIT_MODE":      "ip",
+		"RATE_LIMIT_RPS":       "10",
+		"RATE_LIMIT_BURST":     "20",
+		"RATE_LIMIT_WHITELIST": "/api/health",
+		// Tracing
+		"TRACING_EXPORTER":     "stdout",
+		"TRACING_SERVICE_NAME": "stellabill-backend",
+		// DB pool
+		"DB_POOL_MAX_CONNS":           "25",
+		"DB_POOL_MIN_CONNS":           "2",
+		"DB_POOL_MAX_CONN_LIFETIME":   "3600",
+		"DB_POOL_MAX_CONN_IDLE_TIME":  "600",
+		"DB_POOL_CONNECT_TIMEOUT":     "5",
+		"DB_POOL_HEALTH_CHECK_PERIOD": "30",
+		"DB_POOL_METRICS_INTERVAL":    "15",
+	}, func() {
+		provider := &stubProvider{
+			values: map[string]string{
+				"DATABASE_URL": "postgres://stellabill:changeme@localhost:5432/stellabill_dev?sslmode=disable",
+				"JWT_SECRET":   "CHANGE_ME_jwt_Secret1!",
+				"ADMIN_TOKEN":  "CHANGE_ME_admin_Token1!",
+			},
+			errs: map[string]error{},
+		}
+		cfg, err := Load(WithSecretsProvider(provider))
+		if err != nil {
+			t.Fatalf(".env.example values failed config.Load(): %v", err)
+		}
+		// Spot-check a representative sample of parsed fields.
+		if cfg.Port != 8080 {
+			t.Errorf("expected Port=8080, got %d", cfg.Port)
+		}
+		if cfg.ReadTimeout != 30 {
+			t.Errorf("expected ReadTimeout=30, got %d", cfg.ReadTimeout)
+		}
+		if cfg.RateLimitRPS != 10 {
+			t.Errorf("expected RateLimitRPS=10, got %d", cfg.RateLimitRPS)
+		}
+		if cfg.RateLimitBurst != 20 {
+			t.Errorf("expected RateLimitBurst=20, got %d", cfg.RateLimitBurst)
+		}
+		if cfg.DBPoolMaxConns != 25 {
+			t.Errorf("expected DBPoolMaxConns=25, got %d", cfg.DBPoolMaxConns)
+		}
+		if cfg.DBPoolMinConns != 2 {
+			t.Errorf("expected DBPoolMinConns=2, got %d", cfg.DBPoolMinConns)
+		}
+		if cfg.TracingExporter != "stdout" {
+			t.Errorf("expected TracingExporter=stdout, got %s", cfg.TracingExporter)
+		}
+		if cfg.MaxRequestSize != 10485760 {
+			t.Errorf("expected MaxRequestSize=10485760, got %d", cfg.MaxRequestSize)
+		}
+	})
+}

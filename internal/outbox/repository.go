@@ -181,7 +181,8 @@ func (r *postgresRepository) DeleteCompletedEvents(olderThan time.Time) (int64, 
 // scanEvent scans a database row into an Event struct
 func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) error }) (*Event, error) {
 	var event Event
-	var aggregateID, aggregateType, nextRetryAt, errorMessage sql.NullString
+	var aggregateID, aggregateType, errorMessage sql.NullString
+	var nextRetryAt sql.NullTime
 	
 	err := scanner.Scan(
 		&event.ID,

@@ -48,30 +48,42 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		// Minimal, safe handler that validates caller and path, then delegates to the service.
 		callerID, exists := c.Get("callerID")
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RespondWithAuthError(c, "unauthorized")
 			return
 		}
 
 		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			RespondWithValidationError(c, err.Error(), nil)
 			return
 		}
 
 		id, err := requestparams.NormalizePathID("id", c.Param("id"))
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			RespondWithValidationError(c, err.Error(), nil)
 			return
 		}
 
+		tenantID := c.GetString("tenantID")
 		// Delegate to service (note: real implementation may include ownership checks)
-		_, _, err = svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		detail, _, err := svc.GetDetail(c.Request.Context(), tenantID, callerID.(string), id)
 		if err != nil {
-			// Simplified error handling to keep compilation and behavior predictable during tests.
-			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+			code, errCode, msg := MapServiceErrorToResponse(err)
+			RespondWithError(c, code, errCode, msg)
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"id": id})
+		c.JSON(http.StatusOK, gin.H{
+			"api_version": "1",
+			"data": gin.H{
+				"id":              detail.ID,
+				"plan_id":         detail.PlanID,
+				"customer":        detail.Customer,
+				"status":          detail.Status,
+				"interval":        detail.Interval,
+				"plan":            detail.Plan,
+				"billing_summary": detail.BillingSummary,
+			},
+		})
 	}
 }
 
@@ -108,4 +120,9 @@ func UpdateSubscriptionStatus(c *gin.Context) {
 		"id":     id,
 		"status": payload.Status,
 	})
+}
+
+// ListSubscriptions is a package-level helper for backwards compatibility / benchmark tests.
+func ListSubscriptions(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"subscriptions": []Subscription{}})
 }

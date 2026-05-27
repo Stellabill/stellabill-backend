@@ -20,11 +20,22 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
             return
         }
 
-        role := c.GetString(auth.RoleContextKey)
+        roleVal, _ := c.Get(auth.RoleContextKey)
+        var roleStr string
+        if r, ok := roleVal.(auth.Role); ok {
+            roleStr = string(r)
+        } else if s, ok := roleVal.(string); ok {
+            roleStr = s
+        }
         tenantID := c.GetString("tenantID")
 
+        if roleStr != string(auth.RoleAdmin) && tenantID == "" {
+            c.JSON(http.StatusForbidden, gin.H{"error": "tenant context missing"})
+            return
+        }
+
         for i := range backendSubs {
-            if role != string(auth.RoleAdmin) {
+            if roleStr != string(auth.RoleAdmin) {
                 if backendSubs[i].TenantID != "" && backendSubs[i].TenantID != tenantID {
                     c.JSON(http.StatusForbidden, gin.H{"error": "cross-tenant reconciliation forbidden"})
                     return
@@ -46,7 +57,7 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
         snapMap := make(map[string]*reconciliation.Snapshot)
         for i := range snaps {
             s := snaps[i]
-            if role != string(auth.RoleAdmin) && s.TenantID != tenantID {
+            if roleStr != string(auth.RoleAdmin) && s.TenantID != tenantID {
                 continue
             }
             snapMap[s.SubscriptionID] = &s

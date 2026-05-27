@@ -1,31 +1,34 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
-	"strconv"
-
-	"stellarbill-backend/internal/pagination"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/repository"
 )
 
-func (h *Handler) ListPlans(c *gin.Context) {
-	ctx := context.Background()
-	if c.Request != nil {
-		ctx = c.Request.Context()
-	}
+type Plan struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Amount      string `json:"amount"`
+	Currency    string `json:"currency"`
+	Interval    string `json:"interval"`
+	Description string `json:"description,omitempty"`
+}
 
-	plans, err := h.planService.ListPlans(ctx)
+func (h *Handler) ListPlans(c *gin.Context) {
+	plans, err := h.Plans.ListPlans(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	if plans == nil {
-		plans = []services.Plan{}
+		plans = []Plan{}
 	}
+
+	c.JSON(http.StatusOK, gin.H{"plans": plans})
+}
 
 var planRepo repository.PlanRepository
 

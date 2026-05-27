@@ -19,13 +19,17 @@ type mockSubscriptionService struct {
 	id       string
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerID, id string) (*service.SubscriptionDetail, []string, error) {
 	m.callerID = callerID
 	m.id = id
 	return m.detail, m.warnings, m.err
 }
 
-func (m *mockSubscriptionService) ListSubscriptions(_ context.Context) ([]Subscription, error) {
+func (m *mockSubscriptionService) ListSubscriptions(c *gin.Context) ([]Subscription, error) {
+	return nil, nil
+}
+
+func (m *mockSubscriptionService) GetSubscription(c *gin.Context, id string) (*Subscription, error) {
 	return nil, nil
 }
 
@@ -41,8 +45,7 @@ func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 			c.Next()
 		})
 	}
-	h := &Handler{Subscriptions: svc}
-	r.GET("/api/subscriptions/:id", h.GetSubscription)
+	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(svc))
 	return r
 }
 

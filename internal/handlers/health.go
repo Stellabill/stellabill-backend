@@ -5,14 +5,38 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/outbox"
 )
 
+var globalOutboxManager *outbox.Manager
+
+type DBPinger interface {
+	PingContext(ctx context.Context) error
+}
+
+type HealthResponse struct {
+	Status       string            `json:"status"`
+	Service      string            `json:"service"`
+	Timestamp    string            `json:"timestamp"`
+	Dependencies map[string]string `json:"dependencies"`
+}
+
+const (
+	ServiceName        = "stellarbill-backend"
+	StatusReady        = "ready"
+	StatusDegraded     = "degraded"
+	StatusUnavailable  = "unavailable"
+	MaxRetries         = 3
+	MaxDatabaseTimeout = 2 * time.Second
+	InitialBackoff     = 100 * time.Millisecond
+)
+
 func (h *Handler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+	status := gin.H{
 		"status":  "ok",
 		"service": "stellarbill-backend",
 	}

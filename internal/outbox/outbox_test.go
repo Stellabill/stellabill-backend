@@ -3,7 +3,6 @@ package outbox
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -77,7 +76,10 @@ func (suite *OutboxTestSuite) SetupSuite() {
 	// Use an in-memory PostgreSQL or test database
 	// For this example, we'll use a test database connection string
 	db, err := sql.Open("postgres", "postgres://localhost/test_stellabill?sslmode=disable")
-	require.NoError(suite.T(), err)
+	if err != nil || db.Ping() != nil {
+		suite.T().Skip("Postgres not available")
+		return
+	}
 	
 	suite.db = db
 	suite.repository = NewPostgresRepository(db)
@@ -113,6 +115,7 @@ func (suite *OutboxTestSuite) SetupTest() {
 		PublisherType:    "console",
 	}
 	
+	var err error
 	suite.service, err = NewService(suite.db, serviceConfig)
 	require.NoError(suite.T(), err)
 }

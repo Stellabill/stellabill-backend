@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/requestparams"
+	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/service"
-	"stellarbill-backend/internal/subscriptions"
 )
 
 type Subscription struct {
@@ -19,93 +21,121 @@ type Subscription struct {
 	NextBilling string `json:"next_billing,omitempty"`
 }
 
+func (s Subscription) GetID() string        { return s.ID }
+func (s Subscription) GetSortValue() string { return s.Customer } // Sort by customer for now
+
 func (h *Handler) ListSubscriptions(c *gin.Context) {
-	// Delegate to the injected service/repo. Keep behavior minimal and compatible with tests.
-	subs, err := h.Subscriptions.ListSubscriptions(c)
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 {
+		limit = 10
+	}
+
+	cursorStr := c.Query("cursor")
+	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor format"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"subscriptions": subs})
+
+	allSubs, err := h.Subscriptions.ListSubscriptions(c)
+	if err != nil {
+		RespondWithInternalError(c, "Failed to retrieve subscriptions")
+		return
+	}
+
+	page := pagination.PaginateSlice(allSubs, cursor, limit)
+
+	c.JSON(http.StatusOK, gin.H{
+		"subscriptions": page.Items,
+		"next_cursor":   page.NextCursor,
+		"has_more":      page.HasMore,
+	})
 }
 
 func (h *Handler) GetSubscription(c *gin.Context) {
 	id := c.Param("id")
-	c.JSON(http.StatusOK, Subscription{
-		ID:       id,
-		PlanID:   "plan_placeholder",
-		Customer: "customer_placeholder",
-		Status:   "placeholder",
-		Amount:   "0",
-		Interval: "monthly",
-	})
+	sub, err := h.Subscriptions.GetSubscription(c, id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	c.JSON(http.StatusOK, sub)
+}
+
+type changeSubscriptionStatusRequest struct {
+	Status string `json:"status"`
+}
+
+// NewChangeSubscriptionStatusHandler returns a tenant-scoped status mutation handler.
+func NewChangeSubscriptionStatusHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if svc == nil {
+			RespondWithInternalError(c, "Subscription service is unavailable")
+			return
+		}
+
+		tenantID, ok := getRequiredStringContextValue(c, "tenantID", "Missing tenant context")
+		if !ok {
+			return
+		}
+
+		actorID := c.GetString("callerID")
+
+		var req changeSubscriptionStatusRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			RespondWithValidationError(c, "Invalid request body", map[string]interface{}{
+				"reason": err.Error(),
+			})
+			return
+		}
+		req.Status = strings.TrimSpace(req.Status)
+		if req.Status == "" {
+			RespondWithError(c, http.StatusUnprocessableEntity, ErrorCodeValidationFailed, "status is required")
+			return
+		}
+
+		result, err := svc.ChangeStatus(c.Request.Context(), tenantID, actorID, c.Param("id"), req.Status)
+		if err != nil {
+			switch {
+			case errors.Is(err, service.ErrInvalidStatus):
+				RespondWithError(c, http.StatusUnprocessableEntity, ErrorCodeValidationFailed, err.Error())
+			case errors.Is(err, service.ErrInvalidTransition), errors.Is(err, service.ErrUnknownCurrentState):
+				RespondWithError(c, http.StatusConflict, ErrorCodeConflict, err.Error())
+			default:
+				status, code, message := MapServiceErrorToResponse(err)
+				RespondWithError(c, status, code, message)
+			}
+			return
+		}
+
+		c.JSON(http.StatusOK, service.ResponseEnvelope{
+			APIVersion: "v1",
+			Data:       result,
+		})
+	}
 }
 
 // NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full
 // subscription detail using the provided SubscriptionService.
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Minimal, safe handler that validates caller and path, then delegates to the service.
-		callerID, exists := c.Get("callerID")
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-			return
-		}
-
-		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		id, err := requestparams.NormalizePathID("id", c.Param("id"))
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Delegate to service (note: real implementation may include ownership checks)
-		_, _, err = svc.GetDetail(c.Request.Context(), callerID.(string), id)
-		if err != nil {
-			// Simplified error handling to keep compilation and behavior predictable during tests.
-			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"id": id})
+		c.JSON(http.StatusOK, gin.H{"id": c.Param("id")})
 	}
 }
 
-// UpdateSubscriptionStatus handles status updates with validation
-func UpdateSubscriptionStatus(c *gin.Context) {
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
-		return
+func getRequiredStringContextValue(c *gin.Context, key string, missingMessage string) (string, bool) {
+	value, exists := c.Get(key)
+	if !exists {
+		RespondWithAuthError(c, missingMessage)
+		return "", false
 	}
 
-	var payload struct {
-		Status string `json:"status" binding:"required"`
+	str, ok := value.(string)
+	if !ok || str == "" {
+		RespondWithAuthError(c, missingMessage)
+		return "", false
 	}
 
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// TODO: fetch current subscription from DB
-	currentStatus := "active" // placeholder
-
-	if err := subscriptions.CanTransition(currentStatus, payload.Status); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// TODO: persist update
-
-	c.JSON(http.StatusOK, gin.H{
-		"id":     id,
-		"status": payload.Status,
-	})
+	return str, true
 }

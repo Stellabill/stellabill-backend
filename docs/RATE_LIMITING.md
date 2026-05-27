@@ -25,13 +25,43 @@ This document describes the API rate limiting middleware implemented for the Ste
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RATE_LIMIT_ENABLED` | `true` | Enable/disable rate limiting |
-| `RATE_LIMIT_MODE` | `ip` | Rate limiting mode: `ip`, `user`, `hybrid` |
-| `RATE_LIMIT_RPS` | `10` | Base requests per second |
-| `RATE_LIMIT_BURST` | `20` | Maximum burst size |
-| `RATE_LIMIT_WHITELIST` | `/api/health` | Comma-separated list of whitelisted paths |
+| Variable               | Default       | Description                                                              |
+| ---------------------- | ------------- | ------------------------------------------------------------------------ |
+| `RATE_LIMIT_ENABLED`   | `true`        | Enable/disable rate limiting (enabled by default for security)           |
+| `RATE_LIMIT_MODE`      | `ip`          | Rate limiting mode: `ip`, `user`, `hybrid`                               |
+| `RATE_LIMIT_RPS`       | `10`          | Base requests per second (conservative default for security)             |
+| `RATE_LIMIT_BURST`     | `20`          | Maximum burst size (2x RPS by default)                                   |
+| `RATE_LIMIT_WHITELIST` | `/api/health` | Comma-separated list of whitelisted paths (only health check by default) |
+
+### Per-Route Configuration
+
+The middleware supports per-route rate limit overrides for sensitive endpoints. This allows applying stricter limits to high-cost or security-sensitive operations while maintaining reasonable limits for general API usage.
+
+#### Default Per-Route Limits
+
+The following endpoints have stricter rate limits by default:
+
+- **List endpoints** (`/api/plans`, `/api/subscriptions`): 5 RPS, burst of 10
+- **Reconciliation endpoint** (`/api/admin/reconcile`): 2 RPS, burst of 5
+
+These limits are configured in `internal/routes/routes.go` and can be adjusted based on your security requirements and infrastructure capacity.
+
+#### Configuring Per-Route Limits
+
+Per-route limits are configured in the `RouteConfigs` map when initializing the rate limiter:
+
+```go
+rateLimitConfig := middleware.RateLimiterConfig{
+    Enabled:        true,
+    Mode:           ModeIP,
+    RequestsPerSec: 10,  // Default limit
+    BurstSize:      20,  // Default burst
+    RouteConfigs: map[string]RouteSpecificConfig{
+        "/api/sensitive":  {RequestsPerSec: 2, BurstSize: 5},
+        "/api/expensive":  {RequestsPerSec: 5, BurstSize: 10},
+    },
+}
+```
 
 ### Configuration Examples
 
@@ -86,6 +116,26 @@ The middleware adds rate limit information to response headers:
 - `X-RateLimit-Remaining`: Number of requests remaining in the current window
 - `X-RateLimit-Reset`: Time when the rate limit window resets (RFC3339 format)
 - `Retry-After`: Seconds to wait before retrying (only on rate-limited responses)
+
+### Logging and Observability
+
+The middleware provides logging capabilities for security monitoring:
+
+- **Rate Limit Hit Logging**: When enabled, logs rate limit violations with path, client key, and mode
+- **Configuration**: Set `LogRateLimitHits: true` in the rate limiter config
+- **Log Format**: `[RATE_LIMIT] path=/api/endpoint key=192.168.1.100 mode=ip`
+
+This logging helps detect:
+
+- Brute force attack attempts
+- Abusive client behavior
+- Rate limit configuration tuning needs
+
+Example log output:
+
+```
+[RATE_LIMIT] path=/api/admin/reconcile key=192.168.1.100 mode=ip
+```
 
 ### Rate Limited Response
 

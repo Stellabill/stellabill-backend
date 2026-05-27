@@ -1,5 +1,10 @@
 # Repository Unit Tests with SQL Mocking
 
+> **This file covers repository-layer SQL mock tests.**
+> For the consolidated local dev and test guide (including all packages,
+> integration tests, and troubleshooting), see
+> **[docs/dev-test-guide.md](docs/dev-test-guide.md)**.
+
 This document describes the comprehensive repository unit tests implemented for the stellabill-backend project using SQL mocking to verify query correctness and error handling without external database dependencies.
 
 ## Overview

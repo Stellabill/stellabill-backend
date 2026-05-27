@@ -12,6 +12,7 @@ var ErrNotFound = errors.New("not found")
 type SubscriptionRepository interface {
 	FindByID(ctx context.Context, id string) (*SubscriptionRow, error)
 	FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*SubscriptionRow, error)
+	UpdateStatus(ctx context.Context, id string, tenantID string, status string) error
 }
 
 // PlanRepository is the read interface used by the service.
@@ -28,8 +29,10 @@ type StatementQuery struct {
 	Status         string
 	StartAfter     string
 	EndBefore      string
-	PageSize       int
-	Page           int
+	StartingAfter  string // cursor for forward pagination
+	EndingBefore   string // cursor for backward pagination
+	Limit          int    // replaces PageSize
+	Order          string // e.g. "asc", "desc"
 }
 
 // StatementRepository is the read interface used by the service.

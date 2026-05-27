@@ -39,6 +39,7 @@ func NewSubscriptionService(subRepo repository.SubscriptionRepository, planRepo 
 func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
 	ctx, span := tracer.Start(ctx, "SubscriptionService.GetDetail",
 		trace.WithAttributes(
+			attribute.String("tenant.id", tenantID),
 			attribute.String("subscription.id", subscriptionID),
 			attribute.String("tenant.id", tenantID),
 			attribute.String("caller.id", callerID),

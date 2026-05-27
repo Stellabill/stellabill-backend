@@ -23,8 +23,7 @@ func RequestLogger() gin.HandlerFunc {
 		ctx := correlation.WithRequestID(c.Request.Context(), requestID)
 		c.Request = c.Request.WithContext(ctx)
 
-		ctx, span := otel.Tracer("middleware").Start(ctx, "RequestLogger")
-		if span != nil {
+		if _, span := otel.Tracer("middleware").Start(ctx, "RequestLogger"); span != nil {
 			span.SetAttributes(attribute.String("request_id", requestID))
 			defer span.End()
 		}

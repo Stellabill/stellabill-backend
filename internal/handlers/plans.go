@@ -4,8 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/pagination"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Plan struct {
@@ -20,7 +21,6 @@ type Plan struct {
 func (p Plan) GetID() string        { return p.ID }
 func (p Plan) GetSortValue() string { return p.Name } // Standardize on Name as sort key
 
-// ListPlans handles requests for listing all available plans.
 func (h *Handler) ListPlans(c *gin.Context) {
 	limitStr := c.DefaultQuery("limit", "10")
 	limit, _ := strconv.Atoi(limitStr)
@@ -35,14 +35,13 @@ func (h *Handler) ListPlans(c *gin.Context) {
 		return
 	}
 
-	// Fetch plans from the service/repository
 	allPlans, err := h.Plans.ListPlans(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
 		return
 	}
 
-	// Paginate the slice. In a real DB repo, this would be in the query.
+	// For now, we paginate the slice. In a real DB repo, this would be in the query.
 	page := pagination.PaginateSlice(allPlans, cursor, limit)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -51,3 +50,4 @@ func (h *Handler) ListPlans(c *gin.Context) {
 		"has_more":    page.HasMore,
 	})
 }
+

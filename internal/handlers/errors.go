@@ -9,6 +9,7 @@ import (
 
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/validation"
 )
 
 // ErrorCode represents a standardized error code
@@ -91,9 +92,18 @@ func MapServiceErrorToResponse(err error) (int, ErrorCode, string) {
 	}
 }
 
-// RespondWithValidationError sends a validation error response
-func RespondWithValidationError(c *gin.Context, message string, details map[string]interface{}) {
-	RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeValidationFailed, message, details)
+// RespondWithValidationError is kept for compatibility but delegates to RespondWithValidationFields
+func RespondWithValidationError(c *gin.Context, message string, fieldErrors []validation.FieldError) {
+	RespondWithValidationFields(c, message, fieldErrors)
+}
+
+// RespondWithValidationFields sends a validation error response with the specific {error, fields} format
+func RespondWithValidationFields(c *gin.Context, message string, fields []validation.FieldError) {
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error":  message,
+		"fields": fields,
+	})
 }
 
 // RespondWithAuthError sends an authentication error response

@@ -106,15 +106,9 @@ func (m *MockStatementRepo) FindByID(_ context.Context, id string) (*StatementRo
 
 // ListByCustomerID returns statement rows for the customer matching the query.
 func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID string, q StatementQuery) ([]*StatementRow, int, error) {
-	if m.listErr != nil {
-		return nil, 0, m.listErr
-	}
-	out := make([]*StatementRow, 0)
+	filtered := make([]*StatementRow, 0)
 	for _, r := range m.records {
 		if r.CustomerID != customerID {
-			continue
-		}
-		if q.SubscriptionID != "" && r.SubscriptionID != q.SubscriptionID {
 			continue
 		}
 		if q.Kind != "" && r.Kind != q.Kind {
@@ -123,23 +117,33 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 		if q.Status != "" && r.Status != q.Status {
 			continue
 		}
-		// Basic simulated filtering for period checks
-		if q.StartAfter != "" && r.PeriodStart < q.StartAfter {
+		if q.SubscriptionID != "" && r.SubscriptionID != q.SubscriptionID {
 			continue
 		}
-		if q.EndBefore != "" && r.PeriodEnd > q.EndBefore {
-			continue
-		}
+		filtered = append(filtered, r)
+	}
 
-		out = append(out, r)
+	total := len(filtered)
+	
+	// Default pagination if not provided
+	page := q.Page
+	if page <= 0 {
+		page = 1
 	}
-	totalCount := len(out)
-	limit := q.Limit
-	if limit <= 0 {
-		limit = 10
+	pageSize := q.PageSize
+	if pageSize <= 0 {
+		pageSize = 10
 	}
-	if len(out) > limit {
-		out = out[:limit]
+
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []*StatementRow{}, total, nil
 	}
-	return out, totalCount, nil
+	
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	return filtered[start:end], total, nil
 }

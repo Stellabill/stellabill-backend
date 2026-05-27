@@ -157,6 +157,6 @@ func TestPaginateSlice_CursorBeyondData(t *testing.T) {
 	cursor := Cursor{ID: "z", SortValue: "99"}
 	page := PaginateSlice(items, cursor, 2)
 	if len(page.Items) != 0 || page.HasMore || page.NextCursor != "" {
-		t.Errorf("expected empty result, got %v", page)
+		t.Errorf("expected empty result, got %v, %v, %v", page.Items, page.NextCursor, page.HasMore)
 	}
 }

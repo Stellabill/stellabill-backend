@@ -14,9 +14,6 @@ func SecurityHeaders(cfg *config.Config) gin.HandlerFunc {
 		// X-Frame-Options prevents clickjacking.
 		if c.Writer.Header().Get("X-Frame-Options") == "" {
 			opt := "DENY"
-			if opt != "DENY" && opt != "SAMEORIGIN" {
-				opt = "DENY" // Prevent insecure combinations like ALLOW-FROM
-			}
 			c.Header("X-Frame-Options", opt)
 		}
 

@@ -1,10 +1,28 @@
 package logger
 
 import (
+	"os"
+
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/contrib/bridges/otellogrus"
 )
 
-// Log is the package-level logrus instance shared by callers that want a
-// pre-configured JSON logger. Helpers were intentionally trimmed because no
-// runtime code paths exercise them today.
 var Log = logrus.New()
+
+func Init() {
+	Log.SetFormatter(&logrus.JSONFormatter{})
+	Log.SetOutput(os.Stdout)
+	Log.AddHook(otellogrus.NewHook("stellarbill-backend"))
+
+	level := os.Getenv("LOG_LEVEL")
+	switch level {
+	case "debug":
+		Log.SetLevel(logrus.DebugLevel)
+	case "warn":
+		Log.SetLevel(logrus.WarnLevel)
+	case "error":
+		Log.SetLevel(logrus.ErrorLevel)
+	default:
+		Log.SetLevel(logrus.InfoLevel)
+	}
+}

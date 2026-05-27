@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +19,7 @@ func setupTestRouter() *gin.Engine {
 func TestFeatureFlag_Enabled(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("test_enabled", true, "")
+	featureflags.GetInstance().SetFlag("test_enabled", true, "")
 	
 	router.GET("/test", FeatureFlag("test_enabled"), func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "success"})
@@ -44,7 +43,7 @@ func TestFeatureFlag_Enabled(t *testing.T) {
 func TestFeatureFlag_Disabled(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("test_disabled", false, "")
+	featureflags.GetInstance().SetFlag("test_disabled", false, "")
 	
 	router.GET("/test", FeatureFlag("test_disabled"), func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "success"})
@@ -116,7 +115,7 @@ func TestFeatureFlag_EmptyFlagName(t *testing.T) {
 func TestFeatureFlag_CustomResponse(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("test_custom", false, "")
+	featureflags.GetInstance().SetFlag("test_custom", false, "")
 	
 	customResponse := func(c *gin.Context) {
 		c.JSON(418, gin.H{"custom": "response"})
@@ -149,7 +148,7 @@ func TestFeatureFlag_CustomResponse(t *testing.T) {
 func TestConditionalFeatureFlag_ConditionTrue(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("test_conditional", false, "")
+	featureflags.GetInstance().SetFlag("test_conditional", false, "")
 	
 	condition := func(c *gin.Context) bool {
 		return c.GetHeader("X-Test-Condition") == "true"
@@ -172,7 +171,7 @@ func TestConditionalFeatureFlag_ConditionTrue(t *testing.T) {
 func TestConditionalFeatureFlag_ConditionFalse(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("test_conditional", false, "")
+	featureflags.GetInstance().SetFlag("test_conditional", false, "")
 	
 	condition := func(c *gin.Context) bool {
 		return c.GetHeader("X-Test-Condition") == "true"
@@ -194,8 +193,8 @@ func TestConditionalFeatureFlag_ConditionFalse(t *testing.T) {
 func TestRequireAnyFeatureFlag_OneEnabled(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("flag1", false, "")
-	featureflags.SetFlag("flag2", true, "")
+	featureflags.GetInstance().SetFlag("flag1", false, "")
+	featureflags.GetInstance().SetFlag("flag2", true, "")
 	
 	router.GET("/test", RequireAnyFeatureFlag("flag1", "flag2"), func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "success"})
@@ -213,8 +212,8 @@ func TestRequireAnyFeatureFlag_OneEnabled(t *testing.T) {
 func TestRequireAnyFeatureFlag_NoneEnabled(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("flag1", false, "")
-	featureflags.SetFlag("flag2", false, "")
+	featureflags.GetInstance().SetFlag("flag1", false, "")
+	featureflags.GetInstance().SetFlag("flag2", false, "")
 	
 	router.GET("/test", RequireAnyFeatureFlag("flag1", "flag2"), func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "success"})
@@ -238,8 +237,8 @@ func TestRequireAnyFeatureFlag_NoneEnabled(t *testing.T) {
 func TestRequireAllFeatureFlags_AllEnabled(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("flag1", true, "")
-	featureflags.SetFlag("flag2", true, "")
+	featureflags.GetInstance().SetFlag("flag1", true, "")
+	featureflags.GetInstance().SetFlag("flag2", true, "")
 	
 	router.GET("/test", RequireAllFeatureFlags("flag1", "flag2"), func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "success"})
@@ -257,8 +256,8 @@ func TestRequireAllFeatureFlags_AllEnabled(t *testing.T) {
 func TestRequireAllFeatureFlags_OneDisabled(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.SetFlag("flag1", true, "")
-	featureflags.SetFlag("flag2", false, "")
+	featureflags.GetInstance().SetFlag("flag1", true, "")
+	featureflags.GetInstance().SetFlag("flag2", false, "")
 	
 	router.GET("/test", RequireAllFeatureFlags("flag1", "flag2"), func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "success"})

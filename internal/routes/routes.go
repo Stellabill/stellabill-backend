@@ -7,7 +7,6 @@ import (
 
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/cors"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/idempotency"
 	"stellarbill-backend/internal/middleware"
@@ -40,7 +39,7 @@ func Register(r *gin.Engine) {
 	// Add TraceID middleware to bridge OTEL trace ID to response headers
 	r.Use(middleware.TraceIDMiddleware())
 
-	corsProfile := cors.ProfileForEnv(cfg.Env, cfg.AllowedOrigins)
+	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
 
 	// Apply rate limiting middleware
 	rateLimitConfig := middleware.RateLimiterConfig{
@@ -51,8 +50,6 @@ func Register(r *gin.Engine) {
 		WhitelistPaths: cfg.RateLimitWhitelist,
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
-
-	r.Use(cors.Middleware(corsProfile))
 
 	store := idempotency.NewStore(idempotency.DefaultTTL)
 	jwtSecret := os.Getenv("JWT_SECRET")

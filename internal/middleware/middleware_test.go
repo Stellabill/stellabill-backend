@@ -24,7 +24,7 @@ func TestProtectedChainContextPropagationAndLogging(t *testing.T) {
 		Recovery(logger),
 		RequestID(),
 		Logging(logger),
-		CORS("https://frontend.example"),
+		CORS("production", "https://frontend.example"),
 		RateLimit(limiter),
 		Auth("top-secret"),
 	)
@@ -120,7 +120,7 @@ func TestPreflightShortCircuitsBeforeRateLimitAndAuth(t *testing.T) {
 	router := gin.New()
 	router.Use(
 		RequestID(),
-		CORS("*"),
+		CORS("development", "*"),
 		record("after-cors", &order),
 		RateLimit(NewRateLimiter(1, time.Minute)),
 		Auth("secret"),
@@ -149,7 +149,7 @@ func TestAuthFailureShortCircuitsWithRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(RequestID(), CORS("*"), RateLimit(NewRateLimiter(2, time.Minute)), Auth("secret"))
+	router.Use(RequestID(), CORS("development", "*"), RateLimit(NewRateLimiter(2, time.Minute)), Auth("secret"))
 	router.GET("/protected", func(c *gin.Context) {
 		t.Fatal("handler should not run on unauthorized request")
 	})

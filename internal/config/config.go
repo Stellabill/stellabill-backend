@@ -59,6 +59,8 @@ type Config struct {
 	// Tracing configuration
 	TracingExporter string
 	TracingServiceName string
+	// CORS configuration
+	AllowedOrigins string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -157,6 +159,7 @@ func Load(opts ...Option) (Config, error) {
 		IdleTimeout:    DefaultIdleTimeout,
 		TracingExporter: getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
 	}
 
 	// Resolve secrets through the provider

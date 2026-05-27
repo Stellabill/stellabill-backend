@@ -14,16 +14,11 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Role-based access control roles
-const (
-	RoleAdmin    = "admin"
-	RoleMerchant = "merchant"
-	RoleCustomer = "customer"
-)
+// Roles are defined in roles.go
 
 // AllRoles returns all valid roles
 func AllRoles() []string {
-	return []string{RoleAdmin, RoleMerchant, RoleCustomer}
+	return []string{string(RoleAdmin), string(RoleMerchant), string(RoleCustomer)}
 }
 
 // HasRole checks if claims contain the specified role

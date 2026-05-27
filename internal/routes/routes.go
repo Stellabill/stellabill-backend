@@ -145,7 +145,7 @@ func Register(r *gin.Engine) {
 				}
 				// Wire in-memory store for persistence by default; can be swapped for DB-backed store.
 				reconStore := reconciliation.NewMemoryStore()
-				admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
+				admin.POST("/reconcile", auth.RequirePermission(auth.PermManageReconciliation), handlers.NewReconcileHandler(adapter, reconStore))
 				// List persisted reports
 				admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
 					reports, err := reconStore.ListReports()

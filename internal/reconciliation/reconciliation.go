@@ -9,6 +9,7 @@ import (
 // Snapshot represents a single subscription state exported from the contract/ledger.
 type Snapshot struct {
     SubscriptionID string            `json:"subscription_id"`
+    TenantID       string            `json:"tenant_id,omitempty"`
     Status         string            `json:"status"`
     Amount         int64             `json:"amount"`
     Currency       string            `json:"currency"`
@@ -20,6 +21,7 @@ type Snapshot struct {
 // BackendSubscription represents the subscription as stored in the backend DB.
 type BackendSubscription struct {
     SubscriptionID string           `json:"subscription_id"`
+    TenantID       string           `json:"tenant_id,omitempty"`
     Status         string           `json:"status"`
     Amount         int64            `json:"amount"`
     Currency       string           `json:"currency"`
@@ -38,6 +40,7 @@ type FieldMismatch struct {
 // Report contains the reconciliation result for a subscription.
 type Report struct {
     SubscriptionID string          `json:"subscription_id"`
+    TenantID       string          `json:"tenant_id,omitempty"`
     Matched        bool            `json:"matched"`
     Mismatches     []FieldMismatch `json:"mismatches"`
     Backend        BackendSubscription `json:"backend"`
@@ -67,6 +70,7 @@ func New() *Reconciler {
 func (r *Reconciler) Compare(backend BackendSubscription, contract *Snapshot) Report {
     var rep Report
     rep.SubscriptionID = backend.SubscriptionID
+    rep.TenantID = backend.TenantID
     rep.Backend = backend
     if contract == nil {
         rep.Matched = false

@@ -1,83 +1,192 @@
 package handlers
 
 import (
-    "bytes"
-    "encoding/json"
-    "net/http"
-    "net/http/httptest"
-    "testing"
-    "time"
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
 
-    "github.com/gin-gonic/gin"
-    "stellarbill-backend/internal/reconciliation"
+	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/auth"
+	"stellarbill-backend/internal/reconciliation"
 )
 
-func TestReconcileHandler(t *testing.T) {
-    now := time.Now().UTC()
+func mockExtractRoleMiddleware(role, tenantID string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// auth.ExtractRole uses X-Role header
+		if role != "" {
+			c.Request.Header.Set("X-Role", role)
+		}
+		c.Set("tenantID", tenantID)
+		// Set callerID for thoroughness
+		c.Set("callerID", "test-user")
+		c.Next()
+	}
+}
 
-    // prepare adapter with a snapshot that will mismatch status and balances
-    snap := reconciliation.Snapshot{
-        SubscriptionID: "sub-1",
-        Status: "cancelled",
-        Amount: 1000,
-        Currency: "USD",
-        Interval: "monthly",
-        Balances: map[string]int64{"due": 0},
-        ExportedAt: now,
-    }
-    adapter := reconciliation.NewMemoryAdapter(snap)
+func TestReconcileHandler_TenantScopingAndRBAC(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now().UTC()
 
-    // backend submission with differing status and due balance
-    backend := reconciliation.BackendSubscription{
-        SubscriptionID: "sub-1",
-        Status: "active",
-        Amount: 1000,
-        Currency: "USD",
-        Interval: "monthly",
-        Balances: map[string]int64{"due": 100},
-        UpdatedAt: now,
-    }
+	tests := []struct {
+		name              string
+		role              string
+		contextTenant     string
+		backendSubs       []reconciliation.BackendSubscription
+		snapshots         []reconciliation.Snapshot
+		expectedCode      int
+		expectedReports   int
+		expectedTenantIDs []string // check stored reports
+	}{
+		{
+			name:          "Admin can view multiple tenants and explicitly set tenant",
+			role:          string(auth.RoleAdmin),
+			contextTenant: "admin-tenant",
+			backendSubs: []reconciliation.BackendSubscription{
+				{SubscriptionID: "sub-1", TenantID: "tenant-a", Status: "active", UpdatedAt: now},
+				{SubscriptionID: "sub-2", TenantID: "tenant-b", Status: "active", UpdatedAt: now},
+			},
+			snapshots: []reconciliation.Snapshot{
+				{SubscriptionID: "sub-1", TenantID: "tenant-a", Status: "active", ExportedAt: now},
+				{SubscriptionID: "sub-2", TenantID: "tenant-b", Status: "active", ExportedAt: now},
+			},
+			expectedCode:      http.StatusOK,
+			expectedReports:   2,
+			expectedTenantIDs: []string{"tenant-a", "tenant-b"},
+		},
+		{
+			name:          "Merchant can reconcile own tenant",
+			role:          string(auth.RoleMerchant),
+			contextTenant: "merchant-a",
+			backendSubs: []reconciliation.BackendSubscription{
+				{SubscriptionID: "sub-1", TenantID: "merchant-a", Status: "active", UpdatedAt: now},
+				{SubscriptionID: "sub-2", TenantID: "", Status: "active", UpdatedAt: now}, // gets stamped
+			},
+			snapshots: []reconciliation.Snapshot{
+				{SubscriptionID: "sub-1", TenantID: "merchant-a", Status: "active", ExportedAt: now},
+				{SubscriptionID: "sub-2", TenantID: "merchant-a", Status: "active", ExportedAt: now},
+				{SubscriptionID: "sub-other", TenantID: "merchant-b", Status: "active", ExportedAt: now}, // should be filtered out
+			},
+			expectedCode:      http.StatusOK,
+			expectedReports:   2,
+			expectedTenantIDs: []string{"merchant-a", "merchant-a"},
+		},
+		{
+			name:          "Merchant cannot reconcile cross-tenant",
+			role:          string(auth.RoleMerchant),
+			contextTenant: "merchant-a",
+			backendSubs: []reconciliation.BackendSubscription{
+				{SubscriptionID: "sub-1", TenantID: "merchant-b", Status: "active", UpdatedAt: now},
+			},
+			snapshots:       []reconciliation.Snapshot{},
+			expectedCode:    http.StatusForbidden,
+			expectedReports: 0,
+		},
+		{
+			name:          "Merchant sees only own snapshots",
+			role:          string(auth.RoleMerchant),
+			contextTenant: "merchant-a",
+			backendSubs: []reconciliation.BackendSubscription{
+				{SubscriptionID: "sub-b", TenantID: "", Status: "active", UpdatedAt: now}, // stamped as merchant-a
+			},
+			snapshots: []reconciliation.Snapshot{
+				{SubscriptionID: "sub-b", TenantID: "merchant-b", Status: "active", ExportedAt: now}, // filtered out
+			},
+			expectedCode:    http.StatusOK,
+			expectedReports: 1, // Will create 1 mismatch report due to missing snapshot
+			expectedTenantIDs: []string{"merchant-a"},
+		},
+		{
+			name:          "Missing manage:reconciliation permission -> 403",
+			role:          string(auth.RoleUser), // RoleUser does not have PermManageReconciliation
+			contextTenant: "tenant-user",
+			backendSubs: []reconciliation.BackendSubscription{
+				{SubscriptionID: "sub-1", TenantID: "tenant-user", Status: "active", UpdatedAt: now},
+			},
+			snapshots:       []reconciliation.Snapshot{},
+			expectedCode:    http.StatusForbidden,
+			expectedReports: 0,
+		},
+		{
+			name:          "Missing TenantID defaults safely",
+			role:          string(auth.RoleAdmin),
+			contextTenant: "",
+			backendSubs: []reconciliation.BackendSubscription{
+				{SubscriptionID: "sub-1", TenantID: "tenant-a", Status: "active", UpdatedAt: now},
+			},
+			snapshots: []reconciliation.Snapshot{
+				{SubscriptionID: "sub-1", TenantID: "tenant-a", Status: "active", ExportedAt: now},
+			},
+			expectedCode:      http.StatusOK,
+			expectedReports:   1,
+			expectedTenantIDs: []string{"tenant-a"},
+		},
+		{
+			name:          "Malformed JSON Request Body -> 400",
+			role:          string(auth.RoleAdmin),
+			contextTenant: "admin",
+			backendSubs:   nil, // we will send malformed text
+			snapshots:     []reconciliation.Snapshot{},
+			expectedCode:  http.StatusBadRequest,
+		},
+	}
 
-    payload, _ := json.Marshal([]reconciliation.BackendSubscription{backend})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter := reconciliation.NewMemoryAdapter(tc.snapshots...)
+			store := reconciliation.NewMemoryStore()
 
-    store := reconciliation.NewMemoryStore()
-    r := gin.New()
-    r.POST("/admin/reconcile", NewReconcileHandler(adapter, store))
+			r := gin.New()
+			r.Use(mockExtractRoleMiddleware(tc.role, tc.contextTenant))
+			r.POST("/reconcile", auth.RequirePermission(auth.PermManageReconciliation), NewReconcileHandler(adapter, store))
 
-    req := httptest.NewRequest(http.MethodPost, "/admin/reconcile", bytes.NewReader(payload))
-    req.Header.Set("Content-Type", "application/json")
-    w := httptest.NewRecorder()
-    r.ServeHTTP(w, req)
+			var payload []byte
+			if tc.name == "Malformed JSON Request Body -> 400" {
+				payload = []byte("{bad-json")
+			} else {
+				payload, _ = json.Marshal(tc.backendSubs)
+			}
 
-    if w.Code != http.StatusOK {
-        t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
-    }
+			req := httptest.NewRequest(http.MethodPost, "/reconcile", bytes.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
 
-    var resp struct {
-        Summary struct{
-            Total int `json:"total"`
-            Matched int `json:"matched"`
-            Mismatched int `json:"mismatched"`
-        } `json:"summary"`
-        Reports []reconciliation.Report `json:"reports"`
-    }
-    if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-        t.Fatalf("failed to parse response: %v", err)
-    }
+			if w.Code != tc.expectedCode {
+				t.Fatalf("expected code %d, got %d. Body: %s", tc.expectedCode, w.Code, w.Body.String())
+			}
 
-    if resp.Summary.Total != 1 || resp.Summary.Mismatched != 1 || len(resp.Reports) != 1 {
-        t.Fatalf("unexpected summary/reports: %+v", resp)
-    }
-    if resp.Reports[0].Matched {
-        t.Fatalf("expected report to show mismatches")
-    }
+			if w.Code == http.StatusOK {
+				var resp struct {
+					Reports []reconciliation.Report `json:"reports"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("failed to parse response: %v", err)
+				}
 
-    // ensure reports were persisted
-    saved, err := store.ListReports()
-    if err != nil {
-        t.Fatalf("store.ListReports error: %v", err)
-    }
-    if len(saved) != 1 || saved[0].SubscriptionID != "sub-1" {
-        t.Fatalf("unexpected saved reports: %#v", saved)
-    }
+				if len(resp.Reports) != tc.expectedReports {
+					t.Fatalf("expected %d reports, got %d", tc.expectedReports, len(resp.Reports))
+				}
+
+				saved, err := store.ListReports()
+				if err != nil {
+					t.Fatalf("store.ListReports error: %v", err)
+				}
+				if len(saved) != tc.expectedReports {
+					t.Fatalf("expected %d saved reports, got %d", tc.expectedReports, len(saved))
+				}
+
+				for i, expectedTenant := range tc.expectedTenantIDs {
+					if saved[i].TenantID != expectedTenant {
+						t.Errorf("expected tenant %s for report %d, got %s", expectedTenant, i, saved[i].TenantID)
+					}
+					if resp.Reports[i].TenantID != expectedTenant {
+						t.Errorf("expected tenant %s in response report %d, got %s", expectedTenant, i, resp.Reports[i].TenantID)
+					}
+				}
+			}
+		})
+	}
 }

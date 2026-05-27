@@ -51,7 +51,6 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 	})
 }
 
-
 func (h *Handler) GetSubscription(c *gin.Context) {
 	id := c.Param("id")
 	sub, err := h.Subscriptions.GetSubscription(c, id)
@@ -63,9 +62,54 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 }
 
 // NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full
-// subscription detail using the provided SubscriptionService.
+// subscription detail using the provided SubscriptionService. It requires
+// callerID and tenantID to already be present on the gin context.
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"id": c.Param("id")})
+		if svc == nil {
+			RespondWithInternalError(c, "Subscription service is unavailable")
+			return
+		}
+
+		callerID, ok := getRequiredStringContextValue(c, "callerID", "Missing authentication credentials")
+		if !ok {
+			return
+		}
+
+		tenantID, ok := getRequiredStringContextValue(c, "tenantID", "Missing tenant context")
+		if !ok {
+			return
+		}
+
+		detail, warnings, err := svc.GetDetail(c.Request.Context(), tenantID, callerID, c.Param("id"))
+		if err != nil {
+			status, code, message := MapServiceErrorToResponse(err)
+			RespondWithError(c, status, code, message)
+			return
+		}
+
+		c.JSON(http.StatusOK, service.ResponseEnvelope{
+			APIVersion: "v1",
+			Data:       detail,
+			Warnings:   warnings,
+		})
 	}
+}
+
+// getRequiredStringContextValue extracts a string from gin context and rejects
+// missing or malformed authentication scope to avoid accidental broad queries.
+func getRequiredStringContextValue(c *gin.Context, key string, missingMessage string) (string, bool) {
+	value, exists := c.Get(key)
+	if !exists {
+		RespondWithAuthError(c, missingMessage)
+		return "", false
+	}
+
+	str, ok := value.(string)
+	if !ok || str == "" {
+		RespondWithAuthError(c, missingMessage)
+		return "", false
+	}
+
+	return str, true
 }

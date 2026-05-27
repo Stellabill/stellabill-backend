@@ -3,6 +3,9 @@ package routes
 import (
 	"log"
 	"os"
+	"time"
+
+	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/cors"
 	"stellarbill-backend/internal/handlers"
@@ -57,19 +60,29 @@ func Register(r *gin.Engine) {
 		jwtSecret = "dev-secret"
 	}
 
-	subRepo := repository.NewMockSubscriptionRepo()
-	planRepo := repository.NewMockPlanRepo()
-	svc := service.NewSubscriptionService(subRepo, planRepo)
+	// Each cached repo gets its own InMemory cache instance so that Flush is
+	// scoped to its namespace and does not evict entries from other caches.
+	planCache := cache.NewInMemory()
+	subCache := cache.NewInMemory()
+	const repoCacheTTL = 5 * time.Minute
+
+	rawPlanRepo := repository.NewMockPlanRepo()
+	rawSubRepo := repository.NewMockSubscriptionRepo()
+
+	cachedPlanRepo := repository.NewCachedPlanRepo(rawPlanRepo, planCache, repoCacheTTL)
+	cachedSubRepo := repository.NewCachedSubscriptionRepo(rawSubRepo, subCache, repoCacheTTL)
+
+	svc := service.NewSubscriptionService(cachedSubRepo, cachedPlanRepo)
 
 	// Statement service wiring (in-memory mock for test/dev)
 	stmtRepo := repository.NewMockStatementRepo()
-	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
+	stmtSvc := service.NewStatementService(rawSubRepo, stmtRepo)
 
-	// Admin handler (token from env or default)
+	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
-	adminHandler := handlers.NewAdminHandler(adminToken)
-	// wire planRepo into handlers for list/detail endpoints and optional caching
-	handlers.SetPlanRepository(planRepo)
+	adminHandler := handlers.NewAdminHandler(adminToken, cachedPlanRepo, cachedSubRepo)
+	// Wire the cached plan repo into the package-level ListPlans handler.
+	handlers.SetPlanRepository(cachedPlanRepo)
 
 	// Define the API version/group
 	api := r.Group("/api")

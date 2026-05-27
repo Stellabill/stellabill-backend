@@ -71,6 +71,8 @@ func (m *MockPlanRepo) List(_ context.Context) ([]*PlanRow, error) {
 // MockStatementRepo is an in-memory StatementRepository for testing.
 type MockStatementRepo struct {
 	records map[string]*StatementRow
+	listErr error
+	findErr error
 }
 
 // NewMockStatementRepo creates a MockStatementRepo pre-populated with the given rows.
@@ -82,8 +84,19 @@ func NewMockStatementRepo(rows ...*StatementRow) *MockStatementRepo {
 	return m
 }
 
+func (m *MockStatementRepo) SetListError(err error) {
+	m.listErr = err
+}
+
+func (m *MockStatementRepo) SetFindError(err error) {
+	m.findErr = err
+}
+
 // FindByID returns the StatementRow with the given ID, or ErrNotFound.
 func (m *MockStatementRepo) FindByID(_ context.Context, id string) (*StatementRow, error) {
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
 	row, ok := m.records[id]
 	if !ok {
 		return nil, ErrNotFound

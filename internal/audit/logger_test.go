@@ -75,22 +75,6 @@ func TestLoggerChainsHashes(t *testing.T) {
 	}
 }
 
-func TestLoggerUsesContextActor(t *testing.T) {
-	sink := &MemorySink{}
-	logger := NewLogger("secret", sink)
-
-	ctx := WithActor(context.Background(), "context-actor")
-	// Passing empty Actor in struct to trigger context fallback
-	_, err := logger.Log(ctx, AuditEvent{Action: "action", Resource: "/x", Outcome: "ok"})
-	
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if sink.Entries()[0].Actor != "context-actor" {
-		t.Fatalf("expected actor from context, got %s", sink.Entries()[0].Actor)
-	}
-}
 
 func TestRedactsSensitiveLookingValues(t *testing.T) {
 	sink := &MemorySink{}

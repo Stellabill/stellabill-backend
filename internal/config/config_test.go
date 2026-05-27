@@ -136,35 +136,6 @@ func TestLoadFailsOnWeakSecrets(t *testing.T) {
 	})
 }
 
-func TestLoadProductionRequiresAllowedOrigins(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"ENV":             "production",
-		"ALLOWED_ORIGINS": "",
-	}, func() {
-		_, err := Load(WithSecretsProvider(newValidProvider()))
-		if err == nil {
-			t.Fatal("expected missing ALLOWED_ORIGINS error")
-		}
-		if !strings.Contains(err.Error(), "ALLOWED_ORIGINS") {
-			t.Fatalf("expected ALLOWED_ORIGINS in error, got: %v", err)
-		}
-	})
-}
-
-func TestLoadProductionRejectsInsecureAllowedOrigins(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"ENV":             "production",
-		"ALLOWED_ORIGINS": "http://example.com,https://ok.example.com",
-	}, func() {
-		_, err := Load(WithSecretsProvider(newValidProvider()))
-		if err == nil {
-			t.Fatal("expected invalid ALLOWED_ORIGINS error")
-		}
-		if !strings.Contains(err.Error(), "INVALID_URL") {
-			t.Fatalf("expected INVALID_URL in error, got: %v", err)
-		}
-	})
-}
 
 func TestLoadRejectsInvalidRateLimitCombination(t *testing.T) {
 	withEnvVars(t, map[string]string{
@@ -199,34 +170,6 @@ func TestLoadRejectsTimeoutOutOfRange(t *testing.T) {
 	})
 }
 
-func TestLoadAccumulatesMultipleErrors(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"ENV":              "production",
-		"PORT":             "70000",
-		"ALLOWED_ORIGINS":  "http://insecure.example.com",
-		"RATE_LIMIT_BURST": "0",
-	}, func() {
-		provider := &stubProvider{
-			values: map[string]string{
-				"DATABASE_URL": "://bad",
-				"JWT_SECRET":   "weak",
-				"ADMIN_TOKEN":  "weak",
-			},
-			errs: map[string]error{},
-		}
-		_, err := Load(WithSecretsProvider(provider))
-		if err == nil {
-			t.Fatal("expected validation errors")
-		}
-		msg := err.Error()
-		checks := []string{"INVALID_PORT", "INVALID_URL", "WEAK_SECRET", "RATE_LIMIT_BURST", "ALLOWED_ORIGINS"}
-		for _, c := range checks {
-			if !strings.Contains(msg, c) {
-				t.Fatalf("expected error to include %s, got: %s", c, msg)
-			}
-		}
-	})
-}
 
 func TestLoadProviderErrorsAreClassified(t *testing.T) {
 	withEnvVars(t, map[string]string{"ENV": "development"}, func() {

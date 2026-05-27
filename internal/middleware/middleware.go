@@ -5,12 +5,9 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/logger"
-	"stellarbill-backend/internal/security"
 )
 
 const (
@@ -153,8 +150,6 @@ func DeprecationHeaders() gin.HandlerFunc {
 		c.Header("Deprecation", "true")
 		c.Header("Sunset", time.Now().Add(180*24*time.Hour).Format(time.RFC1123))
 
-		// Build Link header pointing to the v1 equivalent of this route.
-		// Requests to /api/foo become </api/v1/foo>; rel="successor-version".
 		path := c.Request.URL.Path
 		const prefix = "/api"
 		if strings.HasPrefix(path, prefix) {

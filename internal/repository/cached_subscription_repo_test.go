@@ -252,6 +252,17 @@ func TestCachedSubscriptionRepo_CorruptEnvelope(t *testing.T) {
 	if sr.ID != "sub-corrupt" {
 		t.Fatalf("expected fallback to backend on corrupt envelope, got %s", sr.ID)
 	}
+
+	// Inject raw garbage at the envelope level — guard's GetOrLoad fast-path
+	// returns the same garbage bytes and the outer unmarshal fails.
+	_ = mem.Set(ctx, csr.cacheKey("sub-garbage"), []byte("totally not json"), time.Minute)
+	if _, err := csr.FindByID(ctx, "sub-garbage"); err == nil {
+		t.Fatal("expected error on garbage envelope for FindByID")
+	}
+	_ = mem.Set(ctx, csr.tenantCacheKey("sub-garbage", "tenant-c"), []byte("not json either"), time.Minute)
+	if _, err := csr.FindByIDAndTenant(ctx, "sub-garbage", "tenant-c"); err == nil {
+		t.Fatal("expected error on garbage envelope for FindByIDAndTenant")
+	}
 }
 
 func TestCachedSubscriptionRepo_StaleTenant(t *testing.T) {

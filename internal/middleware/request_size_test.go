@@ -245,11 +245,17 @@ func TestRequestSizeLimit_ChunkedEncoding(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	res := httptest.NewRecorder()
 
+	done := make(chan struct{})
 	go func() {
 		router.ServeHTTP(res, req)
+		close(done)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for chunked body request")
+	}
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200 for chunked body within limit, got %d body=%s", res.Code, res.Body.String())
 	}

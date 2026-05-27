@@ -164,8 +164,10 @@ func TestRunChecks_ConfigInvalid(t *testing.T) {
 	// Unset required env vars to make config validation fail
 	os.Unsetenv("DATABASE_URL")
 	os.Unsetenv("JWT_SECRET")
+	os.Unsetenv("ADMIN_TOKEN")
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("JWT_SECRET", "")
+	t.Setenv("ADMIN_TOKEN", "")
 
 	// Load will fail, so we test with a zero-value config
 	cfg := config.Config{Env: "test"}

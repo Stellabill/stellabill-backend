@@ -62,9 +62,6 @@ func (cpr *CachedPlanRepo) isStale(key string, env cacheEnvelope) bool {
 // readEnvelope attempts to load and unmarshal a cacheEnvelope for key.
 // It returns (nil, false) on cache miss or error.
 func (cpr *CachedPlanRepo) readEnvelope(ctx context.Context, key string) (*cacheEnvelope, bool) {
-	if cpr.cache == nil {
-		return nil, false
-	}
 	val, err := cpr.cache.Get(ctx, key)
 	if err != nil || val == nil {
 		return nil, false

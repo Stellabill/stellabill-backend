@@ -83,7 +83,7 @@ func logAuthFailure(c *gin.Context, logger *Logger, status int) {
 	if len(c.Errors) > 0 {
 		reason = c.Errors[0].Error()
 	}
-	meta := map[string]string{
+	meta := map[string]interface{}{
 		"path":        c.FullPath(),
 		"method":      c.Request.Method,
 		"status":      strconv.Itoa(status),

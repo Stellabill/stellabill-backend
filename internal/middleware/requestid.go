@@ -3,9 +3,7 @@ package middleware
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"regexp"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -66,13 +64,9 @@ func isValidRequestID(id string) bool {
 	return validRequestID.MatchString(id)
 }
 
-// generateRequestID generates a secure random request ID
+// generateRequestID generates a secure random request ID (16 hex chars).
 func generateRequestID() string {
-	// Generate 8 bytes = 16 hex characters
 	bytes := make([]byte, 8)
-	if _, err := rand.Read(bytes); err != nil {
-		// Fallback to timestamp-based ID if crypto/rand fails
-		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
-	}
+	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }

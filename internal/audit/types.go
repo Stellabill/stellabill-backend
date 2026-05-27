@@ -13,6 +13,11 @@ const (
     // Add other critical actions like "reconciliation.start" or "subscription.mutate" here
 )
 
+// Sink defines where audit events are persisted.
+type Sink interface {
+	WriteEvent(e AuditEvent) error
+}
+
 // AuditEvent represents the canonical structure for all security logs.
 type AuditEvent struct {
 	Timestamp time.Time              `json:"timestamp"`
@@ -24,6 +29,8 @@ type AuditEvent struct {
 	PrevHash  string                 `json:"prev_hash,omitempty"`
 	Hash      string                 `json:"hash,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	PrevHash  string                 `json:"prev_hash,omitempty"`
+	Hash      string                 `json:"hash,omitempty"`
 }
 
 // Sink defines the interface for persisting audit logs.

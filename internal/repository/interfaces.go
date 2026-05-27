@@ -28,8 +28,10 @@ type StatementQuery struct {
 	Status         string
 	StartAfter     string
 	EndBefore      string
-	PageSize       int
-	Page           int
+	StartingAfter  string // cursor for forward pagination
+	EndingBefore   string // cursor for backward pagination
+	Limit          int    // replaces PageSize
+	Order          string // e.g. "asc", "desc"
 }
 
 // StatementRepository is the read interface used by the service.

@@ -20,10 +20,7 @@ func Encode(c Cursor) string {
 	if c.ID == "" && c.SortValue == "" {
 		return ""
 	}
-	b, err := json.Marshal(c)
-	if err != nil {
-		return ""
-	}
+	b, _ := json.Marshal(c)
 	return base64.URLEncoding.EncodeToString(b)
 }
 

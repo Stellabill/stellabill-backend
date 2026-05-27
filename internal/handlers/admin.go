@@ -1,109 +1,19 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
-	"regexp"
-	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/validation"
 )
 
-// =============================================================================
-// RBAC – roles and per-action access-control list
-// =============================================================================
-
-// AdminRole is a typed string for the supported admin permission levels.
-type AdminRole string
-
-const (
-	RoleSuperAdmin   AdminRole = "super_admin"
-	RoleBillingAdmin AdminRole = "billing_admin"
-	RoleOpsAdmin     AdminRole = "ops_admin"
-	RoleReadOnly     AdminRole = "read_only_admin"
-)
-
-// validRoles is the canonical set of roles this service recognises.
-// Any X-Admin-Role value not in this map is rejected before the ACL check,
-// preventing unknown roles from being silently treated as no-permission.
-var validRoles = map[AdminRole]bool{
-	RoleSuperAdmin:   true,
-	RoleBillingAdmin: true,
-	RoleOpsAdmin:     true,
-	RoleReadOnly:     true,
-}
-
-// actionACL maps every sensitive action to the exact set of roles allowed to
-// perform it.  An action absent from this map is implicitly denied for every
-// role, so adding a new handler without updating this table is safe-by-default.
-//
-// Privilege-escalation notes
-//   - billing_admin cannot touch operational actions (purge, ban).
-//   - ops_admin cannot touch billing actions (plan price, reactivation).
-//   - read_only_admin can only read the audit log.
-//   - super_admin has full access but must still present a valid token + role.
-var actionACL = map[string]map[AdminRole]bool{
-	"admin_purge":             {RoleSuperAdmin: true, RoleOpsAdmin: true},
-	"admin_ban_user":          {RoleSuperAdmin: true, RoleOpsAdmin: true},
-	"admin_update_plan_price": {RoleSuperAdmin: true, RoleBillingAdmin: true},
-	"admin_reactivate_sub":    {RoleSuperAdmin: true, RoleBillingAdmin: true},
-	"admin_get_audit_log": {
-		RoleSuperAdmin:   true,
-		RoleBillingAdmin: true,
-		RoleOpsAdmin:     true,
-		RoleReadOnly:     true,
-	},
-}
-
-// =============================================================================
-// Validation constants and compiled patterns
-// =============================================================================
-
-const (
-	maxTargetLen  = 200
-	maxActorLen   = 100
-	maxReasonLen  = 500
-	minAttemptVal = 1
-	maxAttemptVal = 10
-	minLimitVal   = 1
-	maxLimitVal   = 500
-)
-
-var (
-	// safeIdentifierRE allows alphanumeric characters plus hyphens, underscores,
-	// and dots.  It intentionally excludes SQL meta-characters, angle brackets,
-	// quotes and other characters used in injection attacks.
-	safeIdentifierRE = regexp.MustCompile(`^[a-zA-Z0-9_\-.]+$`)
-
-	// uuidFormatRE validates RFC-4122 UUID (any variant/version).
-	uuidFormatRE = regexp.MustCompile(
-		`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
-	)
-
-	// priceFormatRE enforces positive decimal amounts up to 6 integer digits and
-	// an optional 2-decimal fraction.  Values like "0", "19.99", "999999.00" are
-	// valid; "1.234", "-5", "" are not.
-	priceFormatRE = regexp.MustCompile(`^\d{1,6}(\.\d{1,2})?$`)
-)
-
-// =============================================================================
-// AdminHandler
-// =============================================================================
-
-// AdminHandler encapsulates all admin-only HTTP operations.
-// It is secured by a static bearer token (X-Admin-Token) and an RBAC role
-// header (X-Admin-Role).  Every operation emits a tamper-evident audit event.
+// AdminHandler encapsulates admin-only HTTP operations.
 type AdminHandler struct {
 	expectedToken string
 }
 
 // NewAdminHandler constructs an AdminHandler with the provided token.
-// When token is empty a fallback value is used so that the zero-value is never
-// silently insecure (callers that rely on the default must make that explicit).
 func NewAdminHandler(token string) *AdminHandler {
 	return &AdminHandler{expectedToken: token}
 }
@@ -291,10 +201,8 @@ func isAlphaOnly(s string) bool {
 // Audit event: action="admin_purge", fields: actor, role, request_id,
 // user_agent, attempt.
 func (h *AdminHandler) PurgeCache(c *gin.Context) {
-	const action = "admin_purge"
-
-	actor, role, ok := h.authAdmin(c, action)
-	if !ok {
+	if token := c.GetHeader("X-Admin-Token"); token == "" || token != h.expectedToken {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 

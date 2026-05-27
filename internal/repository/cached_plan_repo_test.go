@@ -210,6 +210,21 @@ func TestCachedPlanRepo_CorruptEnvelope(t *testing.T) {
 	if p.Name != "C" {
 		t.Fatalf("expected fallback to backend on corrupt envelope, got %s", p.Name)
 	}
+
+	// Inject raw garbage at envelope level — read path fails envelope unmarshal
+	// in readEnvelope and then the guard's GetOrLoad fast-path returns the same
+	// garbage, so we expect an error from the outer unmarshal.
+	_ = mem.Set(ctx, cpr.cacheKey("plan-garbage"), []byte("totally not json"), time.Minute)
+	if _, err := cpr.FindByID(ctx, "plan-garbage"); err == nil {
+		t.Fatal("expected error on garbage envelope")
+	}
+	if _, err := cpr.List(ctx); err == nil {
+		// listKey doesn't have garbage yet
+	}
+	_ = mem.Set(ctx, cpr.listKey(), []byte("totally not json"), time.Minute)
+	if _, err := cpr.List(ctx); err == nil {
+		t.Fatal("expected error on garbage list envelope")
+	}
 }
 
 func TestCachedPlanRepo_ListStaleDetection(t *testing.T) {
@@ -254,6 +269,28 @@ func TestCachedPlanRepo_ListStaleDetection(t *testing.T) {
 	_, _, stales := cpr.Metrics()
 	if stales < 1 {
 		t.Fatalf("expected stale > 0 for list, got stales=%d", stales)
+	}
+}
+
+type erroringPlanRepo struct{}
+
+func (erroringPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, error) {
+	return nil, errors.New("backend down")
+}
+func (erroringPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
+	return nil, errors.New("backend list down")
+}
+
+func TestCachedPlanRepo_BackendErrors(t *testing.T) {
+	ctx := context.Background()
+	mem := cache.NewInMemory()
+	cpr := NewCachedPlanRepo(erroringPlanRepo{}, mem, time.Minute)
+
+	if _, err := cpr.FindByID(ctx, "any"); err == nil {
+		t.Fatal("expected backend error to propagate")
+	}
+	if _, err := cpr.List(ctx); err == nil {
+		t.Fatal("expected list backend error to propagate")
 	}
 }
 

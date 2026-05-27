@@ -44,7 +44,6 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) 
 	defer l.mu.Unlock()
 
 	// 1. Prepare Event Metadata
-	event.Timestamp = event.Timestamp.UTC()
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
@@ -77,6 +76,8 @@ func (l *Logger) computeHash(e AuditEvent) string {
 	h.Write([]byte(raw))
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+const redactedValue = "[REDACTED]"
 
 func (l *Logger) redact(meta map[string]interface{}) map[string]interface{} {
 	if meta == nil {

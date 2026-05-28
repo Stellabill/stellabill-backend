@@ -1,7 +1,11 @@
 package routes
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"time"
+
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
@@ -13,6 +17,7 @@ import (
 	"stellarbill-backend/internal/tracing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -49,7 +54,23 @@ func Register(r *gin.Engine) {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
-	store := idempotency.NewStore(idempotency.DefaultTTL)
+	var dbPool *pgxpool.Pool
+	if cfg.DBConn != "" {
+		var err error
+		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
+		if err != nil {
+			fmt.Printf("Failed to initialize database pool: %v\n", err)
+		}
+	}
+
+	var idemStore middleware.IdempotencyStore
+	if dbPool != nil {
+		idemStore = middleware.NewPostgresIdempotencyStore(dbPool)
+	} else {
+		idemStore = middleware.NewInMemoryIdempotencyStore()
+	}
+	idemMiddleware := middleware.Idempotency(idemStore)
+
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
 		jwtSecret = "dev-secret"
@@ -136,7 +157,7 @@ func Register(r *gin.Engine) {
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 	{
-		admin.POST("/purge", adminHandler.PurgeCache)
+		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
@@ -144,7 +165,7 @@ func Register(r *gin.Engine) {
 		// Reconciliation — scoped by RBAC and tenant
 		adapter := reconciliation.NewMemoryAdapter()
 		reconStore := reconciliation.NewMemoryStore()
-		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
+		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
 	}
 }

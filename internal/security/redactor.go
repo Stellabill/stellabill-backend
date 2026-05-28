@@ -1,6 +1,9 @@
 package security
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -100,7 +103,7 @@ func MaskPII(input string) string {
 		if (strings.Contains(amount, ".") && len(amount) <= 10) || (len(amount) >= 2 && len(amount) <= 5) {
 			return "$*.**"
 		}
-		return match
+		return amount
 	})
 	
 	// Mask emails
@@ -210,4 +213,78 @@ func RedactZapField(f zap.Field) zap.Field {
 		}
 		return f
 	}
+}
+
+func maskCustomerID(id string) string {
+	if len(id) <= 4 {
+		return "***"
+	}
+	return id[:4] + "***"
+}
+
+func maskSubscriptionID(id string) string {
+	if len(id) <= 4 {
+		return "***"
+	}
+	return id[:4] + "***"
+}
+
+func maskJobID(id string) string {
+	if len(id) <= 4 {
+		return "***"
+	}
+	return id[:4] + "***"
+}
+
+func maskAmount(amount string) string {
+	return "$*.**"
+}
+
+var (
+	maskAmountRegex = regexp.MustCompile(`\b\d+\.?\d*\b`)
+	emailRegex      = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+)
+
+var maskedFieldNames = map[string]bool{
+	"customer":     true,
+	"cust":         true,
+	"subscription": true,
+	"sub":          true,
+	"job":          true,
+	"job_id":       true,
+	"jobid":        true,
+	"amount":       true,
+	"email":        true,
+	"phone":        true,
+	"phone_number": true,
+}
+
+func maskFieldByKey(key, value string) string {
+	switch {
+	case strings.Contains(key, "customer"):
+		return maskCustomerID(value)
+	case strings.Contains(key, "subscription") || strings.HasPrefix(key, "sub"):
+		return maskSubscriptionID(value)
+	case strings.HasPrefix(key, "job"):
+		return maskJobID(value)
+	case strings.Contains(key, "amount"):
+		return maskAmount(value)
+	case strings.Contains(key, "email"):
+		return "e***@***"
+	case strings.Contains(key, "phone"):
+		return "***-***-****"
+	default:
+		return value
+	}
+}
+
+func RedactStringField(fieldName, value string) string {
+	lower := strings.ToLower(fieldName)
+	if fullyRedactedFieldNames[lower] {
+		return "***REDACTED***"
+	}
+	if maskedFieldNames[lower] {
+		return maskFieldByKey(lower, value)
+	}
+	return MaskPII(value)
 }

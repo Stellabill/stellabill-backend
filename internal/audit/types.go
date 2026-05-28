@@ -29,13 +29,6 @@ type AuditEvent struct {
 	PrevHash  string                 `json:"prev_hash,omitempty"`
 	Hash      string                 `json:"hash,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	PrevHash  string                 `json:"prev_hash,omitempty"`
-	Hash      string                 `json:"hash,omitempty"`
-}
-
-// Sink defines the interface for persisting audit logs.
-type Sink interface {
-	WriteEvent(event AuditEvent) error
 }
 
 type contextKey string

@@ -77,8 +77,6 @@ func (l *Logger) computeHash(e AuditEvent) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-const redactedValue = "[REDACTED]"
-
 func (l *Logger) redact(meta map[string]interface{}) map[string]interface{} {
 	if meta == nil {
 		return nil

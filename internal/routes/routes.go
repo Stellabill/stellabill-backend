@@ -1,8 +1,11 @@
 package routes
 
 import (
+	"context"
 	"log"
 	"os"
+	"time"
+
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/cors"
 	"stellarbill-backend/internal/handlers"
@@ -17,6 +20,7 @@ import (
 	"stellarbill-backend/internal/reconciliation"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -52,6 +56,23 @@ func Register(r *gin.Engine) {
 	r.Use(cors.Middleware(corsProfile))
 
 	store := idempotency.NewStore(idempotency.DefaultTTL)
+	var dbStore *idempotency.DBStore
+	if cfg.DBConn != "" {
+		ctx := context.Background()
+		poolCfg, err := pgxpool.ParseConfig(cfg.DBConn)
+		if err == nil {
+			poolCfg.MaxConns = 5
+			poolCfg.ConnConfig.ConnectTimeout = 5 * time.Second
+			pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+			if err == nil {
+				dbStore = idempotency.NewDBStore(pool, idempotency.DefaultTTL)
+			} else {
+				log.Printf("Warning: failed to connect to database for idempotency: %v", err)
+			}
+		} else {
+			log.Printf("Warning: failed to parse database URL: %v", err)
+		}
+	}
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
 		jwtSecret = "dev-secret"
@@ -117,7 +138,11 @@ func Register(r *gin.Engine) {
 
 		admin := api.Group("/admin")
 		{
-			admin.POST("/purge", adminHandler.PurgeCache)
+			if dbStore != nil {
+				admin.POST("/purge", idempotency.DBMiddleware(dbStore), adminHandler.PurgeCache)
+			} else {
+				admin.POST("/purge", adminHandler.PurgeCache)
+			}
 			// Diagnostics endpoint — re-runs startup checks for live triage
 			diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 			admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
@@ -135,7 +160,11 @@ func Register(r *gin.Engine) {
 				}
 				// Wire in-memory store for persistence by default; can be swapped for DB-backed store.
 				reconStore := reconciliation.NewMemoryStore()
-				admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
+				if dbStore != nil {
+					admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idempotency.DBMiddleware(dbStore), handlers.NewReconcileHandler(adapter, reconStore))
+				} else {
+					admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
+				}
 				// List persisted reports
 				admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
 					reports, err := reconStore.ListReports()

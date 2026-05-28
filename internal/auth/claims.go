@@ -16,14 +16,13 @@ type Claims struct {
 
 // Role-based access control roles
 const (
-	RoleAdmin    = "admin"
 	RoleMerchant = "merchant"
 	RoleCustomer = "customer"
 )
 
 // AllRoles returns all valid roles
 func AllRoles() []string {
-	return []string{RoleAdmin, RoleMerchant, RoleCustomer}
+	return []string{string(RoleAdmin), RoleMerchant, RoleCustomer}
 }
 
 // HasRole checks if claims contain the specified role

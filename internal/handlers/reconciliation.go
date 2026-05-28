@@ -4,7 +4,7 @@ import (
     "net/http"
 
     "github.com/gin-gonic/gin"
-    "stellabill-backend/internal/reconciliation"
+    "stellarbill-backend/internal/reconciliation"
 )
 
 // NewReconcileHandler returns a handler that accepts a list of backend subscriptions

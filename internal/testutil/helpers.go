@@ -147,7 +147,7 @@ func CommonAuthScenarios(tg *TestTokenGenerator) []TestAuthScenario {
 	adminToken, _ := tg.GenerateAdminToken("admin-user", "admin@test.com")
 	merchantToken, _ := tg.GenerateMerchantToken("merchant-user", "merchant@test.com", "merchant-123")
 	customerToken, _ := tg.GenerateCustomerToken("customer-user", "customer@test.com")
-	expiredToken, _ := tg.GenerateExpiredToken("user", "user@test.com", auth.RoleAdmin)
+	expiredToken, _ := tg.GenerateExpiredToken("user", "user@test.com", string(auth.RoleAdmin))
 
 	return []TestAuthScenario{
 		{

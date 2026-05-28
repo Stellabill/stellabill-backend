@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/pagination"
 )
 
 type Plan struct {

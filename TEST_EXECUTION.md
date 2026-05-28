@@ -1,5 +1,10 @@
 # Test Execution Guide
 
+> **This file covers worker-specific test execution.**
+> For the consolidated local dev and test guide (including all packages,
+> integration tests, and troubleshooting), see
+> **[docs/dev-test-guide.md](docs/dev-test-guide.md)**.
+
 ## Running Tests
 
 ### All Worker Tests

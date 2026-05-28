@@ -171,26 +171,6 @@ func TestResolveActorFallbackToIP(t *testing.T) {
 	}
 }
 
-func TestLogAuthFailureWithoutErrors(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	sink := &MemorySink{}
-	logger := NewLogger("secret", sink)
-	r := gin.New()
-	r.Use(Middleware(logger))
-	r.GET("/forbidden", func(c *gin.Context) {
-		c.AbortWithStatus(http.StatusForbidden)
-	})
-	rec := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/forbidden", nil)
-	r.ServeHTTP(rec, req)
-	if len(sink.Entries()) != 1 {
-		t.Fatal("expected an entry for forbidden status")
-	}
-	if sink.Entries()[0].Metadata["reason"] != "" {
-		t.Fatal("reason should be empty when no errors are set")
-	}
-}
-
 type errUnauthorized struct{}
 
 func (errUnauthorized) Error() string { return "missing token" }

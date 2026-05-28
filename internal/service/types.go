@@ -29,19 +29,13 @@ type SubscriptionDetail struct {
 	BillingSummary BillingSummary `json:"billing_summary" redacted:"amount"`
 }
 
-// MarshalJSON implements redacted JSON marshaling
-func (sd *SubscriptionDetail) MarshalJSON() ([]byte, error) {
-	type Alias SubscriptionDetail
-	data := struct {
-		*Alias
-		Customer string `json:"customer,omitempty"`
-	}{
-		Alias: (*Alias)(sd),
-	}
-	if data.Customer != "" {
-		data.Customer = "cust_***" // Minimal redaction - hide full ID
-	}
-	return json.Marshal(data)
+
+// SubscriptionStatusChange is returned after a successful status mutation.
+type SubscriptionStatusChange struct {
+	ID             string `json:"id"`
+	PreviousStatus string `json:"previous_status"`
+	Status         string `json:"status"`
+	Changed        bool   `json:"changed"`
 }
 
 // StatementDetail is the payload for billing statements.
@@ -76,9 +70,11 @@ type ResponseEnvelopeWithPagination struct {
 	Pagination PaginationMetadata `json:"pagination"`
 }
 
-// PaginationMetadata holds pagination info for list responses.
+// PaginationMetadata holds cursor-based pagination info.
 type PaginationMetadata struct {
-	Page     int `json:"page"`
-	PageSize int `json:"page_size"`
-	Count    int `json:"count"`
+	NextCursor     string `json:"next_cursor,omitempty"`
+	PreviousCursor string `json:"previous_cursor,omitempty"`
+	HasMore        bool   `json:"has_more"`
+	TotalCount     int    `json:"total_count,omitempty"`
+	Limit          int    `json:"limit"`
 }

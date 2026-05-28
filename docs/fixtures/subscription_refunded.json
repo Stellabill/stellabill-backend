@@ -1,0 +1,15 @@
+{
+  "event_type": "subscription_refunded",
+  "id": "ref_001",
+  "timestamp": "2025-01-20T14:45:00Z",
+  "data": {
+    "subscription_id": "sub_001",
+    "charge_id": "chg_001",
+    "refund_id": "ref_001",
+    "amount": 2999,
+    "currency": "USD",
+    "status": "succeeded",
+    "reason": "customer_request",
+    "original_charge_amount": 2999
+  }
+}

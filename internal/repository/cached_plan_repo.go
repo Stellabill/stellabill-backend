@@ -81,7 +81,7 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	return out, nil
 }
 
-// Delete invalidates a cached plan entry.
+// Delete invalidates a cached plan entry and records the invalidation time.
 func (cpr *CachedPlanRepo) Delete(ctx context.Context, id string) error {
 	if cpr.cache == nil {
 		return nil

@@ -2,13 +2,11 @@ package startup
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 
 	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/migrations"
 )
 
 // Status represents the result of a single startup check.
@@ -44,22 +42,6 @@ type DBPinger interface {
 // MigrationStatusFunc returns the count of applied and local migrations.
 // This allows callers to inject the real implementation or a test stub.
 type MigrationStatusFunc func(ctx context.Context) (applied int, local int, err error)
-
-// NewMigrationStatusFunc builds a MigrationStatusFunc from a real DB and migration directory.
-func NewMigrationStatusFunc(db *sql.DB, migrationsDir string) MigrationStatusFunc {
-	return func(ctx context.Context) (int, int, error) {
-		localMigs, err := migrations.LoadDir(migrationsDir)
-		if err != nil {
-			return 0, 0, fmt.Errorf("load migrations: %w", err)
-		}
-		runner := migrations.Runner{DB: db}
-		appliedMigs, err := runner.Applied(ctx)
-		if err != nil {
-			return 0, len(localMigs), fmt.Errorf("query applied migrations: %w", err)
-		}
-		return len(appliedMigs), len(localMigs), nil
-	}
-}
 
 // RunChecks executes all startup checks and returns the results.
 // It validates config, database connectivity, and migration status.

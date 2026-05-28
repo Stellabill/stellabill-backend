@@ -1,12 +1,14 @@
 package repositories
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
+	"stellarbill-backend/internal/db"
 )
 
 // Plan represents a subscription plan
@@ -30,16 +32,22 @@ type PlanRepository interface {
 	Update(plan *Plan) error
 	Delete(id string) error
 	GetActivePlansByMerchantID(merchantID string) ([]*Plan, error)
+	List(ctx context.Context) ([]*Plan, error)
+	WithTx(tx db.DBTX) PlanRepository
 }
 
 // postgresPlanRepository implements PlanRepository
 type postgresPlanRepository struct {
-	db *sql.DB
+	db db.DBTX
 }
 
 // NewPlanRepository creates a new plan repository
-func NewPlanRepository(db *sql.DB) PlanRepository {
-	return &postgresPlanRepository{db: db}
+func NewPlanRepository(executor db.DBTX) PlanRepository {
+	return &postgresPlanRepository{db: executor}
+}
+
+func (r *postgresPlanRepository) WithTx(tx db.DBTX) PlanRepository {
+	return &postgresPlanRepository{db: tx}
 }
 
 // Create creates a new plan
@@ -260,4 +268,23 @@ func (r *postgresPlanRepository) scanPlan(scanner interface{ Scan(...interface{}
 	}
 	
 	return &plan, nil
+}
+func (r *postgresPlanRepository) List(ctx context.Context) ([]*Plan, error) {
+	query := `SELECT id, name, amount, currency, interval, description, merchant_id, created_at, updated_at FROM plans`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var plans []*Plan
+	for rows.Next() {
+		var p Plan
+		err := rows.Scan(&p.ID, &p.Name, &p.Amount, &p.Currency, &p.Interval, &p.Description, &p.MerchantID, &p.CreatedAt, &p.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, &p)
+	}
+	return plans, nil
 }

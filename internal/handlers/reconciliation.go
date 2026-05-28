@@ -4,6 +4,7 @@ import (
 	"net/http"
 
     "github.com/gin-gonic/gin"
+    "stellarbill-backend/internal/auth"
     "stellarbill-backend/internal/reconciliation"
 )
 
@@ -19,15 +20,46 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
             return
         }
 
+        roleVal, _ := c.Get(auth.RoleContextKey)
+        var roleStr string
+        if r, ok := roleVal.(auth.Role); ok {
+            roleStr = string(r)
+        } else if s, ok := roleVal.(string); ok {
+            roleStr = s
+        }
+        tenantID := c.GetString("tenantID")
+
+        if roleStr != string(auth.RoleAdmin) && tenantID == "" {
+            c.JSON(http.StatusForbidden, gin.H{"error": "tenant context missing"})
+            return
+        }
+
+        for i := range backendSubs {
+            if roleStr != string(auth.RoleAdmin) {
+                if backendSubs[i].TenantID != "" && backendSubs[i].TenantID != tenantID {
+                    c.JSON(http.StatusForbidden, gin.H{"error": "cross-tenant reconciliation forbidden"})
+                    return
+                }
+                backendSubs[i].TenantID = tenantID
+            } else {
+                if backendSubs[i].TenantID == "" {
+                    backendSubs[i].TenantID = tenantID
+                }
+            }
+        }
+
         snaps, err := adapter.FetchSnapshots(c.Request.Context())
         if err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch snapshots"})
             return
         }
 
-        snapMap := make(map[string]*reconciliation.Snapshot, len(snaps))
+        snapMap := make(map[string]*reconciliation.Snapshot)
         for i := range snaps {
             s := snaps[i]
+            if roleStr != string(auth.RoleAdmin) && s.TenantID != tenantID {
+                continue
+            }
             snapMap[s.SubscriptionID] = &s
         }
 

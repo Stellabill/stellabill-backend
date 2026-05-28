@@ -260,9 +260,6 @@ func TestRecoveryGetRequestID(t *testing.T) {
 // 	assert.Contains(t, result, "... (truncated)")
 // }
 
-// Test-local types to avoid collisions with other _test.go files.
-type testRuntimeErr string
-
 func (e testRuntimeErr) Error() string { return string(e) }
 
 type testCustomPanic struct{ Msg string }

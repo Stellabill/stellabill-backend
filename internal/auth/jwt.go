@@ -27,6 +27,7 @@ type Config struct {
 	Audience string
 }
 
+// Claims is defined in claims.go
 
 // JWTMiddleware creates a middleware verifying tokens against the provided config
 func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {

@@ -14,8 +14,44 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-func TestListSubscriptions(t *testing.T) {
+// mockSubscriptionService is a test double for service.SubscriptionService.
+type mockSubscriptionService struct {
+	detail   *service.SubscriptionDetail
+	warnings []string
+	err      error
+	callerID string
+	id       string
+}
+
+func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+	m.callerID = callerID
+	m.id = id
+	return m.detail, m.warnings, m.err
+}
+
+func (m *mockSubscriptionService) ListSubscriptions(c *gin.Context) ([]Subscription, error) {
+	return nil, nil
+}
+
+func (m *mockSubscriptionService) GetSubscription(c *gin.Context, id string) (*Subscription, error) {
+	return nil, nil
+}
+
+// setupRouter builds a minimal Gin router with the Handler wired up.
+// If setCallerID is true, a middleware injects "callerID" into the context.
+func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	if setCallerID {
+		r.Use(func(c *gin.Context) {
+			c.Set("callerID", "caller-123")
+			c.Set("tenantID", "tenant-1")
+			c.Next()
+		})
+	}
+	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(svc))
+	return r
+}
 
 	t.Run("success", func(t *testing.T) {
 		mockSvc := new(MockSubscriptionService)

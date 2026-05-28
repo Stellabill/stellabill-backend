@@ -1,6 +1,6 @@
 package service
 
-
+import "encoding/json"
 // PlanMetadata is the plan subset embedded in the response.
 type PlanMetadata struct {
 	PlanID      string `json:"plan_id"`

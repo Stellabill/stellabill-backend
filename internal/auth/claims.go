@@ -14,10 +14,11 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// Roles are defined in roles.go
 
 // AllRoles returns all valid roles
-func AllRoles() []Role {
-	return []Role{RoleAdmin, RoleMerchant, RoleCustomer, RoleUser}
+func AllRoles() []string {
+	return []string{string(RoleAdmin), string(RoleMerchant), string(RoleCustomer)}
 }
 
 // HasRole checks if claims contain the specified role

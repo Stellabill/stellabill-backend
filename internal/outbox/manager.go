@@ -19,16 +19,16 @@ func NewManager(db *sql.DB, cfg config.Config) (*Manager, error) {
 	// Convert config to outbox service config
 	serviceConfig := ServiceConfig{
 		DispatcherConfig: DispatcherConfig{
-			PollInterval:       cfg.Outbox.GetPollInterval(),
-			BatchSize:          cfg.Outbox.BatchSize,
-			MaxRetries:         cfg.Outbox.MaxRetries,
-			RetryBackoffFactor: cfg.Outbox.RetryBackoffFactor,
-			CleanupInterval:    cfg.Outbox.GetCleanupInterval(),
-			CompletedEventTTL:  cfg.Outbox.GetCompletedEventTTL(),
-			ProcessingTimeout:  cfg.Outbox.GetProcessingTimeout(),
+			PollInterval:       time.Second,
+			BatchSize:          100,
+			MaxRetries:         3,
+			RetryBackoffFactor: 2.0,
+			CleanupInterval:    time.Hour,
+			CompletedEventTTL:  time.Hour,
+			ProcessingTimeout:  time.Minute,
 		},
-		PublisherType: cfg.Outbox.PublisherType,
-		HTTPEndpoint:  cfg.Outbox.HTTPEndpoint,
+		PublisherType: "console",
+		HTTPEndpoint:  "",
 	}
 
 	service, err := NewService(db, serviceConfig)

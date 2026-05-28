@@ -2,6 +2,7 @@ package idempotency
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -129,6 +130,123 @@ func Middleware(store *Store) gin.HandlerFunc {
 				PayloadHash: payloadHash,
 				CreatedAt:   time.Now(),
 			})
+		}
+	}
+}
+
+// DBMiddleware returns a Gin middleware that enforces idempotency using a PostgreSQL DBStore.
+// It rejects missing/oversized keys, scopes keys per caller/tenant/admin identity,
+// handles concurrent duplicate conflicts with 409, and replays completed responses.
+func DBMiddleware(store *DBStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		method := c.Request.Method
+		if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+			c.Next()
+			return
+		}
+
+		key := strings.TrimSpace(c.GetHeader(headerKey))
+		if key == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error": "Idempotency-Key header is required",
+			})
+			return
+		}
+
+		if len(key) > maxKeyLength {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error": "Idempotency-Key exceeds maximum length of 255 characters",
+			})
+			return
+		}
+
+		// Scope keys per caller/tenant/admin identity.
+		tenantID := c.GetString("tenantID")
+		if tenantID == "" {
+			tenantID = c.GetHeader("X-Tenant-ID")
+		}
+		callerID := c.GetString("callerID")
+		if callerID == "" {
+			callerID = c.GetHeader("X-Admin-User")
+		}
+		if callerID == "" {
+			callerID = c.GetHeader("X-Role")
+		}
+		if callerID == "" {
+			callerID = "anonymous"
+		}
+		scope := fmt.Sprintf("%s:%s", tenantID, callerID)
+
+		// Read and restore the request body.
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to read request body"})
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		payloadHash := HashPayload(bodyBytes)
+
+		ctx := c.Request.Context()
+
+		// Atomically check/acquire lock
+		res, err := store.Acquire(ctx, scope, key, payloadHash)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "idempotency check failed: " + err.Error()})
+			return
+		}
+
+		switch res.Status {
+		case "in_flight_duplicate":
+			c.AbortWithStatusJSON(http.StatusConflict, gin.H{
+				"error": "Concurrent request in progress",
+			})
+			return
+
+		case "payload_mismatch":
+			c.AbortWithStatusJSON(http.StatusUnprocessableEntity, gin.H{
+				"error": "Idempotency-Key reused with a different request payload",
+			})
+			return
+
+		case "completed":
+			c.Header("Idempotency-Replayed", "true")
+			for k, values := range res.ResponseHeaders {
+				for _, v := range values {
+					c.Writer.Header().Set(k, v)
+				}
+			}
+			c.Data(res.ResponseCode, "application/json; charset=utf-8", res.ResponseBody)
+			c.Abort()
+			return
+
+		case "in_flight":
+			// We successfully acquired the lock. Set up a custom response recorder.
+			rec := &responseRecorder{ResponseWriter: c.Writer, status: http.StatusOK}
+			c.Writer = rec
+
+			// If the handler panics or fails, we delete the key to allow client retry.
+			success := false
+			defer func() {
+				if !success {
+					_ = store.DeleteKey(ctx, scope, key)
+				}
+			}()
+
+			c.Next()
+
+			// Only cache successful 2xx responses.
+			if rec.status >= 200 && rec.status < 300 {
+				headers := make(map[string][]string)
+				for k, v := range c.Writer.Header() {
+					headers[k] = v
+				}
+				_ = store.SaveResponse(ctx, scope, key, rec.status, rec.body.Bytes(), headers)
+				success = true
+			} else {
+				// Delete the key on error to allow retries.
+				_ = store.DeleteKey(ctx, scope, key)
+				success = true
+			}
 		}
 	}
 }

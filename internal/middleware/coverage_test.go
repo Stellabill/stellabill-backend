@@ -4,20 +4,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"stellarbill-backend/internal/config"
 )
 
 func TestCoverage_AuthMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mw := AuthMiddleware(nil, "")
+
+	// Generate a valid signed token so the real middleware lets it through
+	secret := "test-secret"
+	claims := jwt.MapClaims{
+		"sub": "user-123",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenStr, err := tok.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	mw := AuthMiddleware(nil, secret)
 	r := gin.New()
 	r.Use(mw)
 	r.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)

@@ -98,9 +98,9 @@ func TestIntegration_GetSubscription_HappyPath(t *testing.T) {
 		t.Fatalf("failed to decode response body: %v", err)
 	}
 
-	// api_version = "1"
-	if envelope["api_version"] != "1" {
-		t.Errorf("expected api_version=1, got %v", envelope["api_version"])
+	// api_version = "v1"
+	if envelope["api_version"] != "v1" {
+		t.Errorf("expected api_version=v1, got %v", envelope["api_version"])
 	}
 
 	data, ok := envelope["data"].(map[string]interface{})
@@ -117,8 +117,8 @@ func TestIntegration_GetSubscription_HappyPath(t *testing.T) {
 		t.Errorf("expected data.plan_id=%q, got %v", planID, data["plan_id"])
 	}
 	// data.customer
-	if data["customer"] != customerID {
-		t.Errorf("expected data.customer=%q, got %v", customerID, data["customer"])
+	if data["customer"] != "cust_***" {
+		t.Errorf("expected data.customer to be redacted, got %v", data["customer"])
 	}
 	// data.status
 	if data["status"] != "active" {
@@ -151,6 +151,97 @@ func TestIntegration_GetSubscription_HappyPath(t *testing.T) {
 	}
 	if billing["currency"] != "USD" {
 		t.Errorf("expected billing_summary.currency=USD, got %v", billing["currency"])
+	}
+}
+
+func TestIntegration_GetSubscription_NotFound_Returns404(t *testing.T) {
+	subRepo := repository.NewMockSubscriptionRepo()
+	planRepo := repository.NewMockPlanRepo()
+	r := buildIntegrationRouter(subRepo, planRepo)
+
+	tokenStr := makeTestJWT("cust-1", "tenant-1")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440001", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	req.Header.Set("X-Tenant-ID", "tenant-1")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIntegration_GetSubscription_WrongTenant_Returns404(t *testing.T) {
+	const customerID = "cust-abc"
+	const subID = "550e8400-e29b-41d4-a716-446655440001"
+
+	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{
+		ID:         subID,
+		PlanID:     "550e8400-e29b-41d4-a716-446655440002",
+		TenantID:   "tenant-1",
+		CustomerID: customerID,
+		Status:     "active",
+		Amount:     "999",
+		Currency:   "USD",
+		Interval:   "monthly",
+	})
+	planRepo := repository.NewMockPlanRepo()
+	r := buildIntegrationRouter(subRepo, planRepo)
+
+	tokenStr := makeTestJWT(customerID, "tenant-2")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/"+subID, nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	req.Header.Set("X-Tenant-ID", "tenant-2")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIntegration_GetSubscription_MissingPlan_ReturnsWarning(t *testing.T) {
+	const customerID = "cust-abc"
+	const subID = "550e8400-e29b-41d4-a716-446655440001"
+
+	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{
+		ID:         subID,
+		PlanID:     "550e8400-e29b-41d4-a716-446655440002",
+		TenantID:   "tenant-1",
+		CustomerID: customerID,
+		Status:     "active",
+		Amount:     "999",
+		Currency:   "USD",
+		Interval:   "monthly",
+	})
+	planRepo := repository.NewMockPlanRepo()
+	r := buildIntegrationRouter(subRepo, planRepo)
+
+	tokenStr := makeTestJWT(customerID, "tenant-1")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/"+subID, nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	req.Header.Set("X-Tenant-ID", "tenant-1")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var envelope map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&envelope); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	warnings, ok := envelope["warnings"].([]interface{})
+	if !ok || len(warnings) != 1 || warnings[0] != "plan not found" {
+		t.Fatalf("expected plan warning, got %#v", envelope["warnings"])
+	}
+	data := envelope["data"].(map[string]interface{})
+	if _, ok := data["plan"]; ok {
+		t.Fatalf("expected omitted plan when plan lookup misses, got %#v", data["plan"])
 	}
 }
 

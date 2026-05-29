@@ -130,10 +130,13 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 			return
 		}
 
-		// Minimal, safe handler that validates caller and path, then delegates to the service.
-		callerID, exists := c.Get("callerID")
-		if !exists {
-			RespondWithAuthError(c, "unauthorized")
+		callerID, ok := getRequiredStringContextValue(c, "callerID", "unauthorized")
+		if !ok {
+			return
+		}
+
+		tenantID, ok := getRequiredStringContextValue(c, "tenantID", "missing tenant")
+		if !ok {
 			return
 		}
 
@@ -148,26 +151,17 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 			return
 		}
 
-		tenantID := c.GetString("tenantID")
-		// Delegate to service (note: real implementation may include ownership checks)
-		detail, _, err := svc.GetDetail(c.Request.Context(), tenantID, callerID.(string), id)
+		detail, warnings, err := svc.GetDetail(c.Request.Context(), tenantID, callerID, id)
 		if err != nil {
 			code, errCode, msg := MapServiceErrorToResponse(err)
 			RespondWithError(c, code, errCode, msg)
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{
-			"api_version": "1",
-			"data": gin.H{
-				"id":              detail.ID,
-				"plan_id":         detail.PlanID,
-				"customer":        detail.Customer,
-				"status":          detail.Status,
-				"interval":        detail.Interval,
-				"plan":            detail.Plan,
-				"billing_summary": detail.BillingSummary,
-			},
+		c.JSON(http.StatusOK, service.ResponseEnvelope{
+			APIVersion: "v1",
+			Data:       detail,
+			Warnings:   warnings,
 		})
 	}
 }

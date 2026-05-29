@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/auth"
+	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/reconciliation"
 )
 
@@ -574,6 +575,31 @@ func TestListReportsHandler_InvalidCursor(t *testing.T) {
 	}
 	if response.Code != "VALIDATION_FAILED" {
 		t.Fatalf("expected VALIDATION_FAILED, got %s", response.Code)
+	}
+}
+
+func TestListReportsHandler_RejectsScopedCursorFromDifferentTenant(t *testing.T) {
+	store := reconciliation.NewMemoryStore()
+	r := setupReconcileRouter(nil, store, "tenant-b", string(auth.RoleMerchant))
+
+	cursor := pagination.EncodeScopedCursor("sub-1", "sub-1", "tenant-a")
+	req := httptest.NewRequest(http.MethodGet, "/reports?cursor="+cursor, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for cross-tenant cursor, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var response ErrorEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if response.Code != "VALIDATION_FAILED" {
+		t.Fatalf("expected VALIDATION_FAILED, got %s", response.Code)
+	}
+	if response.Details["reason"] != "cursor does not belong to this tenant" {
+		t.Fatalf("expected tenant mismatch reason, got %#v", response.Details["reason"])
 	}
 }
 

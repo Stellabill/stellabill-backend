@@ -40,20 +40,19 @@ func LogAction(c *gin.Context, action, target, outcome string, metadata map[stri
 	meta["path"] = c.FullPath()
 	meta["method"] = c.Request.Method
 	meta["client_ip"] = c.ClientIP()
-	actor := ResolveActor(c)
 
-	// Convert map[string]string to map[string]interface{}
-	auditMeta := make(map[string]interface{})
+	eventMeta := make(map[string]interface{})
 	for k, v := range meta {
-		auditMeta[k] = v
+		eventMeta[k] = v
 	}
 
+	actor := ResolveActor(c)
 	_, _ = logger.Log(c.Request.Context(), AuditEvent{
 		Actor:    actor,
 		Action:   action,
 		Resource: target,
 		Outcome:  outcome,
-		Metadata: auditMeta,
+		Metadata: eventMeta,
 	})
 }
 
@@ -93,14 +92,19 @@ func logAuthFailure(c *gin.Context, logger *Logger, status int) {
 	if reason != "" {
 		meta["reason"] = reason
 	}
-	actor := ResolveActor(c)
 
+	eventMeta := make(map[string]interface{})
+	for k, v := range meta {
+		eventMeta[k] = v
+	}
+
+	actor := ResolveActor(c)
 	_, _ = logger.Log(c.Request.Context(), AuditEvent{
 		Actor:    actor,
 		Action:   "auth_failure",
 		Resource: c.FullPath(),
 		Outcome:  fmt.Sprintf("status_%d", status),
-		Metadata: meta,
+		Metadata: eventMeta,
 	})
 }
 

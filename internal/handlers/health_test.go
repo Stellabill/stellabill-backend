@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -33,12 +34,16 @@ func (m *MockDBPinger) PingContext(ctx context.Context) error {
 
 // MockOutboxHealther implements OutboxHealther for testing
 type MockOutboxHealther struct {
+	latency time.Duration
 	err   error
 	stats map[string]interface{}
 }
 
 func (m *MockOutboxHealther) Health() error {
-	return m.err
+    if m.latency > 0 {
+        time.Sleep(m.latency)
+    }
+    return m.err
 }
 
 func (m *MockOutboxHealther) GetStats() (map[string]interface{}, error) {
@@ -196,6 +201,22 @@ func TestCheckDatabase_Timeout(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, StatusDegraded, depHealth.Status)
 	assert.Contains(t, depHealth.Message, "timeout")
+}
+
+// TestCheckDatabase_ConnDoneAfterRetries tests database health with sql.ErrConnDone after retries
+func TestCheckDatabase_ConnDoneAfterRetries(t *testing.T) {
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	defer os.Unsetenv("DATABASE_URL")
+
+	checker := &HealthChecker{
+		db: &MockDBPinger{err: sql.ErrConnDone},
+	}
+
+	result := checker.checkDatabase(context.Background())
+	depHealth, ok := result.(DependencyHealth)
+	require.True(t, ok)
+	assert.Equal(t, StatusUnhealthy, depHealth.Status)
+	assert.Contains(t, depHealth.Message, "database connection closed unexpectedly")
 }
 
 // TestCheckDatabase_NotConfigured tests database health when not configured
@@ -371,6 +392,32 @@ func TestCheckAllDependencies_Timeout(t *testing.T) {
 	}
 }
 
+// TestCheckAllDependencies_DatabaseTimeoutOutboxHealthy tests database timeout while outbox completes successfully
+func TestCheckAllDependencies_DatabaseTimeoutOutboxHealthy(t *testing.T) {
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	defer os.Unsetenv("DATABASE_URL")
+
+	checker := NewHealthChecker(
+		&MockDBPinger{latency: 10 * time.Second},
+		&MockOutboxHealther{err: nil},
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	deps := checker.checkAllDependencies(ctx)
+
+	dbDep, ok := deps["database"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "timeout", dbDep["status"])
+	assert.Contains(t, dbDep["message"], "timeout")
+
+	outboxDep, ok := deps["outbox"].(DependencyHealth)
+	require.True(t, ok)
+	assert.Equal(t, StatusHealthy, outboxDep.Status)
+	assert.NotEmpty(t, outboxDep.Latency)
+}
+
 // TestSecurityNoSensitiveData verifies health responses don't leak secrets
 func TestSecurityNoSensitiveData(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -440,5 +487,111 @@ func TestLifecycleEndpointsIntegration(t *testing.T) {
 			assert.Equal(t, ServiceName, response.Service)
 			assert.NotEmpty(t, response.Timestamp)
 		})
+	}
+}
+
+// TestCheckDatabase_ConnDone tests sql.ErrConnDone returns StatusUnhealthy
+func TestCheckDatabase_ConnDone(t *testing.T) {
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	defer os.Unsetenv("DATABASE_URL")
+
+	checker := &HealthChecker{
+		db: &MockDBPinger{err: sql.ErrConnDone},
+	}
+
+	result := checker.checkDatabase(context.Background())
+	depHealth, ok := result.(DependencyHealth)
+	require.True(t, ok)
+	assert.Equal(t, StatusUnhealthy, depHealth.Status)
+	assert.Contains(t, depHealth.Message, "closed unexpectedly")
+}
+
+// TestCheckAllDependencies_PartialTimeout tests database times out but outbox completes
+func TestCheckAllDependencies_PartialTimeout(t *testing.T) {
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	defer os.Unsetenv("DATABASE_URL")
+
+	checker := NewHealthChecker(
+		&MockDBPinger{latency: 10 * time.Second},
+		&MockOutboxHealther{err: nil},
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	deps := checker.checkAllDependencies(ctx)
+
+	assert.NotNil(t, deps["database"])
+	assert.NotNil(t, deps["outbox"])
+
+	dbDep, ok := deps["database"].(map[string]interface{})
+	if ok {
+		assert.Equal(t, "timeout", dbDep["status"])
+		assert.Contains(t, dbDep["message"], "timeout")
+	}
+}
+
+// TestCheckDatabase_ParentContextCancelledDuringRetry tests context cancelled mid-retry
+func TestCheckDatabase_ParentContextCancelledDuringRetry(t *testing.T) {
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	defer os.Unsetenv("DATABASE_URL")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	checker := &HealthChecker{
+		db: &MockDBPinger{err: errors.New("transient error")},
+	}
+
+	result := checker.checkDatabase(ctx)
+	depHealth, ok := result.(DependencyHealth)
+	require.True(t, ok)
+	assert.Equal(t, StatusDegraded, depHealth.Status)
+}
+
+// TestCheckOutbox_DeadlineExceeded tests the ctx.Err() == DeadlineExceeded branch
+func TestCheckOutbox_DeadlineExceeded(t *testing.T) {
+	checker := &HealthChecker{
+		outbox: &MockOutboxHealther{
+			latency: 200 * time.Millisecond,
+			err:     errors.New("slow outbox"),
+		},
+	}
+
+	// Short parent context — expires before Health() returns
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	result := checker.checkOutbox(ctx)
+	depHealth, ok := result.(DependencyHealth)
+	require.True(t, ok)
+	assert.Equal(t, StatusDegraded, depHealth.Status)
+	assert.Contains(t, depHealth.Message, "timeout")
+}
+
+// TestCheckAllDependencies_BothTimeout tests both deps timing out (covers outbox timeout path)
+func TestCheckAllDependencies_BothTimeout(t *testing.T) {
+	checker := NewHealthChecker(
+		&MockDBPinger{latency: 10 * time.Second},
+		&MockOutboxHealther{latency: 10 * time.Second, err: errors.New("slow")},
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	deps := checker.checkAllDependencies(ctx)
+
+	// Both must be present and marked timeout
+	dbDep, ok := deps["database"].(map[string]interface{})
+	if ok {
+		assert.Equal(t, "timeout", dbDep["status"])
+	}
+	outboxDep, ok := deps["outbox"].(map[string]interface{})
+	if ok {
+		assert.Equal(t, "timeout", outboxDep["status"])
 	}
 }

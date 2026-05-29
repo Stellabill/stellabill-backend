@@ -97,6 +97,20 @@ func TestCoverage_NewGetSubscriptionHandler(t *testing.T) {
 	}
 }
 
+func TestCoverage_NewChangeSubscriptionStatusHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewChangeSubscriptionStatusHandler(nil)
+	r := gin.New()
+	r.POST("/s/:id/status", h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/s/abc/status", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+}
+
 func TestCoverage_NewGetStatementHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewGetStatementHandler(nil)

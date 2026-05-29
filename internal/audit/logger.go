@@ -12,22 +12,7 @@ import (
 	"time"
 )
 
-type auditContextKey string
-
-const (
-	actorKey auditContextKey = "audit_actor"
-)
-
-// WithActor returns a new context with the provided actor ID.
-func WithActor(ctx context.Context, actor string) context.Context {
-	return context.WithValue(ctx, actorKey, actor)
-}
-
-// FromContext extracts the actor ID from the context.
-func FromContext(ctx context.Context) (string, bool) {
-	val, ok := ctx.Value(actorKey).(string)
-	return val, ok
-}
+const redactedValue = "***REDACTED***"
 
 type Logger struct {
 	mu       sync.Mutex
@@ -60,9 +45,10 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) 
 
 	// 1. Prepare Event Metadata
 	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now().UTC()
-	} else {
-		event.Timestamp = event.Timestamp.UTC()
+		event.Timestamp = time.Now()
+	}
+	if event.Actor == "" {
+		event.Actor = GetActor(ctx)
 	}
 	
 	// 2. Redaction (PII Protection)

@@ -31,7 +31,7 @@ const (
 	// avoid runaway memory if a panic carries an absurdly deep stack.
 	maxStackBytes = 4000
 
-	internalErrorMessage = "Internal server error"
+	internalErrorMessage = "internal server error"
 	internalErrorCode    = "INTERNAL_ERROR"
 	redactedPlaceholder  = "[REDACTED]"
 )

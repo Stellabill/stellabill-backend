@@ -3,14 +3,179 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/migrations"
 )
+
+func TestRunHTTPServer_ShutdownSignalBeforeAnyRequest(t *testing.T) {
+	ln, restore := listenOnLocalhost(t)
+	defer restore()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var cleanupCalled atomic.Bool
+	srv := &http.Server{
+		Addr:    ln.Addr().String(),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runHTTPServer(ctx, make(chan os.Signal), srv, time.Second, func(context.Context) error {
+			cleanupCalled.Store(true)
+			return nil
+		})
+	}()
+
+	waitForServer(t, ln.Addr().String())
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected graceful shutdown without active requests, got %v", err)
+	}
+	if !cleanupCalled.Load() {
+		t.Fatal("expected cleanup to be called")
+	}
+}
+
+func TestRunHTTPServer_DrainsInFlightRequest(t *testing.T) {
+	ln, restore := listenOnLocalhost(t)
+	defer restore()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := &http.Server{
+		Addr: ln.Addr().String(),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(started)
+			<-release
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runHTTPServer(ctx, make(chan os.Signal), srv, time.Second, nil)
+	}()
+
+	clientDone := make(chan error, 1)
+	go func() {
+		resp, err := http.Get("http://" + ln.Addr().String())
+		if err != nil {
+			clientDone <- err
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			clientDone <- errors.New(resp.Status)
+			return
+		}
+		clientDone <- nil
+	}()
+
+	<-started
+	cancel()
+	close(release)
+
+	if err := <-clientDone; err != nil {
+		t.Fatalf("request should complete during graceful shutdown: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("expected graceful shutdown, got %v", err)
+	}
+}
+
+func TestRunHTTPServer_ShutdownTimeoutExceeded(t *testing.T) {
+	ln, restore := listenOnLocalhost(t)
+	defer restore()
+
+	started := make(chan struct{})
+	srv := &http.Server{
+		Addr: ln.Addr().String(),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(started)
+			select {}
+		}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runHTTPServer(ctx, make(chan os.Signal), srv, 25*time.Millisecond, nil)
+	}()
+
+	client := &http.Client{Timeout: time.Second}
+	clientDone := make(chan struct{})
+	go func() {
+		_, _ = client.Get("http://" + ln.Addr().String())
+		close(clientDone)
+	}()
+
+	<-started
+	cancel()
+
+	err := <-done
+	if err == nil {
+		t.Fatal("expected shutdown timeout error")
+	}
+	if !strings.Contains(err.Error(), "http server shutdown") {
+		t.Fatalf("expected shutdown error to mention http server shutdown, got %v", err)
+	}
+	<-clientDone
+}
+
+func TestRunHTTPServer_SecondSignalForcesClose(t *testing.T) {
+	ln, restore := listenOnLocalhost(t)
+	defer restore()
+
+	started := make(chan struct{})
+	srv := &http.Server{
+		Addr: ln.Addr().String(),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(started)
+			select {}
+		}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	secondSignal := make(chan os.Signal, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- runHTTPServer(ctx, secondSignal, srv, time.Second, nil)
+	}()
+
+	client := &http.Client{Timeout: time.Second}
+	clientDone := make(chan struct{})
+	go func() {
+		_, _ = client.Get("http://" + ln.Addr().String())
+		close(clientDone)
+	}()
+
+	<-started
+	cancel()
+	secondSignal <- syscall.SIGTERM
+
+	err := <-done
+	if err == nil {
+		t.Fatal("expected forced shutdown error")
+	}
+	if !strings.Contains(err.Error(), "forced shutdown after second signal") {
+		t.Fatalf("expected forced shutdown error, got %v", err)
+	}
+	<-clientDone
+}
 
 // TestApplyMigrationsOnStartup_MissingDatabase tests that applyMigrationsOnStartup fails gracefully
 // when the database connection string is invalid.
@@ -236,4 +401,39 @@ func TestDatabasePingVerifiesConnectivity(t *testing.T) {
 func BenchmarkApplyMigrationsOnStartup_WithoutMigrations(b *testing.B) {
 	// This benchmark is documented but not fully implemented without a test database
 	b.Log("benchmark: applyMigrationsOnStartup() with no migrations")
+}
+
+func listenOnLocalhost(t *testing.T) (net.Listener, func()) {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen on localhost: %v", err)
+	}
+
+	original := listenAndServe
+	listenAndServe = func(srv *http.Server) error {
+		return srv.Serve(ln)
+	}
+
+	return ln, func() {
+		listenAndServe = original
+		_ = ln.Close()
+	}
+}
+
+func waitForServer(t *testing.T, addr string) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 25*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("server did not start listening on %s", addr)
 }

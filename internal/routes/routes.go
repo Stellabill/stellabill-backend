@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -24,14 +25,22 @@ import (
 
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
+	_ = RegisterWithCleanup(r)
+}
+
+// RegisterWithCleanup configures all routes and returns a cleanup function for
+// resources created during route wiring.
+func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		panic(fmt.Sprintf("failed to load configuration: %v", err))
 	}
 
+	var tracerShutdown func(context.Context) error
+
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
-		_, err := tracing.InitTracer(cfg.TracingServiceName)
+		tracerShutdown, err = tracing.InitTracer(cfg.TracingServiceName)
 		if err != nil {
 			fmt.Printf("Failed to initialize tracer: %v\n", err)
 		}
@@ -181,6 +190,22 @@ func Register(r *gin.Engine) {
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
+	}
+
+	return func(ctx context.Context) error {
+		if dbPool != nil {
+			log.Printf("closing database pool")
+			dbPool.Close()
+		}
+
+		if tracerShutdown != nil {
+			log.Printf("flushing tracer")
+			if err := tracerShutdown(ctx); err != nil {
+				return fmt.Errorf("shutdown tracer: %w", err)
+			}
+		}
+
+		return nil
 	}
 }
 

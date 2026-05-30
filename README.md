@@ -52,7 +52,7 @@ The backend includes a production-ready background worker system for automated b
 - **Distributed Locking**: Prevents duplicate processing when running multiple worker instances
 - **Retry Policy**: Automatic retry with exponential backoff (1s, 4s, 9s) for failed jobs
 - **Dead-Letter Queue**: Failed jobs after max attempts are moved for manual review
-- **Graceful Shutdown**: Workers complete in-flight jobs before shutting down
+- **Graceful Shutdown**: Workers and the HTTP server complete in-flight work before shutting down
 - **Metrics Tracking**: Monitor job processing statistics (processed, succeeded, failed, dead-lettered)
 - **Concurrent Workers**: Multiple workers can run safely without duplicate processing
 

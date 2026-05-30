@@ -2,9 +2,10 @@ package worker
 
 import (
 	"context"
-	"database/sql"
+
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -328,7 +329,7 @@ func TestOutboxWorker_ExponentialBackoff(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("retry_%d", tt.retryCount), func(t *testing.T) {
-			import "math"
+			
 			backoff := cfg.RetryBackoffBase * time.Duration(math.Pow(2, float64(tt.retryCount-1)))
 			assert.Equal(t, tt.expected, backoff)
 		})
@@ -556,7 +557,7 @@ func TestOutboxWorker_MultipleBatchProcessing(t *testing.T) {
 }
 
 func TestOutboxWorker_SatisfiesOutboxHealtherInterface(t *testing.T) {
-	// Compile-time check that OutboxWorker satisfies the interface shape.
+
 	db, _, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()

@@ -3,11 +3,13 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"stellarbill-backend/internal/cache"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"stellarbill-backend/internal/cache"
+	"golang.org/x/sync/singleflight"
 )
 
 type cacheEnvelope struct {
@@ -25,6 +27,7 @@ type CachedPlanRepo struct {
 	misses        uint64
 	stales        uint64
 	invalidatedAt sync.Map
+	sf            singleflight.Group
 }
 
 // NewCachedPlanRepo constructs a CachedPlanRepo.
@@ -44,10 +47,12 @@ func (cpr *CachedPlanRepo) cacheKey(id string) string {
 // and updates cache on a successful backend read.
 func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, error) {
 	key := cpr.cacheKey(id)
+	// Attempt cache fetch
 	if cpr.cache != nil {
 		if val, err := cpr.cache.Get(ctx, key); err == nil && val != nil {
 			var env cacheEnvelope
 			if err := json.Unmarshal(val, &env); err == nil {
+				// Check for staleness due to invalidation
 				stale := false
 				if invTimeVal, ok := cpr.invalidatedAt.Load(key); ok {
 					if invTime, ok := invTimeVal.(time.Time); ok && env.StoredAt.Before(invTime) {
@@ -67,29 +72,34 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 			}
 		}
 	}
+	// Cache miss, use singleflight to avoid stampede
 	atomic.AddUint64(&cpr.misses, 1)
-	pr, err := cpr.backend.FindByID(ctx, id)
+	v, err, _ := cpr.sf.Do(key, func() (interface{}, error) {
+		pr, err := cpr.backend.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if cpr.cache != nil {
+			prBytes, err := json.Marshal(pr)
+			if err == nil {
+				env := cacheEnvelope{Data: prBytes, StoredAt: time.Now()}
+				if envBytes, err := json.Marshal(env); err == nil {
+					_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
+				}
+			}
+		}
+		return pr, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if cpr.cache != nil {
-		prBytes, err := json.Marshal(pr)
-		if err == nil {
-			env := cacheEnvelope{
-				Data:     prBytes,
-				StoredAt: time.Now(),
-			}
-			if envBytes, err := json.Marshal(env); err == nil {
-				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
-			}
-		}
-	}
-	return pr, nil
+	return v.(*PlanRow), nil
 }
 
 // List returns all plans. It caches the full list under a single key.
 func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	key := "plan:list:all"
+	// Attempt cache fetch for list
 	if cpr.cache != nil {
 		if val, err := cpr.cache.Get(ctx, key); err == nil && val != nil {
 			var env cacheEnvelope
@@ -110,27 +120,34 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 						return out, nil
 					}
 				}
+			} else {
+				// Corrupted envelope JSON
+				return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 			}
 		}
 	}
+	// Cache miss, use singleflight for list
 	atomic.AddUint64(&cpr.misses, 1)
-	out, err := cpr.backend.List(ctx)
+	v, err, _ := cpr.sf.Do(key, func() (interface{}, error) {
+		out, err := cpr.backend.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if cpr.cache != nil {
+			outBytes, err := json.Marshal(out)
+			if err == nil {
+				env := cacheEnvelope{Data: outBytes, StoredAt: time.Now()}
+				if envBytes, err := json.Marshal(env); err == nil {
+					_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
+				}
+			}
+		}
+		return out, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if cpr.cache != nil {
-		outBytes, err := json.Marshal(out)
-		if err == nil {
-			env := cacheEnvelope{
-				Data:     outBytes,
-				StoredAt: time.Now(),
-			}
-			if envBytes, err := json.Marshal(env); err == nil {
-				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
-			}
-		}
-	}
-	return out, nil
+	return v.([]*PlanRow), nil
 }
 
 // Delete invalidates a cached plan entry and records the invalidation time.

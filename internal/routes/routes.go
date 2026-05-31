@@ -51,6 +51,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TraceIDMiddleware())
+	r.Use(middleware.FaultInjection())
 
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
 

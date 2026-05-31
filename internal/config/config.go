@@ -92,7 +92,10 @@ type Config struct {
 	TracingExporter        string
 	TracingServiceName     string
 	SecurityFrameAncestors string
-	// CORS configuration
+	// Vault configuration
+	VaultAddr       string
+	VaultToken      string
+	VaultPathPrefix string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -175,6 +178,10 @@ var optionalEnvVars = map[string]string{
 	"MAX_GZIP_UNCOMPRESSED":       "10485760",
 	"MAX_GZIP_RATIO":              "10.0",
 	"SECURITY_FRAME_ANCESTORS":    "'none'",
+	"JWKS_URL":                    "",
+	"VAULT_ADDR":                  "",
+	"VAULT_TOKEN":                 "",
+	"VAULT_PATH_PREFIX":           "secret/data/",
 }
 
 // Option configures the Load function.
@@ -201,10 +208,10 @@ var secretKeys = []string{
 
 // Load loads configuration from environment variables with validation.
 // Sensitive values (DATABASE_URL, JWT_SECRET) are fetched through the secrets
-// provider, which defaults to EnvProvider when no option is supplied.
+// provider, which defaults to the auto-configured chain (Vault -> Env) when no option is supplied.
 func Load(opts ...Option) (Config, error) {
 	o := &loadOptions{
-		secretsProvider: secrets.NewEnvProvider(),
+		secretsProvider: secrets.NewDefaultProvider(),
 	}
 	for _, fn := range opts {
 		fn(o)
@@ -364,6 +371,19 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.AdminToken = token
+		}
+	}
+
+	if val := os.Getenv("JWKS_URL"); val != "" {
+		if _, err := url.ParseRequestURI(val); err != nil {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "JWKS_URL",
+				Message: "must be a valid URL",
+				Value:   val,
+			})
+		} else {
+			c.JWKSURL = val
 		}
 	}
 

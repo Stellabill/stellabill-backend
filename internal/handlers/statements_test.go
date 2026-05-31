@@ -6,9 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 )
@@ -16,22 +18,25 @@ import (
 // ── mock ─────────────────────────────────────────────────────────────────────
 
 type mockStatementsTestService struct {
-	detail       *service.StatementDetail
-	listDetail   *service.ListStatementsDetail
-	warnings     []string
-	count        int
-	err          error
-	capturedQ    repository.StatementQuery
-	capturedCust string
+	detail        *service.StatementDetail
+	listDetail    *service.ListStatementsDetail
+	warnings      []string
+	count         int
+	err           error
+	capturedQ     repository.StatementQuery
+	capturedCust  string
+	capturedRoles []string
 }
 
-func (m *mockStatementsTestService) GetDetail(_ context.Context, _ string, _ []string, _ string) (*service.StatementDetail, []string, error) {
+func (m *mockStatementsTestService) GetDetail(_ context.Context, _ string, roles []string, _ string) (*service.StatementDetail, []string, error) {
+	m.capturedRoles = roles
 	return m.detail, m.warnings, m.err
 }
 
-func (m *mockStatementsTestService) ListByCustomer(_ context.Context, _ string, _ []string, customerID string, q repository.StatementQuery) (*service.ListStatementsDetail, int, []string, error) {
+func (m *mockStatementsTestService) ListByCustomer(_ context.Context, _ string, roles []string, customerID string, q repository.StatementQuery) (*service.ListStatementsDetail, int, []string, error) {
 	m.capturedQ = q
 	m.capturedCust = customerID
+	m.capturedRoles = roles
 	return m.listDetail, m.count, m.warnings, m.err
 }
 
@@ -242,6 +247,32 @@ func TestGetStatement_HappyPath_WarningsIncluded(t *testing.T) {
 	}
 	if len(warns) != 1 || warns[0] != "subscription missing" {
 		t.Errorf("unexpected warnings: %v", warns)
+	}
+}
+
+func TestGetStatement_AuthRolesArePropagated(t *testing.T) {
+	svc := &mockStatementsTestService{
+		detail: &service.StatementDetail{ID: "stmt-1"},
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("callerID", "merchant-1")
+		c.Set(auth.RolesContextKey, []auth.Role{auth.RoleMerchant})
+		c.Next()
+	})
+	r.GET("/api/statements/:id", NewGetStatementHandler(svc))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/statements/stmt-1", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !reflect.DeepEqual(svc.capturedRoles, []string{"merchant"}) {
+		t.Fatalf("expected roles [merchant], got %v", svc.capturedRoles)
 	}
 }
 

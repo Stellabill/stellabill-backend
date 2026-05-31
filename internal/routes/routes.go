@@ -10,6 +10,7 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
@@ -65,18 +66,26 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
-	var dbPool *pgxpool.Pool
+	var dbPool *db.BreakerPool
+	var rawPool *pgxpool.Pool
 	if cfg.DBConn != "" {
 		var err error
-		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
+		rawPool, err = pgxpool.New(context.Background(), cfg.DBConn)
 		if err != nil {
 			fmt.Printf("Failed to initialize database pool: %v\n", err)
+		} else {
+			dbPool = db.NewBreakerPool(
+				rawPool,
+				cfg.DBCircuitBreakerMaxFailures,
+				cfg.DBCircuitBreakerTimeoutSeconds,
+				cfg.DBCircuitBreakerHalfOpenMaxRequests,
+			)
 		}
 	}
 
 	var idemStore middleware.IdempotencyStore
 	if dbPool != nil {
-		idemStore = middleware.NewPostgresIdempotencyStore(dbPool)
+		idemStore = middleware.NewPostgresIdempotencyStore(dbPool.Pool())
 	} else {
 		idemStore = middleware.NewInMemoryIdempotencyStore()
 	}

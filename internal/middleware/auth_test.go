@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -8,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -268,4 +272,86 @@ func TestMapJWTError(t *testing.T) {
 			assert.Equal(t, tc.wantMsg, err.Error())
 		})
 	}
+}
+
+func TestAuthMiddleware_JWKS(t *testing.T) {
+	// 1. Setup RS256 keys
+	rawKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	
+	key, err := jwk.FromRaw(rawKey)
+	require.NoError(t, err)
+	_ = key.Set(jwk.KeyIDKey, "test-kid")
+	_ = key.Set(jwk.AlgorithmKey, "RS256")
+
+	set := jwk.NewSet()
+	_ = set.AddKey(key)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(set)
+	}))
+	defer server.Close()
+
+	cache := auth.NewJWKSCache(server.URL, time.Hour)
+	hmacSecret := "hmac-secret-value"
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/protected", AuthMiddleware(cache, hmacSecret), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	t.Run("valid RS256 token", func(t *testing.T) {
+		claims := validClaims()
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = "test-kid"
+		tokenStr, err := tok.SignedString(rawKey)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+tokenStr)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("valid HS256 token (fallback)", func(t *testing.T) {
+		claims := validClaims()
+		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenStr, err := tok.SignedString([]byte(hmacSecret))
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+tokenStr)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("RS256 with unknown kid", func(t *testing.T) {
+		claims := validClaims()
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = "unknown-kid"
+		tokenStr, err := tok.SignedString(rawKey)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+tokenStr)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("RS256 with missing kid", func(t *testing.T) {
+		claims := validClaims()
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tokenStr, err := tok.SignedString(rawKey)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+tokenStr)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
 }

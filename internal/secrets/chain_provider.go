@@ -4,8 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
+
+// NewDefaultProvider returns a provider chain that includes Vault if VAULT_ADDR is set.
+func NewDefaultProvider() Provider {
+	env := NewEnvProvider()
+	addr := os.Getenv("VAULT_ADDR")
+	if addr == "" {
+		return env
+	}
+
+	vault := NewVaultProvider(
+		addr,
+		os.Getenv("VAULT_TOKEN"),
+		os.Getenv("VAULT_PATH_PREFIX"),
+	)
+
+	chain, err := NewChainProvider(vault, env)
+	if err != nil {
+		return env
+	}
+	return chain
+}
 
 // ChainProvider tries multiple providers in order and returns the first successful result.
 // If all providers fail with ErrSecretNotFound, ChainProvider returns ErrSecretNotFound.

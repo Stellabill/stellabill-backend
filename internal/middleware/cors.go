@@ -29,8 +29,19 @@ func CORS(env string, allowedOriginsRaw string) gin.HandlerFunc {
 
 		c.Header("Vary", "Origin")
 
-		// Not a cross-origin request
+		// Not a cross-origin request. However, treat OPTIONS in non-prod as
+		// a preflight and short-circuit even when Origin header is absent
+		// (tests and some clients may send bare OPTIONS). In production we
+		// require an explicit Origin to avoid loosening security.
 		if origin == "" {
+			if c.Request.Method == http.MethodOptions && !isProdEnv && (len(allowedOrigins) == 0 || allowedOrigins["*"]) {
+				// respond as wildcard-allowed preflight in dev
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key")
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
 			c.Next()
 			return
 		}

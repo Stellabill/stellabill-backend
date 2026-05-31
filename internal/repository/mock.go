@@ -1,6 +1,10 @@
 package repository
 
-import "context"
+import (
+	"context"
+	"sort"
+	"time"
+)
 
 // MockSubscriptionRepo is an in-memory SubscriptionRepository for testing.
 type MockSubscriptionRepo struct {
@@ -128,6 +132,10 @@ func (m *MockStatementRepo) FindByID(_ context.Context, id string) (*StatementRo
 
 // ListByCustomerID returns statement rows for the customer matching the query.
 func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID string, q StatementQuery) ([]*StatementRow, int, error) {
+	if m.listErr != nil {
+		return nil, 0, m.listErr
+	}
+
 	filtered := make([]*StatementRow, 0)
 	for _, r := range m.records {
 		if r.CustomerID != customerID {
@@ -142,12 +150,37 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 		if q.SubscriptionID != "" && r.SubscriptionID != q.SubscriptionID {
 			continue
 		}
+		if q.StartAfter != "" {
+			after, err := time.Parse(time.RFC3339, q.StartAfter)
+			if err == nil {
+				start, err := time.Parse(time.RFC3339, r.PeriodStart)
+				if err != nil || !start.After(after) {
+					continue
+				}
+			}
+		}
+		if q.EndBefore != "" {
+			before, err := time.Parse(time.RFC3339, q.EndBefore)
+			if err == nil {
+				end, err := time.Parse(time.RFC3339, r.PeriodEnd)
+				if err != nil || !end.Before(before) {
+					continue
+				}
+			}
+		}
 		filtered = append(filtered, r)
 	}
 
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].PeriodStart < filtered[j].PeriodStart
+	})
+
+	if q.Limit > 0 && q.Limit < len(filtered) {
+		filtered = filtered[:q.Limit]
+	}
+
 	total := len(filtered)
-	
-	// Default pagination if not provided
+
 	page := q.Page
 	if page <= 0 {
 		page = 1
@@ -156,12 +189,11 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 	if pageSize <= 0 {
 		pageSize = 10
 	}
-
 	start := (page - 1) * pageSize
 	if start >= total {
 		return []*StatementRow{}, total, nil
 	}
-	
+
 	end := start + pageSize
 	if end > total {
 		end = total

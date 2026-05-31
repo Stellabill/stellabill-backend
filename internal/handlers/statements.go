@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/validation"
@@ -239,8 +240,19 @@ func getAuthContext(c *gin.Context) (callerID string, roles []string, ok bool) {
 		switch typed := rolesRaw.(type) {
 		case []string:
 			roles = typed
+		case []auth.Role:
+			roles = make([]string, 0, len(typed))
+			for _, role := range typed {
+				if trimmed := strings.TrimSpace(string(role)); trimmed != "" {
+					roles = append(roles, trimmed)
+				}
+			}
 		case string:
 			roles = []string{typed}
+		case auth.Role:
+			if trimmed := strings.TrimSpace(string(typed)); trimmed != "" {
+				roles = []string{trimmed}
+			}
 		default:
 			roles = []string{}
 		}

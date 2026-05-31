@@ -23,6 +23,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
+const statementReadPermission = auth.PermReadSubscriptions
+
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
 	_ = RegisterWithCleanup(r)
@@ -116,6 +118,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	// Create handlers
 	h := handlers.NewHandlerWithDependencies(handlerPlanSvc, handlerSubSvc, dbPool, nil)
+	changeSubscriptionStatusHandler := handlers.NewChangeSubscriptionStatusHandler(svc)
+	getStatementHandler := handlers.NewGetStatementHandler(stmtSvc)
+	listStatementsHandler := handlers.NewListStatementsHandler(stmtSvc)
 
 	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
@@ -135,47 +140,15 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	api.GET("/liveness", h.LivenessProbe)
 	api.GET("/readiness", h.ReadinessProbe)
 
-	// V1 routes are all protected
+	// /api/v1/* is the canonical authenticated surface. Legacy /api/* aliases
+	// stay wired through the same handlers and add deprecation headers only.
 	v1.Use(authMiddleware)
-	{
-		v1.GET("/subscriptions", auth.RequirePermission(auth.PermReadSubscriptions), h.ListSubscriptions)
-		v1.GET("/subscriptions/:id", auth.RequirePermission(auth.PermReadSubscriptions), h.GetSubscription)
-		v1.POST("/subscriptions/:id/status", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewChangeSubscriptionStatusHandler(svc))
-		v1.GET("/plans", h.ListPlans)
-		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
-		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
-	}
+	registerProtectedAPIRoutes(v1, nil, h, changeSubscriptionStatusHandler, getStatementHandler, listStatementsHandler)
 
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
 	apiProtected.Use(authMiddleware)
-	{
-		apiProtected.GET("/plans",
-			dep,
-			auth.RequirePermission(auth.PermReadPlans),
-			h.ListPlans,
-		)
-
-		apiProtected.GET("/subscriptions",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			h.ListSubscriptions,
-		)
-
-		apiProtected.GET("/subscriptions/:id",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			h.GetSubscription,
-		)
-		apiProtected.POST("/subscriptions/:id/status",
-			dep,
-			auth.RequirePermission(auth.PermManageSubscriptions),
-			handlers.NewChangeSubscriptionStatusHandler(svc),
-		)
-
-		apiProtected.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
-		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
-	}
+	registerProtectedAPIRoutes(apiProtected, dep, h, changeSubscriptionStatusHandler, getStatementHandler, listStatementsHandler)
 
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
@@ -207,6 +180,31 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 		return nil
 	}
+}
+
+func registerProtectedAPIRoutes(
+	group *gin.RouterGroup,
+	deprecation gin.HandlerFunc,
+	h *handlers.Handler,
+	changeSubscriptionStatusHandler gin.HandlerFunc,
+	getStatementHandler gin.HandlerFunc,
+	listStatementsHandler gin.HandlerFunc,
+) {
+	group.GET("/plans", protectedRouteHandlers(deprecation, auth.PermReadPlans, h.ListPlans)...)
+	group.GET("/subscriptions", protectedRouteHandlers(deprecation, auth.PermReadSubscriptions, h.ListSubscriptions)...)
+	group.GET("/subscriptions/:id", protectedRouteHandlers(deprecation, auth.PermReadSubscriptions, h.GetSubscription)...)
+	group.POST("/subscriptions/:id/status", protectedRouteHandlers(deprecation, auth.PermManageSubscriptions, changeSubscriptionStatusHandler)...)
+	group.GET("/statements/:id", protectedRouteHandlers(deprecation, statementReadPermission, getStatementHandler)...)
+	group.GET("/statements", protectedRouteHandlers(deprecation, statementReadPermission, listStatementsHandler)...)
+}
+
+func protectedRouteHandlers(deprecation gin.HandlerFunc, permission auth.Permission, handler gin.HandlerFunc) []gin.HandlerFunc {
+	handlers := make([]gin.HandlerFunc, 0, 3)
+	if deprecation != nil {
+		handlers = append(handlers, deprecation)
+	}
+	handlers = append(handlers, auth.RequirePermission(permission), handler)
+	return handlers
 }
 
 // mockHandlerSubSvc adapts *repository.MockSubscriptionRepo to handlers.SubscriptionService.

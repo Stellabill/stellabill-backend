@@ -89,6 +89,8 @@ type Config struct {
 	TracingServiceName string
 	SecurityFrameAncestors string
 	// CORS configuration
+	// Audit configuration
+	AuditLogPath string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -231,6 +233,7 @@ func Load(opts ...Option) (Config, error) {
 		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
 		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
 		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
+		AuditLogPath:            getEnv("AUDIT_LOG_PATH", ""),
 	}
 
 	// Resolve secrets through the provider

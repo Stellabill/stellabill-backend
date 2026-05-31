@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
@@ -87,6 +88,19 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	authMiddleware := middleware.AuthMiddleware(jwksCache, cfg.JWTSecret)
 
+	// Configure audit logging
+	var auditSink audit.Sink
+	if cfg.AuditLogPath != "" {
+		auditSink = audit.NewFileSink(cfg.AuditLogPath)
+	} else {
+		auditSink = audit.NewStderrSink()
+	}
+	auditSecret := os.Getenv("AUDIT_SECRET")
+	if auditSecret == "" {
+		auditSecret = jwtSecret // Fallback to JWT secret for dev
+	}
+	auditLogger := audit.NewLogger(auditSecret, auditSink)
+
 	// Each cached repo gets its own InMemory cache instance so that Flush is
 	// scoped to its namespace and does not evict entries from other caches.
 	planCache := cache.NewInMemory()
@@ -137,6 +151,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
+	v1.Use(audit.Middleware(auditLogger))
 	{
 		v1.GET("/subscriptions", auth.RequirePermission(auth.PermReadSubscriptions), h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", auth.RequirePermission(auth.PermReadSubscriptions), h.GetSubscription)
@@ -149,6 +164,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
 	apiProtected.Use(authMiddleware)
+	apiProtected.Use(audit.Middleware(auditLogger))
 	{
 		apiProtected.GET("/plans",
 			dep,
@@ -179,6 +195,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
+	admin.Use(audit.Middleware(auditLogger))
 	{
 		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage

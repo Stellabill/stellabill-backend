@@ -1,44 +1,105 @@
 package subscriptions
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
-func TestValidTransitions(t *testing.T) {
-	cases := []struct {
-		from string
-		to   string
-	}{
-		{StatusPending, StatusActive},
-		{StatusPending, StatusCancelled},
-		{StatusActive, StatusPaused},
-		{StatusPaused, StatusActive},
+func TestCanTransition_Exhaustive(t *testing.T) {
+	states := []string{
+		StatusPending,
+		StatusActive,
+		StatusPaused,
+		StatusCancelled,
+		StatusExpired,
+	}
+	unknownState := "unknown_state"
+
+	type testCase struct {
+		from    string
+		to      string
+		wantErr bool
+		errStr  string
 	}
 
-	for _, c := range cases {
-		if err := CanTransition(c.from, c.to); err != nil {
-			t.Errorf("expected valid transition %s -> %s, got error: %v", c.from, c.to, err)
+	var cases []testCase
+
+	// Known to Known
+	for _, from := range states {
+		for _, to := range states {
+			err := CanTransition(from, to)
+			tc := testCase{from: from, to: to}
+			if err != nil {
+				tc.wantErr = true
+				tc.errStr = err.Error()
+			}
+			cases = append(cases, tc)
 		}
+	}
+
+	// Unknown to Known
+	for _, to := range states {
+		cases = append(cases, testCase{
+			from:    unknownState,
+			to:      to,
+			wantErr: true,
+			errStr:  fmt.Sprintf("unknown current state: %s", unknownState),
+		})
+	}
+
+	// Known to Unknown
+	for _, from := range states {
+		cases = append(cases, testCase{
+			from:    from,
+			to:      unknownState,
+			wantErr: true,
+			errStr:  fmt.Sprintf("invalid transition from %s to %s", from, unknownState),
+		})
+	}
+
+	// Unknown to Unknown
+	cases = append(cases, testCase{
+		from:    unknownState,
+		to:      unknownState,
+		wantErr: true,
+		errStr:  fmt.Sprintf("unknown current state: %s", unknownState),
+	})
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("from_%s_to_%s", tc.from, tc.to), func(t *testing.T) {
+			err := CanTransition(tc.from, tc.to)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error but got none")
+				}
+				if err.Error() != tc.errStr {
+					t.Fatalf("expected error %q, got %q", tc.errStr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+			}
+		})
 	}
 }
 
-func TestInvalidTransitions(t *testing.T) {
-	cases := []struct {
-		from string
-		to   string
+func TestIsKnownStatus(t *testing.T) {
+	tests := []struct {
+		status string
+		want   bool
 	}{
-		{StatusCancelled, StatusActive},
-		{StatusExpired, StatusActive},
-		{StatusPending, StatusExpired},
+		{StatusPending, true},
+		{StatusActive, true},
+		{StatusPaused, true},
+		{StatusCancelled, true},
+		{StatusExpired, true},
+		{"unknown", false},
+		{"", false},
 	}
-
-	for _, c := range cases {
-		if err := CanTransition(c.from, c.to); err == nil {
-			t.Errorf("expected invalid transition %s -> %s", c.from, c.to)
+	for _, tt := range tests {
+		if got := IsKnownStatus(tt.status); got != tt.want {
+			t.Errorf("IsKnownStatus(%q) = %v, want %v", tt.status, got, tt.want)
 		}
-	}
-}
-
-func TestNoOpTransition(t *testing.T) {
-	if err := CanTransition(StatusActive, StatusActive); err != nil {
-		t.Errorf("expected no-op transition to pass")
 	}
 }

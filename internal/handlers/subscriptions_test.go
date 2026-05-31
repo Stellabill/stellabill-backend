@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"stellarbill-backend/internal/service"
 )
 
 // mockSubscriptionService is a test double for service.SubscriptionService.
@@ -27,6 +29,10 @@ func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerI
 	m.callerID = callerID
 	m.id = id
 	return m.detail, m.warnings, m.err
+}
+
+func (m *mockSubscriptionService) ChangeStatus(ctx context.Context, tenantID string, actorID string, subscriptionID string, targetStatus string) (*service.SubscriptionStatusChange, error) {
+	return nil, nil
 }
 
 func (m *mockSubscriptionService) ListSubscriptions(c *gin.Context) ([]Subscription, error) {
@@ -53,6 +59,7 @@ func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 	return r
 }
 
+func TestHandler_ListSubscriptions(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		mockSvc := new(MockSubscriptionService)
 		h := &Handler{Subscriptions: mockSvc}

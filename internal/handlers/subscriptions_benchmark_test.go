@@ -393,3 +393,13 @@ func BenchmarkListSubscriptions_LargeDataset(b *testing.B) {
 		}
 	}
 }
+
+func filterSubscriptions(subs []Subscription, customerID string) []Subscription {
+	var filtered []Subscription
+	for _, s := range subs {
+		if s.Customer == customerID {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}

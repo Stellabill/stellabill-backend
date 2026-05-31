@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/pagination"
+	"stellarbill-backend/internal/repository"
 )
 
 type Plan struct {
@@ -16,10 +17,30 @@ type Plan struct {
 	Description string `json:"description,omitempty"`
 }
 
+func (p Plan) GetID() string        { return p.ID }
+func (p Plan) GetSortValue() string { return p.Name }
+
+
 func (h *Handler) ListPlans(c *gin.Context) {
+	limitStr := c.Query("limit")
+	limit, err := pagination.ParseLimit(limitStr, 10)
+	if err != nil {
+		RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeValidationFailed, "Invalid pagination limit", map[string]interface{}{
+			"reason": err.Error(),
+		})
+		return
+	}
+
+	cursorStr := c.Query("cursor")
+	cursor, err := pagination.Decode(cursorStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid cursor format"})
+		return
+	}
+
 	plans, err := h.Plans.ListPlans(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
 		return
 	}
 
@@ -27,7 +48,13 @@ func (h *Handler) ListPlans(c *gin.Context) {
 		plans = []Plan{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"plans": plans})
+	page := pagination.PaginateSlice(plans, cursor, limit)
+
+	c.JSON(http.StatusOK, gin.H{
+		"plans":       page.Items,
+		"next_cursor": page.NextCursor,
+		"has_more":    page.HasMore,
+	})
 }
 
 var planRepo repository.PlanRepository

@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -46,7 +47,7 @@ type EventData struct {
 
 // Publisher interface for event publishing
 type Publisher interface {
-	Publish(event *Event) error
+	Publish(ctx context.Context, event *Event) error
 }
 
 // Repository interface for outbox operations
@@ -58,6 +59,8 @@ type Repository interface {
 	MarkAsProcessing(id uuid.UUID) error
 	IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time, errorMessage *string) error
 	DeleteCompletedEvents(olderThan time.Time) (int64, error)
+	ListDeadLetteredEvents(limit int) ([]*Event, error)
+	RequeueEvent(id uuid.UUID) error
 }
 
 // Dispatcher handles the outbox event dispatching

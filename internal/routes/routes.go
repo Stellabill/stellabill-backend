@@ -12,8 +12,10 @@ import (
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/secrets"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/tracing"
@@ -191,6 +193,46 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
 	}
+
+	// Set up secrets provider and webhooks
+	secretProvider := secrets.NewEnvProvider()
+	ctx := context.Background()
+
+	// Get webhook secrets
+	stripeSecret, _ := secretProvider.GetSecret(ctx, "STRIPE_WEBHOOK_SECRET")
+	genericSecret, _ := secretProvider.GetSecret(ctx, "GENERIC_WEBHOOK_SECRET")
+	if stripeSecret == "" {
+		stripeSecret = "test-stripe-secret"
+	}
+	if genericSecret == "" {
+		genericSecret = "test-generic-secret"
+	}
+
+	// Create outbox repository
+	var outboxRepo outbox.Repository
+	if dbPool != nil {
+		// Use pgxpool as db.DBTX
+		outboxRepo = outbox.NewPostgresRepository(dbPool)
+	}
+
+	// Create webhook handler
+	webhookHandler := handlers.NewWebhookHandler(outboxRepo)
+
+	// Stripe webhook config
+	stripeCfg := middleware.ProviderConfig(middleware.ProviderStripe)
+	stripeCfg.SecretKey = stripeSecret
+	stripeCfg.MaxBodySize = middleware.DefaultMaxBodySize
+	stripeMiddleware, _ := middleware.WebhookVerificationMiddleware(stripeCfg)
+
+	// Generic webhook config
+	genericCfg := middleware.DefaultWebhookConfig()
+	genericCfg.SecretKey = genericSecret
+	genericCfg.MaxBodySize = middleware.DefaultMaxBodySize
+	genericMiddleware, _ := middleware.WebhookVerificationMiddleware(genericCfg)
+
+	// Register webhook routes
+	api.POST("/webhooks/stripe", stripeMiddleware, webhookHandler)
+	api.POST("/webhooks/generic", genericMiddleware, webhookHandler)
 
 	return func(ctx context.Context) error {
 		if dbPool != nil {

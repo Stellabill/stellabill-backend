@@ -31,7 +31,7 @@ const (
 	// avoid runaway memory if a panic carries an absurdly deep stack.
 	maxStackBytes = 4000
 
-	internalErrorMessage = "Internal server error"
+	internalErrorMessage = "internal server error"
 	internalErrorCode    = "INTERNAL_ERROR"
 	redactedPlaceholder  = "[REDACTED]"
 )
@@ -56,16 +56,20 @@ var secretPatterns = []*regexp.Regexp{
 // request id, and writes a redacted error envelope to the client.
 func Recovery(logger ...*log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var std *log.Logger
+		if len(logger) > 0 {
+			std = logger[0]
+		}
 		defer func() {
 			if rec := recover(); rec != nil {
-				handlePanic(c, rec, debug.Stack())
+				handlePanic(c, rec, debug.Stack(), std)
 			}
 		}()
 		c.Next()
 	}
 }
 
-func handlePanic(c *gin.Context, rec any, stack []byte) {
+func handlePanic(c *gin.Context, rec any, stack []byte, stdLogger *log.Logger) {
 	// Guard against a panic from inside the recovery path itself. Without
 	// this, a faulty logger or response writer would crash the goroutine
 	// and tear down the connection without an error envelope.
@@ -108,6 +112,12 @@ func handlePanic(c *gin.Context, rec any, stack []byte) {
 	}
 
 	logger.Log.WithFields(fields).Error("panic recovered")
+
+	// Also write a lightweight line to the provided stdlib logger when one
+	// is supplied (tests pass a stdlib logger and assert on its output).
+	if stdLogger != nil {
+		stdLogger.Printf("panic recovered request_id=%s err=%s", requestID, panicMsg)
+	}
 
 	envelope := ErrorResponse{
 		Error:   internalErrorMessage,

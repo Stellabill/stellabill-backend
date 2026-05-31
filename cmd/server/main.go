@@ -31,7 +31,7 @@ func main() {
 	// Check if migrations should run on startup
 	runMigrationsOnStartup := os.Getenv("RUN_MIGRATIONS") == "true"
 	if runMigrationsOnStartup {
-		if err := applyMigrationsOnStartup(cfg); err != nil {
+		if err := applyMigrationsOnStartup(&cfg); err != nil {
 			log.Fatalf("migrations failed: %v", err)
 		}
 	}

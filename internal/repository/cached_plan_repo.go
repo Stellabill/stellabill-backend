@@ -3,16 +3,24 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"stellarbill-backend/internal/cache"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"stellarbill-backend/internal/cache"
+	"golang.org/x/sync/singleflight"
 )
 
 type cacheEnvelope struct {
 	Data     []byte    `json:"data"`
 	StoredAt time.Time `json:"stored_at"`
+}
+
+type inflightLoad struct {
+	wg  sync.WaitGroup
+	row *PlanRow
+	err error
 }
 
 // CachedPlanRepo decorates a PlanRepository with a read-through cache.
@@ -25,6 +33,7 @@ type CachedPlanRepo struct {
 	misses        uint64
 	stales        uint64
 	invalidatedAt sync.Map
+	inflight      sync.Map // map[string]*inflightLoad
 }
 
 // NewCachedPlanRepo constructs a CachedPlanRepo.
@@ -42,95 +51,125 @@ func (cpr *CachedPlanRepo) cacheKey(id string) string {
 
 // FindByID implements PlanRepository. It reads from cache first, falls back to backend
 // and updates cache on a successful backend read.
-func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, error) {
-	key := cpr.cacheKey(id)
-	if cpr.cache != nil {
-		if val, err := cpr.cache.Get(ctx, key); err == nil && val != nil {
-			var env cacheEnvelope
-			if err := json.Unmarshal(val, &env); err == nil {
-				stale := false
-				if invTimeVal, ok := cpr.invalidatedAt.Load(key); ok {
-					if invTime, ok := invTimeVal.(time.Time); ok && env.StoredAt.Before(invTime) {
-						stale = true
-					}
-				}
-				if stale {
-					atomic.AddUint64(&cpr.stales, 1)
-					_ = cpr.cache.Delete(ctx, key)
-				} else {
-					var pr PlanRow
-					if err := json.Unmarshal(env.Data, &pr); err == nil {
-						atomic.AddUint64(&cpr.hits, 1)
-						return &pr, nil
-					}
-				}
-			}
+func (cpr *CachedPlanRepo) getCachedPlan(ctx context.Context, key string) (*PlanRow, bool, error) {
+	if cpr.cache == nil {
+		return nil, false, nil
+	}
+	val, err := cpr.cache.Get(ctx, key)
+	if err != nil || val == nil {
+		return nil, false, nil
+	}
+
+	var env cacheEnvelope
+	if err := json.Unmarshal(val, &env); err != nil {
+		return nil, true, err
+	}
+	stale := false
+	if invTimeVal, ok := cpr.invalidatedAt.Load(key); ok {
+		if invTime, ok := invTimeVal.(time.Time); ok && env.StoredAt.Before(invTime) {
+			stale = true
 		}
 	}
+	if stale {
+		atomic.AddUint64(&cpr.stales, 1)
+		_ = cpr.cache.Delete(ctx, key)
+		return nil, false, nil
+	}
+
+	var pr PlanRow
+	if err := json.Unmarshal(env.Data, &pr); err != nil {
+		return nil, false, nil
+	}
+	atomic.AddUint64(&cpr.hits, 1)
+	return &pr, true, nil
+}
+
+func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, error) {
+	key := cpr.cacheKey(id)
+	if pr, ok, err := cpr.getCachedPlan(ctx, key); ok {
+		return pr, err
+	}
+
+	load := &inflightLoad{}
+	load.wg.Add(1)
+	actual, loaded := cpr.inflight.LoadOrStore(key, load)
+	if loaded {
+		inflight := actual.(*inflightLoad)
+		inflight.wg.Wait()
+		if inflight.err == nil {
+			atomic.AddUint64(&cpr.hits, 1)
+		}
+		return inflight.row, inflight.err
+	}
+
+	defer func() {
+		load.wg.Done()
+		cpr.inflight.Delete(key)
+	}()
+
 	atomic.AddUint64(&cpr.misses, 1)
 	pr, err := cpr.backend.FindByID(ctx, id)
+	load.row = pr
+	load.err = err
 	if err != nil {
 		return nil, err
 	}
-	if cpr.cache != nil {
-		prBytes, err := json.Marshal(pr)
-		if err == nil {
-			env := cacheEnvelope{
-				Data:     prBytes,
-				StoredAt: time.Now(),
-			}
-			if envBytes, err := json.Marshal(env); err == nil {
-				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
-			}
-		}
-	}
-	return pr, nil
+	return v.(*PlanRow), nil
 }
 
 // List returns all plans. It caches the full list under a single key.
 func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	key := "plan:list:all"
+	// Attempt cache fetch for list
 	if cpr.cache != nil {
 		if val, err := cpr.cache.Get(ctx, key); err == nil && val != nil {
 			var env cacheEnvelope
-			if err := json.Unmarshal(val, &env); err == nil {
-				stale := false
-				if invTimeVal, ok := cpr.invalidatedAt.Load(key); ok {
-					if invTime, ok := invTimeVal.(time.Time); ok && env.StoredAt.Before(invTime) {
-						stale = true
-					}
+			if err := json.Unmarshal(val, &env); err != nil {
+				return nil, err
+			}
+			stale := false
+			if invTimeVal, ok := cpr.invalidatedAt.Load(key); ok {
+				if invTime, ok := invTimeVal.(time.Time); ok && env.StoredAt.Before(invTime) {
+					stale = true
 				}
-				if stale {
-					atomic.AddUint64(&cpr.stales, 1)
-					_ = cpr.cache.Delete(ctx, key)
-				} else {
-					var out []*PlanRow
-					if err := json.Unmarshal(env.Data, &out); err == nil {
-						atomic.AddUint64(&cpr.hits, 1)
-						return out, nil
-					}
+			}
+			if stale {
+				atomic.AddUint64(&cpr.stales, 1)
+				_ = cpr.cache.Delete(ctx, key)
+			} else {
+				var out []*PlanRow
+				if err := json.Unmarshal(env.Data, &out); err == nil {
+					atomic.AddUint64(&cpr.hits, 1)
+					return out, nil
 				}
+			} else {
+				// Corrupted envelope JSON
+				return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 			}
 		}
 	}
+	// Cache miss, use singleflight for list
 	atomic.AddUint64(&cpr.misses, 1)
-	out, err := cpr.backend.List(ctx)
+	v, err, _ := cpr.sf.Do(key, func() (interface{}, error) {
+		out, err := cpr.backend.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if cpr.cache != nil {
+			outBytes, err := json.Marshal(out)
+			if err == nil {
+				env := cacheEnvelope{Data: outBytes, StoredAt: time.Now()}
+				if envBytes, err := json.Marshal(env); err == nil {
+					_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
+				}
+			}
+		}
+		return out, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if cpr.cache != nil {
-		outBytes, err := json.Marshal(out)
-		if err == nil {
-			env := cacheEnvelope{
-				Data:     outBytes,
-				StoredAt: time.Now(),
-			}
-			if envBytes, err := json.Marshal(env); err == nil {
-				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
-			}
-		}
-	}
-	return out, nil
+	return v.([]*PlanRow), nil
 }
 
 // Delete invalidates a cached plan entry and records the invalidation time.

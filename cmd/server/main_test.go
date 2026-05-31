@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -159,8 +158,9 @@ func TestPartialFailureRollback(t *testing.T) {
 // are serialized via advisory lock (EXCLUSIVE mode on schema_migrations table).
 //
 // The locking mechanism is at line 46-48 in runner.go:
-// func (r Runner) lock(ctx context.Context, tx *sql.Tx) error {
-//   _, err := tx.ExecContext(ctx, `LOCK TABLE schema_migrations IN EXCLUSIVE MODE;`)
+//
+//	func (r Runner) lock(ctx context.Context, tx *sql.Tx) error {
+//	  _, err := tx.ExecContext(ctx, `LOCK TABLE schema_migrations IN EXCLUSIVE MODE;`)
 func TestLockContention(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test - requires database access")
@@ -181,7 +181,7 @@ func TestRUNMIGRATIONSEnvVar(t *testing.T) {
 	//      if err := applyMigrationsOnStartup(cfg); err != nil {
 
 	tests := []struct {
-		envValue string
+		envValue  string
 		shouldRun bool
 	}{
 		{"true", true},
@@ -203,8 +203,9 @@ func TestRUNMIGRATIONSEnvVar(t *testing.T) {
 
 // TestContextTimeout tests that migrations have a 30-second timeout context.
 // Line 66-67 in main.go:
-//   ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-//   defer cancel()
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+//	defer cancel()
 func TestContextTimeout(t *testing.T) {
 	// This test verifies the timeout behavior
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -211,8 +211,8 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// Create outbox repository
 	var outboxRepo outbox.Repository
 	if dbPool != nil {
-		// Use pgxpool as db.DBTX
-		outboxRepo = outbox.NewPostgresRepository(dbPool)
+		// Use pgx-based repository
+		outboxRepo = outbox.NewPostgresPgxRepository(dbPool)
 	}
 
 	// Create webhook handler

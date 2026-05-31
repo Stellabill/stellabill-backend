@@ -119,7 +119,15 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
+	adminSecret := os.Getenv("ADMIN_SIGNING_SECRET")
+	if adminSecret == "" {
+		adminSecret = "dev-admin-secret"
+	}
 	adminHandler := handlers.NewAdminHandler(adminToken, cachedPlanRepo, cachedSubRepo)
+	adminSigningConfig := &middleware.AdminSigningConfig{
+		SecretKey: adminSecret,
+	}
+	adminSigningMiddleware := middleware.AdminSigningMiddleware(adminSigningConfig)
 	// Wire the cached plan repo into the package-level ListPlans handler.
 	handlers.SetPlanRepository(cachedPlanRepo)
 
@@ -179,6 +187,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
+	admin.Use(adminSigningMiddleware)
 	{
 		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage

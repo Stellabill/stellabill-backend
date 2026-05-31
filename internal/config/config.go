@@ -77,7 +77,9 @@ type Config struct {
 	RateLimitMode      string
 	RateLimitRPS       int
 	RateLimitBurst     int
-	RateLimitWhitelist []string
+	RateLimitWhitelist    []string
+	RateLimitTenantRPS    int
+	RateLimitTenantBurst  int
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
@@ -497,6 +499,46 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 
 	// Validate TRACING_EXPORTER
 	if exporter := os.Getenv("TRACING_EXPORTER"); exporter != "" {
+		// Validate per-tenant rate limiting configuration
+		if val := os.Getenv("RATE_LIMIT_TENANT_RPS"); val != "" {
+			if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitRPS && rps <= MaxRateLimitRPS {
+				c.RateLimitTenantRPS = rps
+			} else {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrInvalidValue,
+					Key:     "RATE_LIMIT_TENANT_RPS",
+					Message: fmt.Sprintf("must be between %d and %d", MinRateLimitRPS, MaxRateLimitRPS),
+					Value:   val,
+				})
+			}
+		} else {
+			c.RateLimitTenantRPS = 5 // Conservative default for per-tenant limits
+		}
+
+		if val := os.Getenv("RATE_LIMIT_TENANT_BURST"); val != "" {
+			if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitBurst && burst <= MaxRateLimitBurst {
+				c.RateLimitTenantBurst = burst
+			} else {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrInvalidValue,
+					Key:     "RATE_LIMIT_TENANT_BURST",
+					Message: fmt.Sprintf("must be between %d and %d", MinRateLimitBurst, MaxRateLimitBurst),
+					Value:   val,
+				})
+			}
+		} else {
+			c.RateLimitTenantBurst = 10 // Conservative default (2x tenant RPS)
+		}
+
+		if c.RateLimitTenantBurst < c.RateLimitTenantRPS {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: "must be greater than or equal to RATE_LIMIT_TENANT_RPS",
+				Value:   strconv.Itoa(c.RateLimitTenantBurst),
+			})
+		}
+
 		validExporters := map[string]bool{"stdout": true, "otlp": true, "none": true}
 		if !validExporters[exporter] {
 			result.Errors = append(result.Errors, ConfigError{

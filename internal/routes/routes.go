@@ -49,6 +49,14 @@ func Register(r *gin.Engine) {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
+	// Configure per-tenant rate limiting middleware
+	tenantRateLimitConfig := middleware.TenantRateLimitConfig{
+		Enabled:          cfg.RateLimitEnabled,
+		RPS:              cfg.RateLimitTenantRPS,
+		Burst:            cfg.RateLimitTenantBurst,
+		LogRateLimitHits: false,
+	}
+
 	store := idempotency.NewStore(idempotency.DefaultTTL)
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
@@ -93,6 +101,7 @@ func Register(r *gin.Engine) {
 
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
+	v1.Use(middleware.TenantRateLimitMiddleware(tenantRateLimitConfig))
 	{
 		v1.GET("/subscriptions", h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
@@ -105,6 +114,7 @@ func Register(r *gin.Engine) {
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
 	apiProtected.Use(authMiddleware)
+	apiProtected.Use(middleware.TenantRateLimitMiddleware(tenantRateLimitConfig))
 	{
 		apiProtected.GET("/plans",
 			dep,
@@ -135,6 +145,7 @@ func Register(r *gin.Engine) {
 
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
+	admin.Use(middleware.TenantRateLimitMiddleware(tenantRateLimitConfig))
 	{
 		admin.POST("/purge", adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage

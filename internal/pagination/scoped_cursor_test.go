@@ -31,9 +31,21 @@ func TestScopedCursor_EmptyString(t *testing.T) {
 
 func TestScopedCursor_WrongTenantRejected(t *testing.T) {
 	encoded := EncodeScopedCursor("id-1", "sort-val", "tenant-abc")
-	_, err := DecodeScopedCursor(encoded, "tenant-xyz")
+
+	cursor, err := DecodeScopedCursor(encoded, "tenant-abc")
+	if err != nil {
+		t.Fatalf("expected round-trip decode to succeed for source tenant: %v", err)
+	}
+	if cursor.ID != "id-1" || cursor.SortValue != "sort-val" {
+		t.Fatalf("unexpected cursor after round-trip: %+v", cursor)
+	}
+
+	_, err = DecodeScopedCursor(encoded, "tenant-xyz")
 	if err == nil {
 		t.Fatal("expected error for wrong tenant")
+	}
+	if err.Error() != "cursor does not belong to this tenant" {
+		t.Fatalf("expected tenant mismatch error, got %v", err)
 	}
 }
 

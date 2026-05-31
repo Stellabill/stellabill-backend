@@ -86,8 +86,8 @@ func RequirePermission(permission Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		roles := ExtractRoles(c)
 		if len(roles) == 0 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "unauthorized",
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "insufficient permissions",
 			})
 			return
 		}

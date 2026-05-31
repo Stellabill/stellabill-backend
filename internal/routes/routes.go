@@ -12,6 +12,7 @@ import (
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/featureflags"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
@@ -21,8 +22,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
+
 
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
@@ -52,6 +55,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TraceIDMiddleware())
+	r.Use(metrics.MetricsMiddleware())
 
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
 
@@ -61,7 +65,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		Mode:           middleware.RateLimitMode(cfg.RateLimitMode),
 		RequestsPerSec: int64(cfg.RateLimitRPS),
 		BurstSize:      int64(cfg.RateLimitBurst),
-		WhitelistPaths: cfg.RateLimitWhitelist,
+		WhitelistPaths: append(cfg.RateLimitWhitelist, "/metrics"),
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
@@ -72,6 +76,27 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		if err != nil {
 			fmt.Printf("Failed to initialize database pool: %v\n", err)
 		}
+	}
+
+	var stopMetrics chan struct{}
+	if dbPool != nil {
+		stopMetrics = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(time.Duration(cfg.DBPoolMetricsInterval) * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					stats := dbPool.Stat()
+					metrics.DBPoolMetrics.WithLabelValues("total_conns").Set(float64(stats.TotalConns()))
+					metrics.DBPoolMetrics.WithLabelValues("idle_conns").Set(float64(stats.IdleConns()))
+					metrics.DBPoolMetrics.WithLabelValues("active_conns").Set(float64(stats.TotalConns() - stats.IdleConns()))
+					metrics.DBPoolMetrics.WithLabelValues("max_conns").Set(float64(stats.MaxConns()))
+				case <-stopMetrics:
+					return
+				}
+			}
+		}()
 	}
 
 	var idemStore middleware.IdempotencyStore
@@ -128,6 +153,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	// API Groups
 	api := r.Group("/api")
+	api.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	v1 := api.Group("/v1")
 
 	dep := middleware.DeprecationHeaders()

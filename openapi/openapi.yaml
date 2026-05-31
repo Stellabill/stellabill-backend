@@ -41,6 +41,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /api/v1/health:
+    get:
+      tags: [Health]
+      summary: Health check v1
+      responses:
+        "200":
+          description: OK
   /api/liveness:
     get:
       tags: [Health]
@@ -67,6 +74,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /api/plans:
+    get:
+      tags: [Plans]
+      summary: List billing plans
+      responses:
+        "200":
+          description: OK
   /api/v1/plans:
     get:
       tags: [Plans]
@@ -127,6 +141,13 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/v1/subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List subscriptions
+      responses:
+        "200":
+          description: OK
   /api/subscriptions/{id}:
     get:
       tags: [Subscriptions]
@@ -155,6 +176,65 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/subscriptions/{id}:
+    get:
+      tags: [Subscriptions]
+      summary: Get one subscription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /api/subscriptions/{id}/status:
+    post:
+      tags: [Subscriptions]
+      summary: Update subscription status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /api/v1/subscriptions/{id}/status:
+    post:
+      tags: [Subscriptions]
+      summary: Update subscription status v1
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /api/statements:
+    get:
+      tags: [Statements]
+      summary: List statements
+      responses:
+        "200":
+          description: OK
+  /api/statements/{id}:
+    get:
+      tags: [Statements]
+      summary: Get one statement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
   /api/v1/statements:
     get:
       tags: [Statements]

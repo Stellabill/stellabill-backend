@@ -288,12 +288,11 @@ func TestOutboxWorker_DeadLetterAfterMaxRetries(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	// Dead-letter: status=failed, retry_count=3 (>= max)
 	mock.ExpectExec("UPDATE outbox_events").
 		WithArgs(OutboxStatusFailed, 3, publishErr.Error(), eventID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Next poll empty
+
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows(outboxColumns()))
 	mock.ExpectRollback()

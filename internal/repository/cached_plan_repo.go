@@ -34,6 +34,7 @@ type CachedPlanRepo struct {
 	stales        uint64
 	invalidatedAt sync.Map
 	inflight      sync.Map // map[string]*inflightLoad
+	sf            singleflight.Group
 }
 
 // NewCachedPlanRepo constructs a CachedPlanRepo.
@@ -114,7 +115,7 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 	if err != nil {
 		return nil, err
 	}
-	return v.(*PlanRow), nil
+	return pr, nil
 }
 
 // List returns all plans. It caches the full list under a single key.
@@ -125,7 +126,7 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 		if val, err := cpr.cache.Get(ctx, key); err == nil && val != nil {
 			var env cacheEnvelope
 			if err := json.Unmarshal(val, &env); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 			}
 			stale := false
 			if invTimeVal, ok := cpr.invalidatedAt.Load(key); ok {
@@ -142,12 +143,11 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 					atomic.AddUint64(&cpr.hits, 1)
 					return out, nil
 				}
-			} else {
-				// Corrupted envelope JSON
-				return nil, fmt.Errorf("corrupted cache envelope: %w", err)
+				return nil, fmt.Errorf("corrupted cache data: %w", err)
 			}
 		}
 	}
+
 	// Cache miss, use singleflight for list
 	atomic.AddUint64(&cpr.misses, 1)
 	v, err, _ := cpr.sf.Do(key, func() (interface{}, error) {

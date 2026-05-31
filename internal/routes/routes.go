@@ -81,11 +81,11 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	idemMiddleware := middleware.Idempotency(idemStore)
 
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		jwtSecret = "dev-secret"
+	var jwksCache *auth.JWKSCache
+	if cfg.JWKSURL != "" {
+		jwksCache = auth.NewJWKSCache(cfg.JWKSURL, 1*time.Hour)
 	}
-	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
+	authMiddleware := middleware.AuthMiddleware(jwksCache, cfg.JWTSecret)
 
 	// Each cached repo gets its own InMemory cache instance so that Flush is
 	// scoped to its namespace and does not evict entries from other caches.

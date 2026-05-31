@@ -171,6 +171,7 @@ var optionalEnvVars = map[string]string{
 	"MAX_GZIP_UNCOMPRESSED":       "10485760",
 	"MAX_GZIP_RATIO":              "10.0",
 	"SECURITY_FRAME_ANCESTORS":    "'none'",
+	"JWKS_URL":                    "",
 }
 
 // Option configures the Load function.
@@ -357,6 +358,19 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.AdminToken = token
+		}
+	}
+
+	if val := os.Getenv("JWKS_URL"); val != "" {
+		if _, err := url.ParseRequestURI(val); err != nil {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "JWKS_URL",
+				Message: "must be a valid URL",
+				Value:   val,
+			})
+		} else {
+			c.JWKSURL = val
 		}
 	}
 

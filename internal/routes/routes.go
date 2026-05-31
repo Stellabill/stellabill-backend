@@ -180,7 +180,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 	{
-		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
+		admin.POST("/purge", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
@@ -191,6 +191,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
 	}
+
 
 	return func(ctx context.Context) error {
 		if dbPool != nil {

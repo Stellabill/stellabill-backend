@@ -35,10 +35,12 @@ const (
 
 // ErrorEnvelope represents a standardized error response
 type ErrorEnvelope struct {
-	Code    string                 `json:"code"`
-	Message string                 `json:"message"`
-	TraceID string                 `json:"trace_id"`
-	Details map[string]interface{} `json:"details,omitempty"`
+	Code          string                 `json:"code"`
+	Message       string                 `json:"message"`
+	TraceID       string                 `json:"trace_id"`
+	RequestID     string                 `json:"request_id"`
+	CorrelationID string                 `json:"correlation_id,omitempty"`
+	Details       map[string]interface{} `json:"details,omitempty"`
 }
 
 // RespondWithError sends a standardized error response
@@ -56,6 +58,9 @@ func RespondWithErrorDetails(c *gin.Context, statusCode int, code ErrorCode, mes
 		traceID = generateTraceID()
 	}
 
+	requestID := c.GetString("request_id")
+	correlationID := c.GetString("correlation_id")
+
 	// Redact message and details to prevent PII leakage
 	redactedMessage := security.MaskPII(message)
 	if details != nil {
@@ -63,10 +68,12 @@ func RespondWithErrorDetails(c *gin.Context, statusCode int, code ErrorCode, mes
 	}
 
 	envelope := ErrorEnvelope{
-		Code:    string(code),
-		Message: redactedMessage,
-		TraceID: traceID,
-		Details: details,
+		Code:          string(code),
+		Message:       redactedMessage,
+		TraceID:       traceID,
+		RequestID:     requestID,
+		CorrelationID: correlationID,
+		Details:       details,
 	}
 
 	c.JSON(statusCode, envelope)

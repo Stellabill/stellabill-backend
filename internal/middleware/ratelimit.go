@@ -116,33 +116,33 @@ func NewAPIRateLimiter(config RateLimiterConfig) *APIRateLimiter {
 		rl.config.RouteConfigs = make(map[string]RouteSpecificConfig)
 	}
 
-	go rl.cleanupExpiredBuckets()
+	go func() {
+		for {
+			select {
+			case <-rl.stopChan:
+				return
+			case <-rl.cleanup.C:
+				rl.cleanupExpiredBuckets()
+			}
+		}
+	}()
 
 	return rl
 }
 
 // cleanupExpiredBuckets removes unused buckets to prevent memory leaks
 func (rl *APIRateLimiter) cleanupExpiredBuckets() {
-	for {
-		select {
-		case <-rl.cleanup.C:
-			rl.mutex.Lock()
-			now := timeutil.NowUTC()
-
-			for key, bucket := range rl.buckets {
-				bucket.mutex.Lock()
-				// Remove buckets that haven't been used for 10 minutes
-				if now.Sub(bucket.lastRefill) > 10*time.Minute {
-					delete(rl.buckets, key)
-				}
-				bucket.mutex.Unlock()
+	// Perform a single cleanup pass of expired buckets.
+	rl.mutex.Lock()
+	now := timeutil.NowUTC()
+	for key, bucket := range rl.buckets {
+		bucket.mutex.Lock()
+		if now.Sub(bucket.lastRefill) > 10*time.Minute {
+			delete(rl.buckets, key)
 			}
-
-			rl.mutex.Unlock()
-		case <-rl.stopChan:
-			return
-		}
+		bucket.mutex.Unlock()
 	}
+	rl.mutex.Unlock()
 }
 
 // Stop stops the cleanup goroutine to prevent goroutine leaks

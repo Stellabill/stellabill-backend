@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
+	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/reconciliation"
@@ -87,6 +89,18 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
 				c.Header("X-Reconcile-Save-Error", err.Error())
 			}
 		}
+
+		// Audit log the reconciliation action
+		outcome := "success"
+		if matched < len(reports) {
+			outcome = "partial"
+		}
+		audit.LogAction(c, "reconciliation.execute", "reconciliation", outcome, map[string]string{
+			"total":      strconv.Itoa(len(reports)),
+			"matched":    strconv.Itoa(matched),
+			"mismatched": strconv.Itoa(len(reports) - matched),
+			"tenant_id":  tenantID,
+		})
 
 		c.JSON(http.StatusOK, gin.H{
 			"summary": gin.H{"total": len(reports), "matched": matched, "mismatched": len(reports) - matched},

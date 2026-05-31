@@ -74,6 +74,12 @@ func (m *Manager) LoadDefaultFlags() {
 			Description: "Enable advanced analytics endpoints",
 			UpdatedAt:   time.Now(),
 		},
+		"fault_injection_enabled": {
+			Name:        "fault_injection_enabled",
+			Enabled:     false,
+			Description: "Enable fault injection middleware for resilience testing",
+			UpdatedAt:   time.Now(),
+		},
 	}
 
 	for name, flag := range defaultFlags {

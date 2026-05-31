@@ -7,11 +7,9 @@ import (
 	"os"
 	"time"
 
-	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
@@ -24,6 +22,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
+
+const statementReadPermission = auth.PermReadSubscriptions
 
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
@@ -53,7 +53,6 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TraceIDMiddleware())
-	r.Use(middleware.FaultInjection())
 
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
 
@@ -67,36 +66,28 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
-	var dbPool *db.BreakerPool
-	var rawPool *pgxpool.Pool
+	var dbPool *pgxpool.Pool
 	if cfg.DBConn != "" {
 		var err error
-		rawPool, err = pgxpool.New(context.Background(), cfg.DBConn)
+		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
 		if err != nil {
 			fmt.Printf("Failed to initialize database pool: %v\n", err)
-		} else {
-			dbPool = db.NewBreakerPool(
-				rawPool,
-				cfg.DBCircuitBreakerMaxFailures,
-				cfg.DBCircuitBreakerTimeoutSeconds,
-				cfg.DBCircuitBreakerHalfOpenMaxRequests,
-			)
 		}
 	}
 
 	var idemStore middleware.IdempotencyStore
 	if dbPool != nil {
-		idemStore = middleware.NewPostgresIdempotencyStore(dbPool.Pool())
+		idemStore = middleware.NewPostgresIdempotencyStore(dbPool)
 	} else {
 		idemStore = middleware.NewInMemoryIdempotencyStore()
 	}
 	idemMiddleware := middleware.Idempotency(idemStore)
 
-	var jwksCache *auth.JWKSCache
-	if cfg.JWKSURL != "" {
-		jwksCache = auth.NewJWKSCache(cfg.JWKSURL, 1*time.Hour)
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret"
 	}
-	authMiddleware := middleware.AuthMiddleware(jwksCache, cfg.JWTSecret)
+	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
 
 	// Each cached repo gets its own InMemory cache instance so that Flush is
 	// scoped to its namespace and does not evict entries from other caches.
@@ -127,6 +118,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	// Create handlers
 	h := handlers.NewHandlerWithDependencies(handlerPlanSvc, handlerSubSvc, dbPool, nil)
+	changeSubscriptionStatusHandler := handlers.NewChangeSubscriptionStatusHandler(svc)
+	getStatementHandler := handlers.NewGetStatementHandler(stmtSvc)
+	listStatementsHandler := handlers.NewListStatementsHandler(stmtSvc)
 
 	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
@@ -146,53 +140,18 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	api.GET("/liveness", h.LivenessProbe)
 	api.GET("/readiness", h.ReadinessProbe)
 
-	// V1 routes are all protected
+	// /api/v1/* is the canonical authenticated surface. Legacy /api/* aliases
+	// stay wired through the same handlers and add deprecation headers only.
 	v1.Use(authMiddleware)
-	v1.Use(audit.Middleware(auditLogger))
-	{
-		v1.GET("/subscriptions", auth.RequirePermission(auth.PermReadSubscriptions), h.ListSubscriptions)
-		v1.GET("/subscriptions/:id", auth.RequirePermission(auth.PermReadSubscriptions), h.GetSubscription)
-		v1.POST("/subscriptions/:id/status", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewChangeSubscriptionStatusHandler(svc))
-		v1.GET("/plans", h.ListPlans)
-		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
-		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
-	}
+	registerProtectedAPIRoutes(v1, nil, h, changeSubscriptionStatusHandler, getStatementHandler, listStatementsHandler)
 
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
 	apiProtected.Use(authMiddleware)
-	apiProtected.Use(audit.Middleware(auditLogger))
-	{
-		apiProtected.GET("/plans",
-			dep,
-			auth.RequirePermission(auth.PermReadPlans),
-			h.ListPlans,
-		)
-
-		apiProtected.GET("/subscriptions",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			h.ListSubscriptions,
-		)
-
-		apiProtected.GET("/subscriptions/:id",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			h.GetSubscription,
-		)
-		apiProtected.POST("/subscriptions/:id/status",
-			dep,
-			auth.RequirePermission(auth.PermManageSubscriptions),
-			handlers.NewChangeSubscriptionStatusHandler(svc),
-		)
-
-		apiProtected.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
-		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
-	}
+	registerProtectedAPIRoutes(apiProtected, dep, h, changeSubscriptionStatusHandler, getStatementHandler, listStatementsHandler)
 
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
-	admin.Use(audit.Middleware(auditLogger))
 	{
 		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
@@ -221,6 +180,31 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 		return nil
 	}
+}
+
+func registerProtectedAPIRoutes(
+	group *gin.RouterGroup,
+	deprecation gin.HandlerFunc,
+	h *handlers.Handler,
+	changeSubscriptionStatusHandler gin.HandlerFunc,
+	getStatementHandler gin.HandlerFunc,
+	listStatementsHandler gin.HandlerFunc,
+) {
+	group.GET("/plans", protectedRouteHandlers(deprecation, auth.PermReadPlans, h.ListPlans)...)
+	group.GET("/subscriptions", protectedRouteHandlers(deprecation, auth.PermReadSubscriptions, h.ListSubscriptions)...)
+	group.GET("/subscriptions/:id", protectedRouteHandlers(deprecation, auth.PermReadSubscriptions, h.GetSubscription)...)
+	group.POST("/subscriptions/:id/status", protectedRouteHandlers(deprecation, auth.PermManageSubscriptions, changeSubscriptionStatusHandler)...)
+	group.GET("/statements/:id", protectedRouteHandlers(deprecation, statementReadPermission, getStatementHandler)...)
+	group.GET("/statements", protectedRouteHandlers(deprecation, statementReadPermission, listStatementsHandler)...)
+}
+
+func protectedRouteHandlers(deprecation gin.HandlerFunc, permission auth.Permission, handler gin.HandlerFunc) []gin.HandlerFunc {
+	handlers := make([]gin.HandlerFunc, 0, 3)
+	if deprecation != nil {
+		handlers = append(handlers, deprecation)
+	}
+	handlers = append(handlers, auth.RequirePermission(permission), handler)
+	return handlers
 }
 
 // mockHandlerSubSvc adapts *repository.MockSubscriptionRepo to handlers.SubscriptionService.

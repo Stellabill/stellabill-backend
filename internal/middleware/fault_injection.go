@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"math/rand"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"

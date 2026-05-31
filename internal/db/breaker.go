@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sony/gobreaker"
 )
@@ -98,14 +99,14 @@ func (br *breakerRow) Scan(dest ...any) error {
 }
 
 // Exec executes a query that doesn't return rows, through the circuit breaker.
-func (b *BreakerPool) Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error) {
+func (b *BreakerPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	res, err := b.breaker.Execute(func() (interface{}, error) {
 		return b.pool.Exec(ctx, sql, args...)
 	})
 	if err != nil {
-		return pgx.CommandTag{}, err
+		return pgconn.CommandTag{}, err
 	}
-	return res.(pgx.CommandTag), nil
+	return res.(pgconn.CommandTag), nil
 }
 
 // Begin starts a transaction through the circuit breaker.
@@ -179,18 +180,18 @@ func (bt *breakerTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.
 	return &breakerRow{row: row, breaker: bt.breaker}
 }
 
-func (bt *breakerTx) Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error) {
+func (bt *breakerTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	res, err := bt.breaker.Execute(func() (interface{}, error) {
 		return bt.tx.Exec(ctx, sql, args...)
 	})
 	if err != nil {
-		return pgx.CommandTag{}, err
+		return pgconn.CommandTag{}, err
 	}
-	return res.(pgx.CommandTag), nil
+	return res.(pgconn.CommandTag), nil
 }
 
-func (bt *breakerTx) Prepare(ctx context.Context, name, sql string) (*pgx.Statement, error) {
-	var stmt *pgx.Statement
+func (bt *breakerTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
+	var stmt *pgconn.StatementDescription
 	var err error
 	_, _ = bt.breaker.Execute(func() (interface{}, error) {
 		stmt, err = bt.tx.Prepare(ctx, name, sql)

@@ -59,6 +59,8 @@ type Repository interface {
 	MarkAsProcessing(id uuid.UUID) error
 	IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time, errorMessage *string) error
 	DeleteCompletedEvents(olderThan time.Time) (int64, error)
+	ListDeadLetteredEvents(limit int) ([]*Event, error)
+	RequeueEvent(id uuid.UUID) error
 }
 
 // Dispatcher handles the outbox event dispatching

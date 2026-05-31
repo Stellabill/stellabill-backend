@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -10,8 +11,11 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
@@ -20,6 +24,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -51,8 +56,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TraceIDMiddleware())
+	r.Use(metrics.MetricsMiddleware())
 
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
+
+	// Metrics endpoint with IP restriction
+	r.GET("/metrics", middleware.IPRestrictionMiddleware(cfg.MetricsAllowedCIDRs), gin.WrapH(promhttp.Handler()))
 
 	// Apply rate limiting middleware
 	rateLimitConfig := middleware.RateLimiterConfig{
@@ -64,18 +73,26 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
-	var dbPool *pgxpool.Pool
+	var dbPool *db.BreakerPool
+	var rawPool *pgxpool.Pool
 	if cfg.DBConn != "" {
 		var err error
-		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
+		rawPool, err = pgxpool.New(context.Background(), cfg.DBConn)
 		if err != nil {
 			fmt.Printf("Failed to initialize database pool: %v\n", err)
+		} else {
+			dbPool = db.NewBreakerPool(
+				rawPool,
+				cfg.DBCircuitBreakerMaxFailures,
+				cfg.DBCircuitBreakerTimeoutSeconds,
+				cfg.DBCircuitBreakerHalfOpenMaxRequests,
+			)
 		}
 	}
 
 	var idemStore middleware.IdempotencyStore
 	if dbPool != nil {
-		idemStore = middleware.NewPostgresIdempotencyStore(dbPool)
+		idemStore = middleware.NewPostgresIdempotencyStore(dbPool.Pool())
 	} else {
 		idemStore = middleware.NewInMemoryIdempotencyStore()
 	}
@@ -116,6 +133,17 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	// Create handlers
 	h := handlers.NewHandlerWithDependencies(handlerPlanSvc, handlerSubSvc, dbPool, nil)
+	// Set up outbox repository if db is available
+	if dbPool != nil {
+		var sqlDB *sql.DB
+		// Try to get *sql.DB from dbPool (which is *pgxpool.Pool)
+		if d, ok := dbPool.(interface{ Config() *pgxpool.Config }); ok {
+			// Alternatively, we can open a *sql.DB via lib/pq
+			connStr := d.Config().ConnString()
+			sqlDB, _ = sql.Open("postgres", connStr)
+			h.OutboxRepo = outbox.NewPostgresRepository(sqlDB)
+		}
+	}
 
 	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
@@ -190,6 +218,10 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
+
+		// Outbox dead-letter endpoints
+		admin.GET("/outbox/dead-letter", auth.RequirePermission(auth.PermManageReconciliation), h.ListDeadLetteredEvents)
+		admin.POST("/outbox/:id/requeue", auth.RequirePermission(auth.PermManageReconciliation), idemMiddleware, h.RequeueOutboxEvent)
 	}
 
 	return func(ctx context.Context) error {

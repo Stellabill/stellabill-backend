@@ -138,7 +138,7 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 		if val, err := cpr.cache.Get(ctx, key); err == nil && val != nil {
 			var env cacheEnvelope
 			if err := json.Unmarshal(val, &env); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 			}
 			stale := false
 			if invTimeVal, ok := cpr.invalidatedAt.Load(key); ok {

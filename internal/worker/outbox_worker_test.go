@@ -2,9 +2,9 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -46,10 +46,10 @@ func (m *mockPublisher) getCalls() []*OutboxEvent {
 
 // failNTimesPublisher fails the first N calls, then succeeds.
 type failNTimesPublisher struct {
-	mu       sync.Mutex
-	failFor  int
-	calls    int
-	err      error
+	mu      sync.Mutex
+	failFor int
+	calls   int
+	err     error
 }
 
 func (f *failNTimesPublisher) Publish(_ context.Context, _ *OutboxEvent) error {
@@ -319,15 +319,14 @@ func TestOutboxWorker_ExponentialBackoff(t *testing.T) {
 		retryCount int
 		expected   time.Duration
 	}{
-		{1, 1 * time.Second},  // 1s * 2^0
-		{2, 2 * time.Second},  // 1s * 2^1
-		{3, 4 * time.Second},  // 1s * 2^2
-		{4, 8 * time.Second},  // 1s * 2^3
+		{1, 1 * time.Second}, // 1s * 2^0
+		{2, 2 * time.Second}, // 1s * 2^1
+		{3, 4 * time.Second}, // 1s * 2^2
+		{4, 8 * time.Second}, // 1s * 2^3
 	}
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("retry_%d", tt.retryCount), func(t *testing.T) {
-			import "math"
 			backoff := cfg.RetryBackoffBase * time.Duration(math.Pow(2, float64(tt.retryCount-1)))
 			assert.Equal(t, tt.expected, backoff)
 		})
@@ -555,7 +554,7 @@ func TestOutboxWorker_MultipleBatchProcessing(t *testing.T) {
 }
 
 func TestOutboxWorker_SatisfiesOutboxHealtherInterface(t *testing.T) {
-	// Compile-time check that OutboxWorker satisfies the interface shape.
+
 	db, _, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()

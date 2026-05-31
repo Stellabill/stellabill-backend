@@ -11,10 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/reconciliation"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ---------------------------------------------------------------------------
@@ -642,7 +643,7 @@ func TestListReportsHandler_InvalidLimit(t *testing.T) {
 	store := reconciliation.NewMemoryStore()
 	r := setupReconcileRouter(nil, store, "tenant-1", "merchant")
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/reports?limit=abc", nil)
+	req := httptest.NewRequest(http.MethodGet, "/reports?limit=abc", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

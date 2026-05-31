@@ -8,15 +8,26 @@ info:
 
     Notes:
       - Preflight CORS requests (`OPTIONS`) are handled by middleware and return `204`.
+      - Admin endpoints require either `X-Admin-Token` header or bearer token with admin privileges (RBAC).
+      - All `/api/v1/*` endpoints require bearer token authentication.
   version: 0.2.0
 servers:
   - url: http://localhost:8080
     description: Local development
 tags:
   - name: Health
+    description: Service health and readiness checks
   - name: Plans
+    description: Billing plans
   - name: Subscriptions
+    description: Customer subscriptions
+  - name: Statements
+    description: Invoice and billing statements
+  - name: Admin
+    description: Administrative operations (cache, diagnostics, reconciliation)
   - name: ContractEvents
+  - name: LegacyAPI
+    description: Legacy API endpoints (deprecated, use /api/v1/* instead)
 paths:
   /api/health:
     get:
@@ -26,6 +37,32 @@ paths:
       responses:
         "200":
           description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/liveness:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      operationId: getLiveness
+      description: Indicates whether the service is running. Use for Kubernetes liveness probes.
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/readiness:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      operationId: getReadiness
+      description: Indicates whether the service is ready to accept traffic. Use for Kubernetes readiness probes.
+      responses:
+        "200":
+          description: Service is ready
           content:
             application/json:
               schema:
@@ -118,6 +155,254 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/statements:
+    get:
+      tags: [Statements]
+      summary: List statements
+      operationId: listStatements
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Customer identifier whose statements to list
+          example: "customer_123"
+        - name: subscription_id
+          in: query
+          schema:
+            type: string
+          description: Filter by subscription UUID
+        - name: kind
+          in: query
+          schema:
+            type: string
+          description: Filter by statement kind (e.g. invoice, credit_note)
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Filter by lifecycle status (e.g. open, paid)
+        - name: start_after
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: RFC3339 lower bound for statement date (exclusive)
+        - name: end_before
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: RFC3339 upper bound for statement date (exclusive)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 200
+          description: Page size
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+          description: Sort order by statement date
+      responses:
+        "200":
+          description: Statements list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/statements/{id}:
+    get:
+      tags: [Statements]
+      summary: Get one statement
+      operationId: getStatement
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Statement identifier
+          example: "stmt_550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        "200":
+          description: Statement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/admin/purge:
+    post:
+      tags: [Admin]
+      summary: Purge cache
+      operationId: purgeCache
+      description: |
+        Invalidates all active cache entries and resets hit/miss counters.
+        
+        Authentication: Requires X-Admin-Token header with correct token.
+      security:
+        - AdminToken: []
+        - bearerAuth: []
+      parameters:
+        - name: X-Admin-Token
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Admin authentication token
+        - name: X-Admin-User
+          in: header
+          schema:
+            type: string
+          description: Identifier for the admin user performing the action
+        - name: target
+          in: query
+          schema:
+            type: string
+            default: "billing-cache"
+          description: Cache target to purge
+        - name: attempt
+          in: query
+          schema:
+            type: string
+            default: "1"
+          description: Attempt number for audit trails
+      responses:
+        "200":
+          description: Cache purged successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPurgeResponse"
+        "202":
+          description: Cache purged with partial errors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPurgeResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/diagnostics:
+    get:
+      tags: [Admin]
+      summary: Service diagnostics
+      operationId: getDiagnostics
+      description: |
+        Re-runs startup checks for live triage and returns diagnostic information.
+        
+        Requires PermManageSubscriptions RBAC permission.
+      security:
+        - AdminToken: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Diagnostics information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/reconcile:
+    post:
+      tags: [Admin]
+      summary: Reconcile subscriptions
+      operationId: reconcileSubscriptions
+      description: |
+        Compares backend subscriptions against contract snapshots.
+        
+        Requires PermManageSubscriptions RBAC permission. Tenant-scoped for non-admin users.
+      security:
+        - AdminToken: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconcileRequest"
+            example:
+              - subscription_id: "550e8400-e29b-41d4-a716-446655440001"
+                tenant_id: "tenant_123"
+                status: "active"
+                amount: 1000
+                currency: "NGN"
+                interval: "monthly"
+                balances:
+                  credit: 500
+      responses:
+        "200":
+          description: Reconciliation complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/reports:
+    get:
+      tags: [Admin]
+      summary: List reconciliation reports
+      operationId: listReconciliationReports
+      description: |
+        Lists reconciliation reports. Admin sees all reports; merchants see only their tenant's reports.
+        
+        Requires PermReadReconciliation RBAC permission.
+      security:
+        - AdminToken: []
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+          description: Maximum number of items to return
+      responses:
+        "200":
+          description: Reconciliation reports list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 components:
   parameters:
     Cursor:
@@ -273,6 +558,284 @@ components:
         message:
           type: string
           example: status is required
+    Statement:
+      type: object
+      additionalProperties: false
+      required: [id, customer_id, subscription_id, kind, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Statement unique identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        customer_id:
+          type: string
+          description: Associated customer identifier
+          example: "customer_123"
+        subscription_id:
+          type: string
+          format: uuid
+          description: Associated subscription identifier
+          example: "550e8400-e29b-41d4-a716-446655440001"
+        kind:
+          type: string
+          enum: [invoice, credit_note]
+          description: Type of statement
+        status:
+          type: string
+          enum: [open, paid, cancelled, void]
+          description: Lifecycle status
+        issued_at:
+          type: string
+          format: date-time
+          description: When the statement was issued
+        due_date:
+          type: string
+          format: date-time
+          description: Payment due date (for invoices)
+    StatementDetail:
+      allOf:
+        - $ref: "#/components/schemas/Statement"
+        - type: object
+          properties:
+            amount:
+              type: string
+              pattern: '^\d+(\.\d{1,2})?$'
+              description: Statement amount
+              example: "1000.00"
+            currency:
+              type: string
+              description: Currency code
+              example: "NGN"
+            description:
+              type: string
+              description: Statement description or notes
+            items:
+              type: array
+              description: Line items included in statement
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  quantity:
+                    type: integer
+                  unit_price:
+                    type: string
+                    pattern: '^\d+(\.\d{1,2})?$'
+                  total:
+                    type: string
+                    pattern: '^\d+(\.\d{1,2})?$'
+    StatementsResponse:
+      type: object
+      additionalProperties: false
+      required: [statements, total]
+      properties:
+        statements:
+          type: array
+          items:
+            $ref: "#/components/schemas/Statement"
+        total:
+          type: integer
+          description: Total number of statements matching the filter
+    FieldMismatch:
+      type: object
+      additionalProperties: false
+      required: [field, backend_value, contract_value]
+      properties:
+        field:
+          type: string
+          description: Field name where mismatch occurred
+          example: "status"
+        backend_value:
+          type: string
+          description: Value in backend system
+          example: "active"
+        contract_value:
+          type: string
+          description: Value in contract/snapshot
+          example: "inactive"
+    Report:
+      type: object
+      additionalProperties: false
+      required: [subscription_id, matched, mismatches]
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+          description: Subscription identifier
+          example: "550e8400-e29b-41d4-a716-446655440001"
+        tenant_id:
+          type: string
+          description: Tenant identifier (optional)
+          example: "tenant_123"
+        matched:
+          type: boolean
+          description: Whether backend and contract state match
+        mismatches:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldMismatch"
+          description: List of fields that differ
+        backend:
+          type: object
+          description: Backend subscription state
+          additionalProperties: true
+        contract:
+          type: object
+          description: Contract snapshot state
+          additionalProperties: true
+    ReportsSummary:
+      type: object
+      additionalProperties: false
+      required: [total, matched, mismatched]
+      properties:
+        total:
+          type: integer
+          description: Total number of reports
+        matched:
+          type: integer
+          description: Number of matched subscriptions
+        mismatched:
+          type: integer
+          description: Number of mismatched subscriptions
+    ReconciliationReportItem:
+      type: object
+      additionalProperties: false
+      required: [summary, reports]
+      properties:
+        summary:
+          $ref: "#/components/schemas/ReportsSummary"
+        reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/Report"
+    ReportsResponse:
+      type: object
+      additionalProperties: false
+      required: [reports, pagination]
+      properties:
+        reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/Report"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    NamespaceSummary:
+      type: object
+      additionalProperties: false
+      required: [namespace, keys_purged, counters_reset]
+      properties:
+        namespace:
+          type: string
+          description: Cache namespace name
+          example: "plan-cache"
+        keys_purged:
+          type: integer
+          description: Number of keys deleted from this namespace
+        counters_reset:
+          type: boolean
+          description: Whether hit/miss counters were reset
+        error:
+          type: string
+          description: Error message if purge failed for this namespace
+    AdminPurgeResponse:
+      type: object
+      additionalProperties: false
+      required: [status, total_keys_purged, namespaces, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [success, partial_error]
+          description: Overall purge status
+        total_keys_purged:
+          type: integer
+          description: Total keys purged across all namespaces
+        namespaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/NamespaceSummary"
+          description: Per-namespace purge results
+        timestamp:
+          type: string
+          format: date-time
+          description: When the purge was performed
+    DiagnosticsResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          description: Overall service status
+          example: "ok"
+        service:
+          type: string
+          description: Service name
+          example: "stellarbill-backend"
+        checks:
+          type: object
+          description: Individual component health check results
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              message:
+                type: string
+    BackendSubscription:
+      type: object
+      additionalProperties: false
+      required: [subscription_id, status, amount, currency, interval]
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+          description: Subscription identifier
+        tenant_id:
+          type: string
+          description: Tenant identifier
+        status:
+          type: string
+          enum: [active, cancelled, expired, pending]
+          description: Current subscription status
+        amount:
+          type: integer
+          description: Amount in smallest currency unit
+        currency:
+          type: string
+          description: Currency code
+          example: "NGN"
+        interval:
+          type: string
+          enum: [monthly, yearly]
+          description: Billing interval
+        balances:
+          type: object
+          description: Account balances by type
+          additionalProperties:
+            type: integer
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+    ReconcileRequest:
+      type: array
+      items:
+        $ref: "#/components/schemas/BackendSubscription"
+      description: Array of backend subscriptions to reconcile
+    ReconcileResponse:
+      type: object
+      additionalProperties: false
+      required: [summary, reports]
+      properties:
+        summary:
+          $ref: "#/components/schemas/ReportsSummary"
+        reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/Report"
+          description: Reconciliation reports for each subscription
   responses:
     BadRequest:
       description: Validation or client error
@@ -332,3 +895,21 @@ components:
                 error: "Not Found"
                 message: "The requested subscription could not be found."
                 code: "resource_not_found"
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        JWT bearer token for API authentication.
+        
+        Include via Authorization header: `Authorization: Bearer <token>`
+        
+        Token claims should include:
+        - `sub` (subject): User identifier
+        - `roles` (optional): Array of role strings for RBAC (e.g., ["subscriber", "merchant", "admin"])
+        - `tenant_id` (optional): Tenant identifier for multi-tenant access control
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: Admin token required for administrative endpoints.

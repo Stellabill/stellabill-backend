@@ -48,12 +48,12 @@ type EventPublisher interface {
 
 // OutboxWorkerConfig holds configuration for the OutboxWorker.
 type OutboxWorkerConfig struct {
-	PollInterval       time.Duration // how often the worker polls for events
-	BatchSize          int           // max events to claim per poll cycle
-	MaxRetries         int           // max retries before dead-letter (failed permanently)
-	RetryBackoffBase   time.Duration // base for exponential backoff: base * 2^retryCount
-	ShutdownTimeout    time.Duration // max time to wait for in-flight work on Stop()
-	ProcessingTimeout  time.Duration // context timeout per-event processing
+	PollInterval      time.Duration // how often the worker polls for events
+	BatchSize         int           // max events to claim per poll cycle
+	MaxRetries        int           // max retries before dead-letter (failed permanently)
+	RetryBackoffBase  time.Duration // base for exponential backoff: base * 2^retryCount
+	ShutdownTimeout   time.Duration // max time to wait for in-flight work on Stop()
+	ProcessingTimeout time.Duration // context timeout per-event processing
 }
 
 // DefaultOutboxWorkerConfig returns production-safe defaults.
@@ -159,12 +159,12 @@ func (w *OutboxWorker) GetStats() (map[string]interface{}, error) {
 	defer w.mu.RUnlock()
 
 	return map[string]interface{}{
-		"running":           w.running.Load() == 1,
-		"processed":         w.processed,
-		"succeeded":         w.succeeded,
-		"failed":            w.failed,
-		"dead_lettered":     w.deadLettered,
-		"last_poll_time":    w.lastPollTime.Format(time.RFC3339),
+		"running":            w.running.Load() == 1,
+		"processed":          w.processed,
+		"succeeded":          w.succeeded,
+		"failed":             w.failed,
+		"dead_lettered":      w.deadLettered,
+		"last_poll_time":     w.lastPollTime.Format(time.RFC3339),
 		"consecutive_errors": w.consecutiveErrs,
 	}, nil
 }
@@ -199,6 +199,15 @@ func (w *OutboxWorker) poll() {
 		w.mu.Lock()
 		w.consecutiveErrs++
 		w.mu.Unlock()
+		return
+	}
+
+	// If claimBatch returned without error but with no events (nil),
+	// treat this as a neutral poll: do not reset the consecutive error
+	// counter so that transient recoveries which return no rows do not
+	// immediately clear a preceding error streak. Only a successful
+	// claim that returns actual events clears the error streak.
+	if events == nil {
 		return
 	}
 

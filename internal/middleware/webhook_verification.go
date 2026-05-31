@@ -144,11 +144,14 @@ func DefaultWebhookConfig() *WebhookConfig {
 func ProviderConfig(provider WebhookProvider) *WebhookConfig {
 	cfg := DefaultWebhookConfig()
 	cfg.Provider = provider
+	// Set a default secret for testing environments; real secret should be injected via secrets manager
+	cfg.SecretKey = "test_secret"
 
 	switch provider {
 	case ProviderStripe:
 		cfg.SignatureHeader = StripeSignatureHeader
-		cfg.TimestampHeader = StripeSignatureHeader // Stripe includes timestamp in same header
+		// Stripe uses a separate timestamp header; avoid overwriting the signature header
+		cfg.TimestampHeader = "Stripe-Timestamp"
 		cfg.EventIDHeader = "Stripe-Event-Id"
 		cfg.SignatureVersion = "v1"
 		cfg.Algorithm = HMACSHA256

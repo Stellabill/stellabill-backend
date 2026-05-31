@@ -46,6 +46,20 @@ func (d *DiagnosticsHandler) Handle(c *gin.Context) {
 		Checks:        results,
 	}
 
+	// Add circuit breaker info if db provides it
+	if provider, ok := d.db.(BreakerStateProvider); ok {
+		state := provider.State()
+		counts := provider.Counts()
+		resp.CircuitBreakerState = &CircuitBreakerInfo{
+			State:                state.String(),
+			Requests:             counts.Requests,
+			TotalSuccesses:       counts.TotalSuccesses,
+			TotalFailures:        counts.TotalFailures,
+			ConsecutiveSuccesses: counts.ConsecutiveSuccesses,
+			ConsecutiveFailures:  counts.ConsecutiveFailures,
+		}
+	}
+
 	code := http.StatusOK
 	if resp.Status != "ready" {
 		code = http.StatusServiceUnavailable

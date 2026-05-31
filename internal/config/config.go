@@ -78,6 +78,10 @@ type Config struct {
 	DBPoolConnectTimeout    int
 	DBPoolHealthCheckPeriod int
 	DBPoolMetricsInterval   int
+	// Circuit breaker configuration
+	DBCircuitBreakerMaxFailures         uint32
+	DBCircuitBreakerTimeoutSeconds      uint32
+	DBCircuitBreakerHalfOpenMaxRequests uint32
 	// Rate limiting configuration
 	RateLimitEnabled   bool
 	RateLimitMode      string
@@ -85,8 +89,8 @@ type Config struct {
 	RateLimitBurst     int
 	RateLimitWhitelist []string
 	// Tracing configuration
-	TracingExporter    string
-	TracingServiceName string
+	TracingExporter        string
+	TracingServiceName     string
 	SecurityFrameAncestors string
 	// Vault configuration
 	VaultAddr       string
@@ -563,6 +567,9 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	// Validate DB pool configuration
 	validateDBPool(c, result)
 
+	// Validate circuit breaker configuration
+	validateCircuitBreaker(c, result)
+
 	// Set optional env values
 	c.Env = getEnv("ENV", "development")
 
@@ -738,6 +745,36 @@ func validateDBPool(c *Config, result *ValidationResult) {
 			fmt.Sprintf("DB_POOL_MAX_CONN_IDLE_TIME (%ds) >= DB_POOL_MAX_CONN_LIFETIME (%ds); "+
 				"idle connections will be evicted before lifetime recycle fires — consider reducing idle time",
 				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
+	}
+}
+
+func validateCircuitBreaker(c *Config, result *ValidationResult) {
+	type cbVar struct {
+		envKey   string
+		min, max uint32
+		target   *uint32
+		defVal   uint32
+	}
+
+	vars := []cbVar{
+		{"DB_CIRCUIT_BREAKER_MAX_FAILURES", 1, 1000, &c.DBCircuitBreakerMaxFailures, 5},
+		{"DB_CIRCUIT_BREAKER_TIMEOUT_SECONDS", 1, 3600, &c.DBCircuitBreakerTimeoutSeconds, 30},
+		{"DB_CIRCUIT_BREAKER_HALF_OPEN_MAX_REQUESTS", 1, 1000, &c.DBCircuitBreakerHalfOpenMaxRequests, 1},
+	}
+
+	for _, v := range vars {
+		raw := os.Getenv(v.envKey)
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || n < uint64(v.min) || n > uint64(v.max) {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("%s invalid (value=%q, allowed %d–%d), using default %d",
+					v.envKey, raw, v.min, v.max, v.defVal))
+			continue
+		}
+		*v.target = uint32(n)
 	}
 }
 

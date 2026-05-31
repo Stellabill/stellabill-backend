@@ -7,9 +7,11 @@ import (
 	"os"
 	"time"
 
+	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
@@ -51,6 +53,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TraceIDMiddleware())
+	r.Use(middleware.FaultInjection())
 
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
 
@@ -64,18 +67,26 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
-	var dbPool *pgxpool.Pool
+	var dbPool *db.BreakerPool
+	var rawPool *pgxpool.Pool
 	if cfg.DBConn != "" {
 		var err error
-		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
+		rawPool, err = pgxpool.New(context.Background(), cfg.DBConn)
 		if err != nil {
 			fmt.Printf("Failed to initialize database pool: %v\n", err)
+		} else {
+			dbPool = db.NewBreakerPool(
+				rawPool,
+				cfg.DBCircuitBreakerMaxFailures,
+				cfg.DBCircuitBreakerTimeoutSeconds,
+				cfg.DBCircuitBreakerHalfOpenMaxRequests,
+			)
 		}
 	}
 
 	var idemStore middleware.IdempotencyStore
 	if dbPool != nil {
-		idemStore = middleware.NewPostgresIdempotencyStore(dbPool)
+		idemStore = middleware.NewPostgresIdempotencyStore(dbPool.Pool())
 	} else {
 		idemStore = middleware.NewInMemoryIdempotencyStore()
 	}
@@ -137,6 +148,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
+	v1.Use(audit.Middleware(auditLogger))
 	{
 		v1.GET("/subscriptions", auth.RequirePermission(auth.PermReadSubscriptions), h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", auth.RequirePermission(auth.PermReadSubscriptions), h.GetSubscription)
@@ -149,6 +161,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
 	apiProtected.Use(authMiddleware)
+	apiProtected.Use(audit.Middleware(auditLogger))
 	{
 		apiProtected.GET("/plans",
 			dep,
@@ -179,6 +192,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
+	admin.Use(audit.Middleware(auditLogger))
 	{
 		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage

@@ -10,6 +10,7 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/featureflags"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
@@ -28,14 +29,22 @@ import (
 
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
+	_ = RegisterWithCleanup(r)
+}
+
+// RegisterWithCleanup configures all routes and returns a cleanup function for
+// resources created during route wiring.
+func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		panic(fmt.Sprintf("failed to load configuration: %v", err))
 	}
 
+	var tracerShutdown func(context.Context) error
+
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
-		_, err := tracing.InitTracer(cfg.TracingServiceName)
+		tracerShutdown, err = tracing.InitTracer(cfg.TracingServiceName)
 		if err != nil {
 			fmt.Printf("Failed to initialize tracer: %v\n", err)
 		}
@@ -137,6 +146,8 @@ func Register(r *gin.Engine) {
 	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
 	adminHandler := handlers.NewAdminHandler(adminToken, cachedPlanRepo, cachedSubRepo)
+	// Feature flags handler
+	featureFlagsHandler := handlers.NewFeatureFlagsHandler(featureflags.GetInstance())
 	// Wire the cached plan repo into the package-level ListPlans handler.
 	handlers.SetPlanRepository(cachedPlanRepo)
 
@@ -208,19 +219,19 @@ func Register(r *gin.Engine) {
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
+
+		// Feature flags endpoints
+		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
+		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
 	}
 
 	return func(ctx context.Context) error {
-		if stopMetrics != nil {
-			close(stopMetrics)
-		}
 		if dbPool != nil {
 			log.Printf("closing database pool")
 			dbPool.Close()
 		}
 
 		if tracerShutdown != nil {
-
 			log.Printf("flushing tracer")
 			if err := tracerShutdown(ctx); err != nil {
 				return fmt.Errorf("shutdown tracer: %w", err)
@@ -229,4 +240,66 @@ func Register(r *gin.Engine) {
 
 		return nil
 	}
+}
+
+// mockHandlerSubSvc adapts *repository.MockSubscriptionRepo to handlers.SubscriptionService.
+type mockHandlerSubSvc struct {
+	repo *repository.MockSubscriptionRepo
+}
+
+func (m *mockHandlerSubSvc) ListSubscriptions(_ *gin.Context) ([]handlers.Subscription, error) {
+	rows := m.repo.All()
+	out := make([]handlers.Subscription, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, handlers.Subscription{
+			ID:          r.ID,
+			PlanID:      r.PlanID,
+			Customer:    r.CustomerID,
+			Status:      r.Status,
+			Amount:      r.Amount,
+			Interval:    r.Interval,
+			NextBilling: r.NextBilling,
+		})
+	}
+	return out, nil
+}
+
+func (m *mockHandlerSubSvc) GetSubscription(_ *gin.Context, id string) (*handlers.Subscription, error) {
+	r, err := m.repo.FindByID(context.Background(), id)
+	if err != nil {
+		return nil, err
+	}
+	return &handlers.Subscription{
+		ID:          r.ID,
+		PlanID:      r.PlanID,
+		Customer:    r.CustomerID,
+		Status:      r.Status,
+		Amount:      r.Amount,
+		Interval:    r.Interval,
+		NextBilling: r.NextBilling,
+	}, nil
+}
+
+// mockHandlerPlanSvc adapts a PlanRepository to handlers.PlanService.
+type mockHandlerPlanSvc struct {
+	repo repository.PlanRepository
+}
+
+func (m *mockHandlerPlanSvc) ListPlans(_ *gin.Context) ([]handlers.Plan, error) {
+	rows, err := m.repo.List(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]handlers.Plan, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, handlers.Plan{
+			ID:          r.ID,
+			Name:        r.Name,
+			Amount:      r.Amount,
+			Currency:    r.Currency,
+			Interval:    r.Interval,
+			Description: r.Description,
+		})
+	}
+	return out, nil
 }

@@ -88,6 +88,7 @@ type Config struct {
 	TracingExporter    string
 	TracingServiceName string
 	SecurityFrameAncestors string
+	OutboxPublisherCAFile string
 	// CORS configuration
 }
 
@@ -207,22 +208,23 @@ func Load(opts ...Option) (Config, error) {
 	}
 
 	cfg := Config{
-		Env:                 getEnv("ENV", "development"),
-		Port:                DefaultPort,
-		DBConn:              "",
-		JWTSecret:           "",
-		JWKSURL:             getEnv("JWKS_URL", ""),
-		MaxHeaderBytes:      MaxHeaderBytes,
-		MaxRequestSize:      getEnvInt64("MAX_REQUEST_SIZE", DefaultMaxRequestSize),
-		MaxGzipUncompressed: getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
-		MaxGzipRatio:        getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
-		ReadTimeout:         DefaultReadTimeout,
-		WriteTimeout:        DefaultWriteTimeout,
-		IdleTimeout:         DefaultIdleTimeout,
-		TracingExporter:     getEnv("TRACING_EXPORTER", "stdout"),
-		TracingServiceName:  getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
-		AllowedOrigins:      getEnv("ALLOWED_ORIGINS", ""),
-		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		Env:                 	 getEnv("ENV", "development"),
+		Port:                	 DefaultPort,
+		DBConn:              	 "",
+		JWTSecret:           	 "",
+		JWKSURL:             	 getEnv("JWKS_URL", ""),
+		MaxHeaderBytes:      	 MaxHeaderBytes,
+		MaxRequestSize:      	 getEnvInt64("MAX_REQUEST_SIZE", DefaultMaxRequestSize),
+		MaxGzipUncompressed: 	 getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
+		MaxGzipRatio:        	 getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
+		ReadTimeout:        	 DefaultReadTimeout,
+		WriteTimeout:        	 DefaultWriteTimeout,
+		IdleTimeout:         	 DefaultIdleTimeout,
+		TracingExporter:     	 getEnv("TRACING_EXPORTER", "stdout"),
+		TracingServiceName:  	 getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		OutboxPublisherCAFile:   getEnv("OUTBOX_PUBLISHER_CA_FILE", ""),
+		AllowedOrigins:      	 getEnv("ALLOWED_ORIGINS", ""),
+		SecurityFrameAncestors:  getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
 		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,

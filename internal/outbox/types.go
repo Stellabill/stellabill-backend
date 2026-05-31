@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -46,7 +47,7 @@ type EventData struct {
 
 // Publisher interface for event publishing
 type Publisher interface {
-	Publish(event *Event) error
+	Publish(ctx context.Context, event *Event) error
 }
 
 // Repository interface for outbox operations

@@ -78,16 +78,23 @@ type Config struct {
 	DBPoolConnectTimeout    int
 	DBPoolHealthCheckPeriod int
 	DBPoolMetricsInterval   int
+	// Circuit breaker configuration
+	DBCircuitBreakerMaxFailures         uint32
+	DBCircuitBreakerTimeoutSeconds      uint32
+	DBCircuitBreakerHalfOpenMaxRequests uint32
 	// Rate limiting configuration
 	RateLimitEnabled   bool
 	RateLimitMode      string
 	RateLimitRPS       int
 	RateLimitBurst     int
 	RateLimitWhitelist []string
+	// Metrics configuration
+	MetricsAllowedCIDRs []string
 	// Tracing configuration
-	TracingExporter    string
-	TracingServiceName string
+	TracingExporter        string
+	TracingServiceName     string
 	SecurityFrameAncestors string
+	OutboxPublisherCAFile string
 	// CORS configuration
 }
 
@@ -171,6 +178,10 @@ var optionalEnvVars = map[string]string{
 	"MAX_GZIP_UNCOMPRESSED":       "10485760",
 	"MAX_GZIP_RATIO":              "10.0",
 	"SECURITY_FRAME_ANCESTORS":    "'none'",
+	"JWKS_URL":                    "",
+	"VAULT_ADDR":                  "",
+	"VAULT_TOKEN":                 "",
+	"VAULT_PATH_PREFIX":           "secret/data/",
 }
 
 // Option configures the Load function.
@@ -197,32 +208,33 @@ var secretKeys = []string{
 
 // Load loads configuration from environment variables with validation.
 // Sensitive values (DATABASE_URL, JWT_SECRET) are fetched through the secrets
-// provider, which defaults to EnvProvider when no option is supplied.
+// provider, which defaults to the auto-configured chain (Vault -> Env) when no option is supplied.
 func Load(opts ...Option) (Config, error) {
 	o := &loadOptions{
-		secretsProvider: secrets.NewEnvProvider(),
+		secretsProvider: secrets.NewDefaultProvider(),
 	}
 	for _, fn := range opts {
 		fn(o)
 	}
 
 	cfg := Config{
-		Env:                 getEnv("ENV", "development"),
-		Port:                DefaultPort,
-		DBConn:              "",
-		JWTSecret:           "",
-		JWKSURL:             getEnv("JWKS_URL", ""),
-		MaxHeaderBytes:      MaxHeaderBytes,
-		MaxRequestSize:      getEnvInt64("MAX_REQUEST_SIZE", DefaultMaxRequestSize),
-		MaxGzipUncompressed: getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
-		MaxGzipRatio:        getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
-		ReadTimeout:         DefaultReadTimeout,
-		WriteTimeout:        DefaultWriteTimeout,
-		IdleTimeout:         DefaultIdleTimeout,
-		TracingExporter:     getEnv("TRACING_EXPORTER", "stdout"),
-		TracingServiceName:  getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
-		AllowedOrigins:      getEnv("ALLOWED_ORIGINS", ""),
-		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		Env:                 	 getEnv("ENV", "development"),
+		Port:                	 DefaultPort,
+		DBConn:              	 "",
+		JWTSecret:           	 "",
+		JWKSURL:             	 getEnv("JWKS_URL", ""),
+		MaxHeaderBytes:      	 MaxHeaderBytes,
+		MaxRequestSize:      	 getEnvInt64("MAX_REQUEST_SIZE", DefaultMaxRequestSize),
+		MaxGzipUncompressed: 	 getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
+		MaxGzipRatio:        	 getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
+		ReadTimeout:        	 DefaultReadTimeout,
+		WriteTimeout:        	 DefaultWriteTimeout,
+		IdleTimeout:         	 DefaultIdleTimeout,
+		TracingExporter:     	 getEnv("TRACING_EXPORTER", "stdout"),
+		TracingServiceName:  	 getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		OutboxPublisherCAFile:   getEnv("OUTBOX_PUBLISHER_CA_FILE", ""),
+		AllowedOrigins:      	 getEnv("ALLOWED_ORIGINS", ""),
+		SecurityFrameAncestors:  getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
 		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
@@ -357,6 +369,19 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.AdminToken = token
+		}
+	}
+
+	if val := os.Getenv("JWKS_URL"); val != "" {
+		if _, err := url.ParseRequestURI(val); err != nil {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "JWKS_URL",
+				Message: "must be a valid URL",
+				Value:   val,
+			})
+		} else {
+			c.JWKSURL = val
 		}
 	}
 
@@ -506,6 +531,27 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	} else {
 		c.RateLimitWhitelist = []string{"/api/health"} // Only health check whitelisted by default
 	}
+	// Validate and set MetricsAllowedCIDRs
+	if cidrs := os.Getenv("METRICS_ALLOWED_CIDRS"); cidrs != "" {
+		parts := strings.Split(cidrs, ",")
+		var allowed []string
+		for _, part := range parts {
+			clean := strings.TrimSpace(part)
+			if clean != "" {
+				allowed = append(allowed, clean)
+			}
+		}
+		c.MetricsAllowedCIDRs = allowed
+	} else {
+		// Default to private/internal IP ranges
+		c.MetricsAllowedCIDRs = []string{
+			"127.0.0.0/8",
+			"10.0.0.0/8",
+			"172.16.0.0/12",
+			"192.168.0.0/16",
+			"::1/128",
+		}
+	}
 
 	// Validate TRACING_EXPORTER
 	if exporter := os.Getenv("TRACING_EXPORTER"); exporter != "" {
@@ -539,6 +585,9 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 
 	// Validate DB pool configuration
 	validateDBPool(c, result)
+
+	// Validate circuit breaker configuration
+	validateCircuitBreaker(c, result)
 
 	// Set optional env values
 	c.Env = getEnv("ENV", "development")
@@ -715,6 +764,36 @@ func validateDBPool(c *Config, result *ValidationResult) {
 			fmt.Sprintf("DB_POOL_MAX_CONN_IDLE_TIME (%ds) >= DB_POOL_MAX_CONN_LIFETIME (%ds); "+
 				"idle connections will be evicted before lifetime recycle fires — consider reducing idle time",
 				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
+	}
+}
+
+func validateCircuitBreaker(c *Config, result *ValidationResult) {
+	type cbVar struct {
+		envKey   string
+		min, max uint32
+		target   *uint32
+		defVal   uint32
+	}
+
+	vars := []cbVar{
+		{"DB_CIRCUIT_BREAKER_MAX_FAILURES", 1, 1000, &c.DBCircuitBreakerMaxFailures, 5},
+		{"DB_CIRCUIT_BREAKER_TIMEOUT_SECONDS", 1, 3600, &c.DBCircuitBreakerTimeoutSeconds, 30},
+		{"DB_CIRCUIT_BREAKER_HALF_OPEN_MAX_REQUESTS", 1, 1000, &c.DBCircuitBreakerHalfOpenMaxRequests, 1},
+	}
+
+	for _, v := range vars {
+		raw := os.Getenv(v.envKey)
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || n < uint64(v.min) || n > uint64(v.max) {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("%s invalid (value=%q, allowed %d–%d), using default %d",
+					v.envKey, raw, v.min, v.max, v.defVal))
+			continue
+		}
+		*v.target = uint32(n)
 	}
 }
 

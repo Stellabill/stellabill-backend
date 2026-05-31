@@ -28,13 +28,13 @@ func IsKnownStatus(status string) bool {
 
 // CanTransition validates state change
 func CanTransition(from, to string) error {
-	if from == to {
-		return nil // no-op allowed
-	}
-
 	allowed, ok := allowedTransitions[from]
 	if !ok {
 		return fmt.Errorf("unknown current state: %s", from)
+	}
+
+	if from == to {
+		return nil // no-op allowed
 	}
 
 	for _, a := range allowed {

@@ -3,117 +3,118 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v2/jwk"
 )
 
-// Metrics structure to satisfy the "Add metrics for refresh failures and hit rate" requirement.
-type CacheMetrics struct {
-	Hits            uint64
-	Misses          uint64
-	RefreshFailures uint64
-}
-
+// JWKSCache implements a JWKS key cache with TTL, negative caching, and rate limiting.
 type JWKSCache struct {
-	mu           sync.RWMutex
-	set          jwk.Set
-	expiry       time.Time
-	url          string
-	ttl          time.Duration
-	refreshLimit time.Duration
-	lastRefresh  time.Time
-	
-	// Metrics
-	metrics      CacheMetrics
+	mu            sync.RWMutex
+	url           string
+	ttl           time.Duration
+	keys          map[string]jwk.Key
+	negativeCache map[string]time.Time
+	expiry        time.Time
+	lastRefresh   time.Time
+	refreshLimit  time.Duration
 }
 
-// NewJWKSCache initializes the cache with bounded TTL.
+// NewJWKSCache initializes a new JWKSCache.
 func NewJWKSCache(url string, ttl time.Duration) *JWKSCache {
 	return &JWKSCache{
-		url:          url,
-		ttl:          ttl,
-		refreshLimit: 1 * time.Minute, // Prevent cache stampede
+		url:           url,
+		ttl:           ttl,
+		keys:          make(map[string]jwk.Key),
+		negativeCache: make(map[string]time.Time),
+		refreshLimit:  60 * time.Second,
 	}
 }
 
-// Get retrieves the current JWKS set, checking TTL.
-func (c *JWKSCache) Get(ctx context.Context) (jwk.Set, error) {
-	c.mu.RLock()
-	if c.set != nil && time.Now().Before(c.expiry) {
-		c.metrics.Hits++
-		defer c.mu.RUnlock()
-		return c.set, nil
+// GetKey retrieves a public key by kid.
+func (c *JWKSCache) GetKey(ctx context.Context, kid string) (jwk.Key, error) {
+	if kid == "" {
+		return nil, errors.New("kid is required")
 	}
+
+	// 1. Try to get from cache
+	c.mu.RLock()
+	key, found := c.keys[kid]
+	isExpired := time.Now().After(c.expiry)
+	
+	// Check negative cache
+	negExpiry, inNegCache := c.negativeCache[kid]
+	isNegExpired := time.Now().After(negExpiry)
 	c.mu.RUnlock()
 
-	c.metrics.Misses++
-	return c.Refresh(ctx)
+	if found && !isExpired {
+		return key, nil
+	}
+
+	if inNegCache && !isNegExpired {
+		return nil, fmt.Errorf("key id %s not found (negative cached)", kid)
+	}
+
+	// 2. Refresh if needed
+	return c.refreshAndGetKey(ctx, kid)
 }
 
-// Refresh forces a fetch from the IDP with rate-limiting to prevent stampedes.
-func (c *JWKSCache) Refresh(ctx context.Context) (jwk.Set, error) {
+func (c *JWKSCache) refreshAndGetKey(ctx context.Context, kid string) (jwk.Key, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Double-check pattern
-	if c.set != nil && time.Now().Before(c.expiry) {
-		return c.set, nil
+	// Double check after acquiring lock
+	if key, found := c.keys[kid]; found && time.Now().Before(c.expiry) {
+		return key, nil
+	}
+	if negExpiry, inNegCache := c.negativeCache[kid]; inNegCache && time.Now().Before(negExpiry) {
+		return nil, fmt.Errorf("key id %s not found (negative cached)", kid)
 	}
 
-	// Rate limit: If we just refreshed, don't hammer the IDP
-	if time.Since(c.lastRefresh) < c.refreshLimit && c.set != nil {
-		return c.set, nil
+	// Rate limit refreshes
+	if time.Since(c.lastRefresh) < c.refreshLimit {
+		// If we can't refresh yet, and we don't have the key, return error or stale key
+		if key, found := c.keys[kid]; found {
+			return key, nil // Return stale key as fallback
+		}
+		return nil, fmt.Errorf("rate limited: last refresh was %v ago", time.Since(c.lastRefresh))
 	}
 
 	if c.url == "" {
-		return nil, errors.New("JWKS URL is empty")
-	}
-	set, err := jwk.Fetch(ctx, c.url)
-	if err != nil {
-		c.metrics.RefreshFailures++
-		// If fetch fails but we have stale keys, return them as fallback
-		if c.set != nil {
-			return c.set, nil
-		}
-		return nil, err
+		return nil, errors.New("JWKS_URL is not configured")
 	}
 
-	c.set = set
+	// Fetch new JWKS
+	set, err := jwk.Fetch(ctx, c.url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
+	}
+
+	// Update cache
+	newKeys := make(map[string]jwk.Key)
+	iter := set.Keys(ctx)
+	for iter.Next(ctx) {
+		k := iter.Pair().Value.(jwk.Key)
+		if k.KeyID() != "" {
+			newKeys[k.KeyID()] = k
+		}
+	}
+
+	c.keys = newKeys
 	c.expiry = time.Now().Add(c.ttl)
 	c.lastRefresh = time.Now()
 	
-	return c.set, nil
-}
+	// Reset negative cache on successful refresh
+	c.negativeCache = make(map[string]time.Time)
 
-// GetKey retrieves a specific key by ID, triggering a refresh if the ID is missing.
-// This handles the "Rotation Semantics" requirement.
-func (c *JWKSCache) GetKey(ctx context.Context, kid string) (jwk.Key, error) {
-	set, err := c.Get(ctx)
-	if err != nil {
-		return nil, err
+	// Check if the requested kid is in the new set
+	if key, found := c.keys[kid]; found {
+		return key, nil
 	}
 
-	key, found := set.LookupKeyID(kid)
-	if !found {
-		// Key ID not found - trigger immediate refresh-on-error
-		set, err = c.Refresh(ctx)
-		if err != nil {
-			return nil, err
-		}
-		
-		key, found = set.LookupKeyID(kid)
-		if !found {
-			return nil, errors.New("key id not found after cache refresh")
-		}
-	}
-	return key, nil
-}
-
-// GetMetrics returns the current cache performance stats.
-func (c *JWKSCache) GetMetrics() CacheMetrics {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.metrics
+	// If still not found, add to negative cache
+	c.negativeCache[kid] = time.Now().Add(c.ttl) // Or a different negative TTL? Let's use ttl.
+	return nil, fmt.Errorf("key id %s not found in JWKS", kid)
 }

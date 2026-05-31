@@ -28,22 +28,14 @@ import (
 
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
-	_ = RegisterWithCleanup(r)
-}
-
-// RegisterWithCleanup configures all routes and returns a cleanup function for
-// resources created during route wiring.
-func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		panic(fmt.Sprintf("failed to load configuration: %v", err))
 	}
 
-	var tracerShutdown func(context.Context) error
-
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
-		tracerShutdown, err = tracing.InitTracer(cfg.TracingServiceName)
+		_, err := tracing.InitTracer(cfg.TracingServiceName)
 		if err != nil {
 			fmt.Printf("Failed to initialize tracer: %v\n", err)
 		}
@@ -237,66 +229,4 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 		return nil
 	}
-}
-
-// mockHandlerSubSvc adapts *repository.MockSubscriptionRepo to handlers.SubscriptionService.
-type mockHandlerSubSvc struct {
-	repo *repository.MockSubscriptionRepo
-}
-
-func (m *mockHandlerSubSvc) ListSubscriptions(_ *gin.Context) ([]handlers.Subscription, error) {
-	rows := m.repo.All()
-	out := make([]handlers.Subscription, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, handlers.Subscription{
-			ID:          r.ID,
-			PlanID:      r.PlanID,
-			Customer:    r.CustomerID,
-			Status:      r.Status,
-			Amount:      r.Amount,
-			Interval:    r.Interval,
-			NextBilling: r.NextBilling,
-		})
-	}
-	return out, nil
-}
-
-func (m *mockHandlerSubSvc) GetSubscription(_ *gin.Context, id string) (*handlers.Subscription, error) {
-	r, err := m.repo.FindByID(context.Background(), id)
-	if err != nil {
-		return nil, err
-	}
-	return &handlers.Subscription{
-		ID:          r.ID,
-		PlanID:      r.PlanID,
-		Customer:    r.CustomerID,
-		Status:      r.Status,
-		Amount:      r.Amount,
-		Interval:    r.Interval,
-		NextBilling: r.NextBilling,
-	}, nil
-}
-
-// mockHandlerPlanSvc adapts a PlanRepository to handlers.PlanService.
-type mockHandlerPlanSvc struct {
-	repo repository.PlanRepository
-}
-
-func (m *mockHandlerPlanSvc) ListPlans(_ *gin.Context) ([]handlers.Plan, error) {
-	rows, err := m.repo.List(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	out := make([]handlers.Plan, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, handlers.Plan{
-			ID:          r.ID,
-			Name:        r.Name,
-			Amount:      r.Amount,
-			Currency:    r.Currency,
-			Interval:    r.Interval,
-			Description: r.Description,
-		})
-	}
-	return out, nil
 }

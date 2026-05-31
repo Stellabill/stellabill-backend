@@ -49,26 +49,29 @@ func AuthMiddleware(cache interface{}, jwtSecret string) gin.HandlerFunc {
 		// 1. Use the JWKSCache to find the correct public key for validation, or fallback to HMAC secret
 		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 			if jwksCache != nil {
-				kid, ok := t.Header["kid"].(string)
-				if !ok {
-					return []byte(jwtSecret), nil
-				}
+				// Only use JWKS for RS256
+				if _, ok := t.Method.(*jwt.SigningMethodRSA); ok {
+					kid, ok := t.Header["kid"].(string)
+					if !ok {
+						return nil, fmt.Errorf("missing kid in token header")
+					}
 
-				// Call GetKey which handles the "Refresh-on-Error" logic
-				key, err := jwksCache.GetKey(c.Request.Context(), kid)
-				if err != nil {
-					return []byte(jwtSecret), nil
-				}
+					// Call GetKey which handles the "Refresh-on-Error" logic
+					key, err := jwksCache.GetKey(c.Request.Context(), kid)
+					if err != nil {
+						return nil, fmt.Errorf("failed to get key from cache: %w", err)
+					}
 
-				var rawKey interface{}
-				if err := key.Raw(&rawKey); err != nil {
-					return nil, fmt.Errorf("failed to get raw key: %w", err)
-				}
+					var rawKey interface{}
+					if err := key.Raw(&rawKey); err != nil {
+						return nil, fmt.Errorf("failed to get raw key: %w", err)
+					}
 
-				return rawKey, nil
+					return rawKey, nil
+				}
 			}
 
-			// Fallback: HMAC secret
+			// Fallback: HMAC secret (HS256)
 			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 			}

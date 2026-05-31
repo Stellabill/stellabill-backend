@@ -11,6 +11,7 @@ import (
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -51,8 +53,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TraceIDMiddleware())
+	r.Use(metrics.MetricsMiddleware())
 
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
+
+	// Metrics endpoint with IP restriction
+	r.GET("/metrics", middleware.IPRestrictionMiddleware(cfg.MetricsAllowedCIDRs), gin.WrapH(promhttp.Handler()))
 
 	// Apply rate limiting middleware
 	rateLimitConfig := middleware.RateLimiterConfig{

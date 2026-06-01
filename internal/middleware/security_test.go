@@ -22,8 +22,6 @@ func TestSecurityHeaders_Production(t *testing.T) {
 	
 	cfg := &config.Config{
 		Env:                "production",
-		SecurityHSTSMaxAge: "31536000",
-		SecurityFrameOpt:   "DENY",
 	}
 
 	router := gin.New()
@@ -46,8 +44,6 @@ func TestSecurityHeaders_Development(t *testing.T) {
 	
 	cfg := &config.Config{
 		Env:                "development",
-		SecurityHSTSMaxAge: "31536000",
-		SecurityFrameOpt:   "SAMEORIGIN",
 	}
 
 	router := gin.New()
@@ -60,7 +56,7 @@ func TestSecurityHeaders_Development(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
 	router.ServeHTTP(rec, req)
 
-	assertHeader(t, rec, "X-Frame-Options", "SAMEORIGIN")
+	assertHeader(t, rec, "X-Frame-Options", "DENY")
 	assertHeader(t, rec, "X-Content-Type-Options", "nosniff")
 	assertHeader(t, rec, "Strict-Transport-Security", "") // Should be omitted
 }
@@ -71,8 +67,6 @@ func TestSecurityHeaders_PreventInsecureFrameOptions(t *testing.T) {
 	// ALLOW-FROM is insecure/deprecated, should default to DENY
 	cfg := &config.Config{
 		Env:                "production",
-		SecurityHSTSMaxAge: "31536000",
-		SecurityFrameOpt:   "ALLOW-FROM https://evil.com",
 	}
 
 	router := gin.New()
@@ -93,8 +87,6 @@ func TestSecurityHeaders_ProxyLayerConflicts(t *testing.T) {
 	
 	cfg := &config.Config{
 		Env:                "production",
-		SecurityHSTSMaxAge: "31536000",
-		SecurityFrameOpt:   "DENY",
 	}
 
 	routerWithProxy := gin.New()

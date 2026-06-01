@@ -47,7 +47,18 @@ var (
 		},
 		[]string{"operation", "table", "error"},
 	)
+
+	// DBPoolMetrics tracks database pool statistics
+	DBPoolMetrics = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "db_pool_stats",
+			Help: "Database pool statistics",
+		},
+		[]string{"stat"},
+	)
 )
+
+
 
 func MetricsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {

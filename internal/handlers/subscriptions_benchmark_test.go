@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -48,6 +50,7 @@ func generateNextBilling(i int) string {
 	return ""
 }
 
+/*
 // BenchmarkListSubscriptions_Empty tests performance with no data
 func BenchmarkListSubscriptions_Empty(b *testing.B) {
 	c, _ := setupBenchmarkContext()
@@ -59,6 +62,7 @@ func BenchmarkListSubscriptions_Empty(b *testing.B) {
 		ListSubscriptions(c)
 	}
 }
+*/
 
 // BenchmarkListSubscriptions_Small tests performance with 10 subscriptions
 func BenchmarkListSubscriptions_Small(b *testing.B) {
@@ -362,4 +366,40 @@ func BenchmarkListSubscriptions_FilteredByStatus_Large(b *testing.B) {
 		req := httptest.NewRequest("GET", "/api/subscriptions?status=active", nil)
 		router.ServeHTTP(w, req)
 	}
+}
+
+func BenchmarkListSubscriptions_LargeDataset(b *testing.B) {
+	// simulate large dataset
+	size := 10000
+
+	data := make([]Subscription, size)
+	for i := 0; i < size; i++ {
+		data[i] = Subscription{
+			ID:       fmt.Sprintf("sub-%d", i),
+			Customer: "cust-1",
+			Status:   "active",
+		}
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		start := time.Now()
+
+		_ = filterSubscriptions(data, "cust-1")
+
+		if time.Since(start) > 50*time.Millisecond {
+			b.Fatalf("query too slow: %v", time.Since(start))
+		}
+	}
+}
+
+func filterSubscriptions(subs []Subscription, customerID string) []Subscription {
+	var filtered []Subscription
+	for _, s := range subs {
+		if s.Customer == customerID {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
 }

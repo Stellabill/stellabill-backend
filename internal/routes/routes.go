@@ -1,43 +1,63 @@
 package routes
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"os"
+	"time"
+
+	"stellarbill-backend/internal/auth"
+	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/cors"
+	"stellarbill-backend/internal/featureflags"
 	"stellarbill-backend/internal/handlers"
-	"stellarbill-backend/internal/idempotency"
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/tracing"
 
-	"stellarbill-backend/internal/auth"
-	"stellarbill-backend/internal/reconciliation"
-
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
+
+// Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
-	cfg := config.Load()
+	_ = RegisterWithCleanup(r)
+}
+
+// RegisterWithCleanup configures all routes and returns a cleanup function for
+// resources created during route wiring.
+func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
+	cfg, err := config.Load()
+	if err != nil {
+		panic(fmt.Sprintf("failed to load configuration: %v", err))
+	}
+
+	var tracerShutdown func(context.Context) error
 
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
-		_, err := tracing.InitTracer(cfg.TracingServiceName)
+		tracerShutdown, err = tracing.InitTracer(cfg.TracingServiceName)
 		if err != nil {
-			// Log error but continue
-			middleware.Log.Errorf("Failed to initialize tracer: %v", err)
+			fmt.Printf("Failed to initialize tracer: %v\n", err)
 		}
 	}
 
-	// Add OpenTelemetry middleware
+	// Global middleware
+	r.Use(middleware.RequestID())
+	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
-	// Add TraceID middleware to bridge OTEL trace ID to response headers
 	r.Use(middleware.TraceIDMiddleware())
+	r.Use(metrics.MetricsMiddleware())
 
-	corsProfile := cors.ProfileForEnv(cfg.Env, cfg.AllowedOrigins)
+	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
 
 	// Apply rate limiting middleware
 	rateLimitConfig := middleware.RateLimiterConfig{
@@ -45,106 +65,241 @@ func Register(r *gin.Engine) {
 		Mode:           middleware.RateLimitMode(cfg.RateLimitMode),
 		RequestsPerSec: int64(cfg.RateLimitRPS),
 		BurstSize:      int64(cfg.RateLimitBurst),
-		WhitelistPaths: cfg.RateLimitWhitelist,
+		WhitelistPaths: append(cfg.RateLimitWhitelist, "/metrics"),
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
-	r.Use(cors.Middleware(corsProfile))
+	var dbPool *pgxpool.Pool
+	if cfg.DBConn != "" {
+		var err error
+		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
+		if err != nil {
+			fmt.Printf("Failed to initialize database pool: %v\n", err)
+		}
+	}
 
-	store := idempotency.NewStore(idempotency.DefaultTTL)
+	var stopMetrics chan struct{}
+	if dbPool != nil {
+		stopMetrics = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(time.Duration(cfg.DBPoolMetricsInterval) * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					stats := dbPool.Stat()
+					metrics.DBPoolMetrics.WithLabelValues("total_conns").Set(float64(stats.TotalConns()))
+					metrics.DBPoolMetrics.WithLabelValues("idle_conns").Set(float64(stats.IdleConns()))
+					metrics.DBPoolMetrics.WithLabelValues("active_conns").Set(float64(stats.TotalConns() - stats.IdleConns()))
+					metrics.DBPoolMetrics.WithLabelValues("max_conns").Set(float64(stats.MaxConns()))
+				case <-stopMetrics:
+					return
+				}
+			}
+		}()
+	}
+
+	var idemStore middleware.IdempotencyStore
+	if dbPool != nil {
+		idemStore = middleware.NewPostgresIdempotencyStore(dbPool)
+	} else {
+		idemStore = middleware.NewInMemoryIdempotencyStore()
+	}
+	idemMiddleware := middleware.Idempotency(idemStore)
+
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
 		jwtSecret = "dev-secret"
 	}
+	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
 
-	subRepo := repository.NewMockSubscriptionRepo()
-	planRepo := repository.NewMockPlanRepo()
-	svc := service.NewSubscriptionService(subRepo, planRepo)
+	// Each cached repo gets its own InMemory cache instance so that Flush is
+	// scoped to its namespace and does not evict entries from other caches.
+	planCache := cache.NewInMemory()
+	subCache := cache.NewInMemory()
+	const repoCacheTTL = 5 * time.Minute
+
+	rawPlanRepo := repository.NewMockPlanRepo()
+	rawSubRepo := repository.NewMockSubscriptionRepo(
+		&repository.SubscriptionRow{ID: "sub-123", TenantID: "", CustomerID: "c1", Status: "active", PlanID: "p1"},
+		&repository.SubscriptionRow{ID: "sub-456", TenantID: "", CustomerID: "c2", Status: "active", PlanID: "p1"},
+		&repository.SubscriptionRow{ID: "test123", TenantID: "", CustomerID: "c3", Status: "active", PlanID: "p1"},
+	)
+
+	cachedPlanRepo := repository.NewCachedPlanRepo(rawPlanRepo, planCache, repoCacheTTL)
+	cachedSubRepo := repository.NewCachedSubscriptionRepo(rawSubRepo, subCache, repoCacheTTL)
+
+	svc := service.NewSubscriptionService(cachedSubRepo, cachedPlanRepo)
 
 	// Statement service wiring (in-memory mock for test/dev)
 	stmtRepo := repository.NewMockStatementRepo()
-	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
+	stmtSvc := service.NewStatementService(rawSubRepo, stmtRepo)
 
-	// Admin handler (token from env or default)
+	// handlerSubSvc adapts the mock repo to satisfy handlers.SubscriptionService.
+	handlerSubSvc := &mockHandlerSubSvc{repo: rawSubRepo}
+	// handlerPlanSvc adapts the cached plan repo to satisfy handlers.PlanService.
+	handlerPlanSvc := &mockHandlerPlanSvc{repo: cachedPlanRepo}
+
+	// Create handlers
+	h := handlers.NewHandlerWithDependencies(handlerPlanSvc, handlerSubSvc, dbPool, nil)
+
+	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
-	adminHandler := handlers.NewAdminHandler(adminToken)
-	// wire planRepo into handlers for list/detail endpoints and optional caching
-	handlers.SetPlanRepository(planRepo)
+	adminHandler := handlers.NewAdminHandler(adminToken, cachedPlanRepo, cachedSubRepo)
+	// Feature flags handler
+	featureFlagsHandler := handlers.NewFeatureFlagsHandler(featureflags.GetInstance())
+	// Wire the cached plan repo into the package-level ListPlans handler.
+	handlers.SetPlanRepository(cachedPlanRepo)
 
-	// Define the API version/group
+	// API Groups
 	api := r.Group("/api")
+	api.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	v1 := api.Group("/v1")
 
 	dep := middleware.DeprecationHeaders()
 
-	api.Use(idempotency.Middleware(store))
-	v1.Use(middleware.AuthMiddleware(jwtSecret))
-	{
-		// Public health check - no authentication required
-		api.GET("/health", dep, handlers.Health)
-		v1.GET("/health", handlers.Health)
+	// Public health check
+	api.GET("/health", dep, h.LivenessProbe)
+	v1.GET("/health", h.LivenessProbe)
+	api.GET("/liveness", h.LivenessProbe)
+	api.GET("/readiness", h.ReadinessProbe)
 
-		// Public read (user + admin)
-		api.GET("/plans",
+	// V1 routes are all protected
+	v1.Use(authMiddleware)
+	{
+		v1.GET("/subscriptions", auth.RequirePermission(auth.PermReadSubscriptions), h.ListSubscriptions)
+		v1.GET("/subscriptions/:id", auth.RequirePermission(auth.PermReadSubscriptions), h.GetSubscription)
+		v1.POST("/subscriptions/:id/status", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewChangeSubscriptionStatusHandler(svc))
+		v1.GET("/plans", h.ListPlans)
+		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
+		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
+	}
+
+	// Legacy /api routes - also protected
+	apiProtected := api.Group("")
+	apiProtected.Use(authMiddleware)
+	{
+		apiProtected.GET("/plans",
 			dep,
 			auth.RequirePermission(auth.PermReadPlans),
-			handlers.ListPlans,
+			h.ListPlans,
 		)
 
-		api.GET("/subscriptions",
+		apiProtected.GET("/subscriptions",
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
-			handlers.ListSubscriptions,
+			h.ListSubscriptions,
 		)
 
-		api.GET("/subscriptions/:id",
+		apiProtected.GET("/subscriptions/:id",
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
-			handlers.GetSubscription,
+			h.GetSubscription,
+		)
+		apiProtected.POST("/subscriptions/:id/status",
+			dep,
+			auth.RequirePermission(auth.PermManageSubscriptions),
+			handlers.NewChangeSubscriptionStatusHandler(svc),
 		)
 
-		// Example future admin-only endpoints:
-		// api.POST("/plans", auth.RequirePermission(auth.PermManagePlans), ...)
-		api.GET("/subscriptions", dep, handlers.ListSubscriptions)
-		v1.GET("/subscriptions", handlers.ListSubscriptions)
-		api.GET("/subscriptions/:id", dep, middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		v1.GET("/subscriptions/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
-		api.GET("/plans", dep, handlers.ListPlans)
-		v1.GET("/plans", handlers.ListPlans)
-
-			api.GET("/statements/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetStatementHandler(stmtSvc))
-		api.GET("/statements", middleware.AuthMiddleware(jwtSecret), handlers.NewListStatementsHandler(stmtSvc))
-
-		admin := api.Group("/admin")
-		{
-			admin.POST("/purge", adminHandler.PurgeCache)
-			// Diagnostics endpoint — re-runs startup checks for live triage
-			diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
-			admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
-			// Reconciliation endpoint (admin-only) - accepts backend subscription list
-				// Choose adapter implementation via env var CONTRACT_SNAPSHOT_URL. If set, use HTTPAdapter.
-				contractURL := os.Getenv("CONTRACT_SNAPSHOT_URL")
-				var adapter reconciliation.Adapter
-				if contractURL != "" {
-					// Optional auth header via CONTRACT_SNAPSHOT_AUTH (e.g. "Bearer <token>")
-					authHeader := os.Getenv("CONTRACT_SNAPSHOT_AUTH")
-					adapter = reconciliation.NewHTTPAdapter(contractURL, authHeader)
-				} else {
-					// Default to in-memory adapter (empty) — replace or seed as needed in dev.
-					adapter = reconciliation.NewMemoryAdapter()
-				}
-				// Wire in-memory store for persistence by default; can be swapped for DB-backed store.
-				reconStore := reconciliation.NewMemoryStore()
-				admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
-				// List persisted reports
-				admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
-					reports, err := reconStore.ListReports()
-					if err != nil {
-						c.JSON(500, gin.H{"error": "failed to load reports"})
-						return
-					}
-					c.JSON(200, gin.H{"reports": reports})
-				})
-		}
+		apiProtected.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
+		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 	}
+
+	admin := api.Group("/admin")
+	admin.Use(authMiddleware)
+	{
+		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
+		// Diagnostics endpoint — re-runs startup checks for live triage
+		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
+		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
+
+		// Reconciliation — scoped by RBAC and tenant
+		adapter := reconciliation.NewMemoryAdapter()
+		reconStore := reconciliation.NewMemoryStore()
+		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
+		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
+
+		// Feature flags endpoints
+		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
+		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
+	}
+
+	return func(ctx context.Context) error {
+		if dbPool != nil {
+			log.Printf("closing database pool")
+			dbPool.Close()
+		}
+
+		if tracerShutdown != nil {
+			log.Printf("flushing tracer")
+			if err := tracerShutdown(ctx); err != nil {
+				return fmt.Errorf("shutdown tracer: %w", err)
+			}
+		}
+
+		return nil
+	}
+}
+
+// mockHandlerSubSvc adapts *repository.MockSubscriptionRepo to handlers.SubscriptionService.
+type mockHandlerSubSvc struct {
+	repo *repository.MockSubscriptionRepo
+}
+
+func (m *mockHandlerSubSvc) ListSubscriptions(_ *gin.Context) ([]handlers.Subscription, error) {
+	rows := m.repo.All()
+	out := make([]handlers.Subscription, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, handlers.Subscription{
+			ID:          r.ID,
+			PlanID:      r.PlanID,
+			Customer:    r.CustomerID,
+			Status:      r.Status,
+			Amount:      r.Amount,
+			Interval:    r.Interval,
+			NextBilling: r.NextBilling,
+		})
+	}
+	return out, nil
+}
+
+func (m *mockHandlerSubSvc) GetSubscription(_ *gin.Context, id string) (*handlers.Subscription, error) {
+	r, err := m.repo.FindByID(context.Background(), id)
+	if err != nil {
+		return nil, err
+	}
+	return &handlers.Subscription{
+		ID:          r.ID,
+		PlanID:      r.PlanID,
+		Customer:    r.CustomerID,
+		Status:      r.Status,
+		Amount:      r.Amount,
+		Interval:    r.Interval,
+		NextBilling: r.NextBilling,
+	}, nil
+}
+
+// mockHandlerPlanSvc adapts a PlanRepository to handlers.PlanService.
+type mockHandlerPlanSvc struct {
+	repo repository.PlanRepository
+}
+
+func (m *mockHandlerPlanSvc) ListPlans(_ *gin.Context) ([]handlers.Plan, error) {
+	rows, err := m.repo.List(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]handlers.Plan, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, handlers.Plan{
+			ID:          r.ID,
+			Name:        r.Name,
+			Amount:      r.Amount,
+			Currency:    r.Currency,
+			Interval:    r.Interval,
+			Description: r.Description,
+		})
+	}
+	return out, nil
 }

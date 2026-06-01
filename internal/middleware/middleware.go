@@ -1,8 +1,7 @@
 package middleware
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -10,12 +9,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/security"
 )
 
 const (
-	RequestIDHeader = "X-Request-ID"
-	RequestIDKey    = "request_id"
-	AuthSubjectKey  = "auth_subject"
+	AuthSubjectKey = "auth_subject"
 )
 
 type RateLimiter struct {
@@ -40,66 +38,25 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
-func RequestID() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		requestID := sanitizeRequestID(c.GetHeader(RequestIDHeader))
-		if requestID == "" {
-			requestID = newRequestID()
-		}
-
-		c.Set(RequestIDKey, requestID)
-		c.Writer.Header().Set(RequestIDHeader, requestID)
-		c.Next()
-	}
-}
-
-func Recovery(logger *log.Logger) gin.HandlerFunc {
-	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf("panic recovered request_id=%v err=%v", requestID, recovered)
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error":      "internal server error",
-			"request_id": requestID,
-		})
-	})
-}
-
 func Logging(logger *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 
 		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf(
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+		msg := fmt.Sprintf(
 			"method=%s path=%s status=%d request_id=%v duration=%s",
 			c.Request.Method,
-			c.FullPath(),
+			security.MaskPII(path),
 			c.Writer.Status(),
 			requestID,
 			time.Since(start).Round(time.Millisecond),
 		)
-	}
-}
-
-func CORS(allowOrigin string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		origin := allowOrigin
-		if origin == "" {
-			origin = "*"
-		}
-
-		c.Header("Access-Control-Allow-Origin", origin)
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-		c.Header("Access-Control-Expose-Headers", RequestIDHeader)
-		c.Header("Vary", "Origin")
-
-		if c.Request.Method == http.MethodOptions {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-
-		c.Next()
+		logger.Printf("%s", msg)
 	}
 }
 
@@ -167,52 +124,22 @@ func (r *RateLimiter) Allow(key string) bool {
 	return true
 }
 
-func sanitizeRequestID(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 128 {
-		return ""
-	}
-
-	var b strings.Builder
-	b.Grow(len(value))
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case strings.ContainsRune("-_.", r):
-			b.WriteRune(r)
-		default:
-			return ""
-		}
-	}
-	return b.String()
-}
-
-func newRequestID() string {
-	buf := make([]byte, 12)
-	if _, err := rand.Read(buf); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format("150405.000000000")))
-	}
-	return hex.EncodeToString(buf)
-}
-
+// DeprecationHeaders marks legacy /api/* aliases as deprecated and points
+// clients at the canonical /api/v1/* successor. Do not attach it to /api/v1/*
+// routes.
 func DeprecationHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		const legacyPrefix = "/api/"
+		const canonicalPrefix = "/api/v1/"
+		if !strings.HasPrefix(path, legacyPrefix) || strings.HasPrefix(path, canonicalPrefix) {
+			c.Next()
+			return
+		}
+
 		c.Header("Deprecation", "true")
 		c.Header("Sunset", time.Now().Add(180*24*time.Hour).Format(time.RFC1123))
-
-		// Build Link header pointing to the v1 equivalent of this route.
-		// Requests to /api/foo become </api/v1/foo>; rel="successor-version".
-		path := c.Request.URL.Path
-		const prefix = "/api"
-		if strings.HasPrefix(path, prefix) {
-			successor := prefix + "/v1" + path[len(prefix):]
-			c.Header("Link", `<`+successor+`>; rel="successor-version"`)
-		}
+		c.Header("Link", `</api/v1`+path[len("/api"):]+`>; rel="successor-version"`)
 
 		c.Next()
 	}

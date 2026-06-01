@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -23,6 +24,7 @@ type Event struct {
 	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 	Version       int        `json:"version" db:"version"`
+	DeduplicationID *string  `json:"deduplication_id,omitempty" db:"deduplication_id"`
 }
 
 // Status represents the status of an outbox event
@@ -45,7 +47,7 @@ type EventData struct {
 
 // Publisher interface for event publishing
 type Publisher interface {
-	Publish(event *Event) error
+	Publish(ctx context.Context, event *Event) error
 }
 
 // Repository interface for outbox operations
@@ -57,6 +59,8 @@ type Repository interface {
 	MarkAsProcessing(id uuid.UUID) error
 	IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time, errorMessage *string) error
 	DeleteCompletedEvents(olderThan time.Time) (int64, error)
+	ListDeadLetteredEvents(limit int) ([]*Event, error)
+	RequeueEvent(id uuid.UUID) error
 }
 
 // Dispatcher handles the outbox event dispatching

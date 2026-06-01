@@ -2,88 +2,64 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
-	"database/sql"
-
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/audit"
+	_ "github.com/lib/pq"
+
 	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/migrations"
 	"stellarbill-backend/internal/routes"
-	"stellarbill-backend/internal/shutdown"
-	"stellarbill-backend/internal/startup"
 )
 
 var listenAndServe = func(srv *http.Server) error {
 	return srv.ListenAndServe()
 }
 
+const shutdownTimeout = 30 * time.Second
+
+type cleanupFunc func(context.Context) error
+
 func main() {
+	if err := run(); err != nil {
+		log.Printf("server shutdown failed: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
 		printConfigError(err)
-		os.Exit(1)
+		return err
 	}
 
-	// Init PII-safe logger
-	var logger *zap.Logger
+	// Check if migrations should run on startup
+	runMigrationsOnStartup := os.Getenv("RUN_MIGRATIONS") == "true"
+	if runMigrationsOnStartup {
+		if err := applyMigrationsOnStartup(&cfg); err != nil {
+			return fmt.Errorf("migrations failed: %w", err)
+		}
+	}
+
 	if cfg.Env == "production" {
-		logger = security.ProductionLogger()
-		defer logger.Sync()
 		gin.SetMode(gin.ReleaseMode)
-		logger.Info("Running in production mode")
-	} else if cfg.Env == "development" {
-		logger = security.DevLogger()
-		defer logger.Sync()
-		gin.SetMode(gin.DebugMode)
-		logger.Info("Running in development mode")
-	} else {
-		logger = security.ProductionLogger()
-		defer logger.Sync()
-		gin.SetMode(gin.TestMode)
-		logger.Info("Running in test mode", zap.String("env", cfg.Env))
 	}
 
-	// Log config warnings
-	if vResult := cfg.Validate(); len(vResult.Warnings) > 0 {
-		logger.Warn("Configuration warnings",
-			zap.Strings("warnings", vResult.Warnings))
-	}
-
-	// Run startup diagnostics — fail fast if critical checks fail
-	startupResults := startup.RunChecks(cfg, nil, nil) // db/migrations wired below once available
-	logger.Info("Startup checks completed:\n" + startup.FormatResults(startupResults))
-	if startup.HasFailures(startupResults) {
-		logger.Fatal("Startup checks failed — aborting")
-	}
-
-	// Create router with configured middleware
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(middleware.Logger(logger))
 
-	// Security headers middleware
-	router.Use(func(c *gin.Context) {
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
-		c.Header("X-XSS-Protection", "1; mode=block")
-		c.Next()
-	})
+	cleanup := routes.RegisterWithCleanup(router)
 
-	// Wire up services and handlers, then register routes
-	planSvc := services.NewPlanService()
-	subSvc := services.NewSubscriptionService()
-	h := handlers.NewHandler(planSvc, subSvc)
-	routes.Register(router, h)
-
-	// Build server address
 	addr := fmt.Sprintf(":%d", cfg.Port)
-
-	// Create HTTP server with configuration
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      router,
@@ -92,83 +68,148 @@ func main() {
 		IdleTimeout:  time.Duration(cfg.IdleTimeout) * time.Second,
 	}
 
-	logger.Info("Starting Stellarbill backend",
-		zap.String("addr", addr),
-		zap.String("env", cfg.Env))
-	logger.Info("Server timeouts",
-		zap.Int("read", cfg.ReadTimeout),
-		zap.Int("write", cfg.WriteTimeout),
-		zap.Int("idle", cfg.IdleTimeout))
+	shutdownCtx, secondSignal, stopSignals := notifyShutdownSignals()
+	defer stopSignals()
 
-	// Initialize graceful shutdown orchestrator
-	// Shutdown timeout: 30 seconds (total time for all cleanup)
-	// Drain timeout: 20 seconds (time to wait for in-flight requests)
-	gracefulShutdown := shutdown.NewGracefulShutdown(
-		srv,
-		30*time.Second,
-		20*time.Second,
-	)
+	return runHTTPServer(shutdownCtx, secondSignal, srv, shutdownTimeout, cleanup)
+}
 
-	// Register cleanup callbacks in reverse order of initialization
-	gracefulShutdown.OnShutdown(func(ctx context.Context) error {
-		log.Println("Cleanup callback: Releasing resources...")
-		// Add any additional cleanup logic here
-		// e.g., database connection pools, caches, etc.
-		return nil
-	})
+func notifyShutdownSignals() (context.Context, <-chan os.Signal, func()) {
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	// Start server in a background goroutine
-	serverErrors := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		log.Println("Listening for connections...")
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErrors <- err
-		}
+		<-sigCh
+		cancel()
 	}()
 
-	// Start signal listener (blocks until shutdown is triggered)
-	go gracefulShutdown.ListenForShutdownSignals()
-
-	// Wait for either a server error or shutdown completion
-	select {
-	case err := <-serverErrors:
-		log.Fatalf("Server error: %v", err)
-	case <-func() <-chan struct{} {
-		// Wait for graceful shutdown to complete
-		done := make(chan struct{})
-		go func() {
-			gracefulShutdown.Wait()
-			close(done)
-		}()
-		return done
-	}():
-		log.Println("Server shutdown completed successfully")
+	stop := func() {
+		signal.Stop(sigCh)
+		cancel()
 	}
 
-	logger.Init()
-
-	r := gin.New()
-
-	r.Use(middleware.RecoveryLogger())
-	r.Use(middleware.RequestLogger())
-
-	var db *sql.DB = nil // existing or future DB
-
-	routes.RegisterRoutes(r, db)
-
-	r.Run()
+	return ctx, sigCh, stop
 }
 
-func newRouter() *gin.Engine {
-	router := gin.New()
-	router.Use(
-		middleware.Recovery(log.Default()),
-		middleware.RequestID(),
-		middleware.Logging(log.Default()),
-		middleware.CORS("*"),
-		middleware.RateLimit(middleware.NewRateLimiter(60, time.Minute)),
-	)
-	routes.Register(router)
-	return router
+func runHTTPServer(ctx context.Context, secondSignal <-chan os.Signal, srv *http.Server, timeout time.Duration, cleanup cleanupFunc) error {
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("server listening on %s", srv.Addr)
+		serverErr <- listenAndServe(srv)
+	}()
+
+	select {
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("server error: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		log.Printf("shutdown signal received; allowing up to %s for graceful shutdown", timeout)
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	shutdownErr := make(chan error, 1)
+	go func() {
+		shutdownErr <- srv.Shutdown(shutdownCtx)
+	}()
+
+	var err error
+	select {
+	case sig := <-secondSignal:
+		log.Printf("second shutdown signal received (%s); forcing server close", sig)
+		err = errors.Join(fmt.Errorf("forced shutdown after second signal: %s", sig), srv.Close())
+	case shutdownResult := <-shutdownErr:
+		if shutdownResult != nil {
+			log.Printf("http server graceful shutdown failed: %v", shutdownResult)
+			err = errors.Join(err, fmt.Errorf("http server shutdown: %w", shutdownResult))
+			err = errors.Join(err, srv.Close())
+		} else {
+			log.Printf("http server stopped accepting requests and drained in-flight work")
+		}
+	}
+
+	if cleanup != nil {
+		if cleanupErr := cleanup(shutdownCtx); cleanupErr != nil {
+			log.Printf("server cleanup failed: %v", cleanupErr)
+			err = errors.Join(err, fmt.Errorf("server cleanup: %w", cleanupErr))
+		} else {
+			log.Printf("server cleanup completed")
+		}
+	}
+
+	select {
+	case serveErr := <-serverErr:
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			err = errors.Join(err, fmt.Errorf("server error: %w", serveErr))
+		}
+	case <-time.After(time.Second):
+		err = errors.Join(err, errors.New("server did not stop after shutdown"))
+	}
+
+	if err != nil {
+		return err
+	}
+
+	log.Printf("graceful shutdown completed")
+	return nil
 }
 
+// applyMigrationsOnStartup loads and applies all pending migrations from the migrations directory.
+// It fails fast with a clear error message if any migration fails.
+func applyMigrationsOnStartup(cfg *config.Config) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Open database connection
+	db, err := sql.Open("postgres", cfg.DBConn)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	// Verify connectivity
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("database connection failed: %w", err)
+	}
+
+	// Load migrations from disk
+	migs, err := migrations.LoadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("failed to load migrations from migrations/: %w", err)
+	}
+
+	if len(migs) == 0 {
+		log.Println("no migrations found to apply")
+		return nil
+	}
+
+	// Create runner and apply migrations
+	runner := migrations.Runner{DB: db}
+	if err := runner.Validate(); err != nil {
+		return fmt.Errorf("migration runner validation failed: %w", err)
+	}
+
+	applied, err := runner.Up(ctx, migs)
+	if err != nil {
+		return fmt.Errorf("migration execution failed: %w", err)
+	}
+
+	if len(applied) > 0 {
+		log.Printf("successfully applied %d migration(s)", len(applied))
+		for _, m := range applied {
+			log.Printf("  - %d_%s", m.Version, m.Name)
+		}
+	} else {
+		log.Println("no new migrations to apply (all already applied)")
+	}
+
+	return nil
+}
+
+func printConfigError(err error) {
+	fmt.Fprintf(os.Stderr, "%v\n", err)
+}

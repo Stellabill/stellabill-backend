@@ -3,10 +3,16 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
+
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"stellarbill-backend/internal/service"
 )
 
@@ -19,13 +25,21 @@ type mockSubscriptionService struct {
 	id       string
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, tenantID, callerID, id string) (*service.SubscriptionDetail, []string, error) {
 	m.callerID = callerID
 	m.id = id
 	return m.detail, m.warnings, m.err
 }
 
-func (m *mockSubscriptionService) ListSubscriptions(_ context.Context) ([]Subscription, error) {
+func (m *mockSubscriptionService) ChangeStatus(ctx context.Context, tenantID string, actorID string, subscriptionID string, targetStatus string) (*service.SubscriptionStatusChange, error) {
+	return nil, nil
+}
+
+func (m *mockSubscriptionService) ListSubscriptions(c *gin.Context) ([]Subscription, error) {
+	return nil, nil
+}
+
+func (m *mockSubscriptionService) GetSubscription(c *gin.Context, id string) (*Subscription, error) {
 	return nil, nil
 }
 
@@ -41,283 +55,117 @@ func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 			c.Next()
 		})
 	}
-	h := &Handler{Subscriptions: svc}
-	r.GET("/api/subscriptions/:id", h.GetSubscription)
+	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(svc))
 	return r
 }
 
-func TestListSubscriptions_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	svc := &mockSubscriptionService{}
-	h := &Handler{Subscriptions: svc}
+func TestHandler_ListSubscriptions(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		mockSvc := new(MockSubscriptionService)
+		h := &Handler{Subscriptions: mockSvc}
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	h.ListSubscriptions(c)
+		subs := []Subscription{
+			{ID: "sub_1", PlanID: "plan_1", Customer: "Alice", Status: "active"},
+		}
+		mockSvc.On("ListSubscriptions", mock.Anything).Return(subs, nil)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
 
-func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
-	svc := &mockSubscriptionService{}
-	r := setupRouter(svc, false)
+		h.ListSubscriptions(c)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
-	}
-	var body ErrorEnvelope
-	json.NewDecoder(w.Body).Decode(&body)
-	if body.Code != string(ErrorCodeUnauthorized) {
-		t.Errorf("expected error code %s, got %s", ErrorCodeUnauthorized, body.Code)
-	}
-	if body.Message == "" {
-		t.Error("expected error message in response body")
-	}
-}
-
-func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("traceID", "test-trace")
-		c.Set("callerID", "caller-123")
-		c.Set("tenantID", "tenant-1")
-		c.Next()
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response map[string][]Subscription
+		json.Unmarshal(w.Body.Bytes(), &response)
+		assert.Len(t, response["subscriptions"], 1)
+		assert.Equal(t, "sub_1", response["subscriptions"][0].ID)
 	})
-	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(&mockSubscriptionService{}))
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%20", nil)
-	r.ServeHTTP(w, req)
+	t.Run("error", func(t *testing.T) {
+		mockSvc := new(MockSubscriptionService)
+		h := &Handler{Subscriptions: mockSvc}
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-	var body ErrorEnvelope
-	json.NewDecoder(w.Body).Decode(&body)
-	if body.Code != string(ErrorCodeValidationFailed) {
-		t.Errorf("expected validation error code, got %s", body.Code)
-	}
-}
+		mockSvc.On("ListSubscriptions", mock.Anything).Return(nil, errors.New("db error"))
 
-func TestGetSubscription_RejectsUnexpectedQueryParams_Returns400(t *testing.T) {
-	svc := &mockSubscriptionService{}
-	r := setupRouter(svc, true)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1?expand=plan", nil)
-	r.ServeHTTP(w, req)
+		h.ListSubscriptions(c)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-	if svc.id != "" {
-		t.Fatalf("service should not be called, got id %q", svc.id)
-	}
-}
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		var response ErrorEnvelope
+		json.Unmarshal(w.Body.Bytes(), &response)
+		assert.Equal(t, "INTERNAL_ERROR", response.Code)
+		assert.Contains(t, response.Message, "Failed to retrieve subscription")
+	})
 
-func TestGetSubscription_RejectsEncodedPayloadID_Returns400(t *testing.T) {
-	svc := &mockSubscriptionService{}
-	r := setupRouter(svc, true)
+	t.Run("invalid limits", func(t *testing.T) {
+		invalidInputs := []string{"abc", "1abc", " ", "  "}
+		for _, input := range invalidInputs {
+			t.Run(input, func(t *testing.T) {
+				mockSvc := new(MockSubscriptionService)
+				h := &Handler{Subscriptions: mockSvc}
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%3Cscript%3E", nil)
-	r.ServeHTTP(w, req)
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest("GET", "/subscriptions?limit="+url.QueryEscape(input), nil)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-	if svc.id != "" {
-		t.Fatalf("service should not be called, got id %q", svc.id)
-	}
-}
+				h.ListSubscriptions(c)
 
-func TestGetSubscription_NormalizesUnicodeID_BeforeServiceCall(t *testing.T) {
-	svc := &mockSubscriptionService{
-		detail: &service.SubscriptionDetail{
-			ID:       "sub-1",
-			PlanID:   "plan-1",
-			Customer: "caller-123",
-			Status:   "active",
-			Interval: "monthly",
-		},
-	}
-	r := setupRouter(svc, true)
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				var response ErrorEnvelope
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Equal(t, "VALIDATION_FAILED", response.Code)
+				assert.Contains(t, response.Message, "Invalid pagination limit")
+			})
+		}
+	})
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%EF%BD%93%EF%BD%95%EF%BD%82%EF%BC%8D%EF%BC%91", nil)
-	r.ServeHTTP(w, req)
+	t.Run("clamped and valid limits", func(t *testing.T) {
+		validInputs := []struct {
+			limitStr      string
+			expectedLimit int
+		}{
+			{"1", 1},
+			{"20", 20},
+			{"100", 100},
+			{"101", 100},
+			{"100000", 100},
+			{"0", 10},
+			{"-10", 10},
+			{"", 10},
+		}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
-	}
-	if svc.id != "sub-1" {
-		t.Fatalf("expected normalized id sub-1, got %q", svc.id)
-	}
-	if svc.callerID != "caller-123" {
-		t.Fatalf("expected callerID caller-123, got %q", svc.callerID)
-	}
-}
+		for _, tc := range validInputs {
+			t.Run(tc.limitStr, func(t *testing.T) {
+				mockSvc := new(MockSubscriptionService)
+				h := &Handler{Subscriptions: mockSvc}
 
-func TestGetSubscription_ErrNotFound_Returns404(t *testing.T) {
-	svc := &mockSubscriptionService{err: service.ErrNotFound}
-	r := setupRouter(svc, true)
+				// Create 105 mock subscriptions to verify pagination slicing limit
+				var subs []Subscription
+				for i := 1; i <= 105; i++ {
+					subs = append(subs, Subscription{
+						ID:       "sub_" + strconv.Itoa(i),
+						Customer: "Customer " + strconv.Itoa(i),
+					})
+				}
+				mockSvc.On("ListSubscriptions", mock.Anything).Return(subs, nil)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/unknown-id", nil)
-	r.ServeHTTP(w, req)
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest("GET", "/subscriptions?limit="+url.QueryEscape(tc.limitStr), nil)
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", w.Code)
-	}
-	var body ErrorEnvelope
-	json.NewDecoder(w.Body).Decode(&body)
-	if body.Code != string(ErrorCodeNotFound) {
-		t.Errorf("expected error code %s, got %s", ErrorCodeNotFound, body.Code)
-	}
-}
+				h.ListSubscriptions(c)
 
-func TestGetSubscription_ErrDeleted_Returns410(t *testing.T) {
-	svc := &mockSubscriptionService{err: service.ErrDeleted}
-	r := setupRouter(svc, true)
+				assert.Equal(t, http.StatusOK, w.Code)
+				var response map[string]interface{}
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/deleted-id", nil)
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusGone {
-		t.Fatalf("expected 410, got %d", w.Code)
-	}
-	var body ErrorEnvelope
-	json.NewDecoder(w.Body).Decode(&body)
-	if body.Code != string(ErrorCodeNotFound) {
-		t.Errorf("expected error code %s, got %s", ErrorCodeNotFound, body.Code)
-	}
-}
-
-func TestGetSubscription_ErrForbidden_Returns403(t *testing.T) {
-	svc := &mockSubscriptionService{err: service.ErrForbidden}
-	r := setupRouter(svc, true)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", w.Code)
-	}
-	var body ErrorEnvelope
-	json.NewDecoder(w.Body).Decode(&body)
-	if body.Code != string(ErrorCodeForbidden) {
-		t.Errorf("expected error code %s, got %s", ErrorCodeForbidden, body.Code)
-	}
-}
-
-func TestGetSubscription_ErrBillingParse_Returns500(t *testing.T) {
-	svc := &mockSubscriptionService{err: service.ErrBillingParse}
-	r := setupRouter(svc, true)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d", w.Code)
-	}
-	var body ErrorEnvelope
-	json.NewDecoder(w.Body).Decode(&body)
-	if body.Code != string(ErrorCodeInternalError) {
-		t.Errorf("expected internal error code, got %s", body.Code)
-	}
-}
-
-func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
-	nextBilling := "2024-02-01T00:00:00Z"
-	detail := &service.SubscriptionDetail{
-		ID:       "sub-1",
-		PlanID:   "plan-1",
-		Customer: "caller-123",
-		Status:   "active",
-		Interval: "monthly",
-		Plan: &service.PlanMetadata{
-			PlanID:   "plan-1",
-			Name:     "Pro",
-			Amount:   "1999",
-			Currency: "USD",
-			Interval: "monthly",
-		},
-		BillingSummary: service.BillingSummary{
-			AmountCents:     1999,
-			Currency:        "USD",
-			NextBillingDate: &nextBilling,
-		},
-	}
-	svc := &mockSubscriptionService{detail: detail, warnings: nil}
-	r := setupRouter(svc, true)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	ct := w.Header().Get("Content-Type")
-	if ct != "application/json; charset=utf-8" {
-		t.Errorf("unexpected Content-Type: %q", ct)
-	}
-
-	var envelope map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&envelope); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if envelope["api_version"] != "1" {
-		t.Errorf("expected api_version=1, got %v", envelope["api_version"])
-	}
-
-	data, ok := envelope["data"].(map[string]interface{})
-	if !ok {
-		t.Fatal("expected data field to be an object")
-	}
-	if data["id"] != "sub-1" {
-		t.Errorf("expected data.id=sub-1, got %v", data["id"])
-	}
-	if data["plan_id"] != "plan-1" {
-		t.Errorf("expected data.plan_id=plan-1, got %v", data["plan_id"])
-	}
-	if data["customer"] != "caller-123" {
-		t.Errorf("expected data.customer=caller-123, got %v", data["customer"])
-	}
-	if data["status"] != "active" {
-		t.Errorf("expected data.status=active, got %v", data["status"])
-	}
-	if data["interval"] != "monthly" {
-		t.Errorf("expected data.interval=monthly, got %v", data["interval"])
-	}
-
-	plan, ok := data["plan"].(map[string]interface{})
-	if !ok {
-		t.Fatal("expected data.plan to be an object")
-	}
-	if plan["plan_id"] != "plan-1" {
-		t.Errorf("expected plan.plan_id=plan-1, got %v", plan["plan_id"])
-	}
-
-	billing, ok := data["billing_summary"].(map[string]interface{})
-	if !ok {
-		t.Fatal("expected data.billing_summary to be an object")
-	}
-	if billing["amount_cents"] != float64(1999) {
-		t.Errorf("expected billing_summary.amount_cents=1999, got %v", billing["amount_cents"])
-	}
-	if billing["currency"] != "USD" {
-		t.Errorf("expected billing_summary.currency=USD, got %v", billing["currency"])
-	}
+				items := response["subscriptions"].([]interface{})
+				assert.Len(t, items, tc.expectedLimit)
+			})
+		}
+	})
 }

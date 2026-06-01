@@ -3,9 +3,8 @@ package middleware
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"regexp"
-	"time"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,20 +16,20 @@ const (
 
 var (
 	// Validate request ID format: alphanumeric, max 32 chars
-	validRequestID = regexp.MustCompile(`^[a-zA-Z0-9]{1,32}$`)
+	validRequestID = regexp.MustCompile(`^[a-zA-Z0-9\-_\.]{1,32}$`)
 )
 
 // RequestID generates or propagates request IDs for tracing
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := extractOrGenerateRequestID(c)
-		
+
 		// Store in context for downstream handlers
 		c.Set(RequestIDKey, requestID)
-		
+
 		// Add to response header
 		c.Header(RequestIDHeader, requestID)
-		
+
 		c.Next()
 	}
 }
@@ -53,7 +52,7 @@ func extractOrGenerateRequestID(c *gin.Context) string {
 			return incomingID
 		}
 	}
-	
+
 	// Generate new secure random ID
 	return generateRequestID()
 }
@@ -66,13 +65,18 @@ func isValidRequestID(id string) bool {
 	return validRequestID.MatchString(id)
 }
 
-// generateRequestID generates a secure random request ID
+// generateRequestID generates a secure random request ID (16 hex chars).
 func generateRequestID() string {
-	// Generate 8 bytes = 16 hex characters
 	bytes := make([]byte, 8)
-	if _, err := rand.Read(bytes); err != nil {
-		// Fallback to timestamp-based ID if crypto/rand fails
-		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
-	}
+	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// sanitizeRequestID trims spaces and validates the request ID format, returning empty if invalid.
+func sanitizeRequestID(id string) string {
+	trimmed := strings.TrimSpace(id)
+	if isValidRequestID(trimmed) {
+		return trimmed
+	}
+	return ""
 }

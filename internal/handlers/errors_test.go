@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,10 @@ func (m *mockErrorService) GetDetail(_ context.Context, _, _, _ string) (*servic
 		return nil, nil, m.errorType
 	}
 	return m.detail, m.warnings, nil
+}
+
+func (m *mockErrorService) ChangeStatus(ctx context.Context, tenantID string, actorID string, subscriptionID string, targetStatus string) (*service.SubscriptionStatusChange, error) {
+	return nil, nil
 }
 
 // setupErrorTestRouter builds a test router with trace ID middleware
@@ -60,7 +65,7 @@ func TestErrorEnvelope_NotFound(t *testing.T) {
 	r := setupErrorTestRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/nonexistent-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -93,7 +98,7 @@ func TestErrorEnvelope_Deleted(t *testing.T) {
 	r := setupErrorTestRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/deleted-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusGone {
@@ -123,7 +128,7 @@ func TestErrorEnvelope_Forbidden(t *testing.T) {
 	r := setupErrorTestRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/forbidden-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
@@ -153,7 +158,7 @@ func TestErrorEnvelope_BillingParse(t *testing.T) {
 	r := setupErrorTestRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/billing-error-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusInternalServerError {
@@ -202,7 +207,7 @@ func TestErrorEnvelope_MissingAuth(t *testing.T) {
 	r := setupErrorTestRouter(svc, false) // Don't set callerID
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/some-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
@@ -237,16 +242,21 @@ func TestErrorEnvelope_ValidDetailsIncluded(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%20%20", nil)
 	r.ServeHTTP(w, req)
 
-	var envelope ErrorEnvelope
-	err := json.Unmarshal(w.Body.Bytes(), &envelope)
-	if err != nil {
+	var resp struct {
+		Error  string `json:"error"`
+		Fields []struct {
+			Field   string `json:"field"`
+			Message string `json:"message"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if envelope.Details == nil {
-		t.Error("Expected details in validation error")
-	} else if field, ok := envelope.Details["field"]; !ok || field != "id" {
-		t.Errorf("Expected field details, got %v", envelope.Details)
+	if len(resp.Fields) == 0 {
+		t.Error("Expected validation fields")
+	} else if resp.Fields[0].Field != "value" { // validation.ValidateVar uses "value" as default field name if not specified
+		t.Errorf("Expected field 'value', got %s", resp.Fields[0].Field)
 	}
 }
 
@@ -275,7 +285,7 @@ func TestErrorEnvelope_TraceIDTracking(t *testing.T) {
 	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(svc))
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/test-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	req.Header.Set("X-Trace-ID", "custom-trace-789")
 	r.ServeHTTP(w, req)
 
@@ -304,11 +314,67 @@ func TestErrorEnvelope_ContentType(t *testing.T) {
 	r := setupErrorTestRouter(svc, true)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/test-id", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/550e8400-e29b-41d4-a716-446655440000", nil)
 	r.ServeHTTP(w, req)
 
 	contentType := w.Header().Get("Content-Type")
 	if contentType != "application/json; charset=utf-8" {
 		t.Errorf("Expected proper content type, got %s", contentType)
+	}
+}
+
+// TestErrorEnvelope_PIIRedaction tests that PII is redacted from error messages and details
+func TestErrorEnvelope_PIIRedaction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("traceID", "test-trace-pii")
+	})
+	r.GET("/test", func(c *gin.Context) {
+		details := map[string]interface{}{
+			"customer_id": "cust_sensitive123",
+			"amount":      1234.56,
+			"safe_field":  "ok",
+		}
+		RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeBadRequest, 
+			"Failed processing customer_cust_sensitive123 with amount 1234.56", details)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	r.ServeHTTP(w, req)
+
+	var envelope ErrorEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	// Message should have PII redacted
+	assertFalse := func(cond bool, msg string) {
+		if cond {
+			t.Errorf("PII leaked in message: %s - %s", envelope.Message, msg)
+		}
+	}
+	assertFalse(strings.Contains(envelope.Message, "cust_sensitive123"), "customer ID should not be present")
+	assertFalse(strings.Contains(envelope.Message, "1234.56"), "amount should not be present")
+	assertTrue := func(cond bool, msg string) {
+		if !cond {
+			t.Error(msg)
+		}
+	}
+	assertTrue(strings.Contains(envelope.Message, "cust_***"), "should contain redacted customer")
+	// amount may be masked: but message amount might be masked as $*.**; check that original number not present as digits.
+	assertTrue(strings.Contains(envelope.Message, "$*.**") || !strings.Contains(envelope.Message, "1234"), "amount should be masked")
+
+	// Details map should have values redacted
+	if custDetail, ok := envelope.Details["customer_id"]; ok {
+		assertTrue(custDetail == "***REDACTED***" || custDetail == "cust***", "customer_id in details should be redacted")
+	}
+	if amtDetail, ok := envelope.Details["amount"]; ok {
+		assertTrue(amtDetail == "$*.**", "amount in details should be masked")
+	}
+	// safe_field unchanged
+	if safe, ok := envelope.Details["safe_field"]; ok {
+		assertTrue(safe == "ok", "safe field unchanged")
 	}
 }

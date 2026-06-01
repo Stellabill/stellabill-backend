@@ -2,14 +2,20 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
-	"go.uber.org/zap"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/subscriptions"
+	"stellarbill-backend/internal/timeutil"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 var tracer = otel.Tracer("service/subscriptions")
@@ -17,6 +23,7 @@ var tracer = otel.Tracer("service/subscriptions")
 // SubscriptionService defines the business logic interface for subscriptions.
 type SubscriptionService interface {
 	GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error)
+	ChangeStatus(ctx context.Context, tenantID string, actorID string, subscriptionID string, targetStatus string) (*SubscriptionStatusChange, error)
 }
 
 // subscriptionService is the concrete implementation of SubscriptionService.
@@ -33,11 +40,12 @@ func NewSubscriptionService(subRepo repository.SubscriptionRepository, planRepo 
 // GetDetail retrieves a full SubscriptionDetail for the given subscriptionID.
 // It enforces ownership (callerID must match the subscription's CustomerID),
 //
- // handles soft-deletes, joins plan metadata, and normalizes billing fields.
-func (s *subscriptionService) GetDetail(ctx context.Context, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
+// handles soft-deletes, joins plan metadata, and normalizes billing fields.
+func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
 	ctx, span := tracer.Start(ctx, "SubscriptionService.GetDetail",
-		otel.WithAttributes(
+		trace.WithAttributes(
 			attribute.String("subscription.id", subscriptionID),
+			attribute.String("tenant.id", tenantID),
 			attribute.String("caller.id", callerID),
 		))
 	defer span.End()
@@ -96,7 +104,10 @@ func (s *subscriptionService) GetDetail(ctx context.Context, callerID string, su
 	// 6. Build BillingSummary.
 	var nextBillingDate *string
 	if row.NextBilling != "" {
-		nb := row.NextBilling
+		nb, err := timeutil.NormalizeRFC3339StringToUTC(row.NextBilling)
+		if err != nil {
+			nb = row.NextBilling
+		}
 		nextBillingDate = &nb
 	}
 
@@ -121,3 +132,57 @@ func (s *subscriptionService) GetDetail(ctx context.Context, callerID string, su
 	return detail, warnings, nil
 }
 
+// ChangeStatus validates and persists a tenant-scoped subscription status change.
+func (s *subscriptionService) ChangeStatus(ctx context.Context, tenantID string, actorID string, subscriptionID string, targetStatus string) (*SubscriptionStatusChange, error) {
+	ctx, span := tracer.Start(ctx, "SubscriptionService.ChangeStatus",
+		trace.WithAttributes(
+			attribute.String("subscription.id", subscriptionID),
+			attribute.String("tenant.id", tenantID),
+			attribute.String("actor.id", actorID),
+			attribute.String("subscription.target_status", targetStatus),
+		))
+	defer span.End()
+
+	targetStatus = strings.TrimSpace(targetStatus)
+
+	row, err := s.subRepo.FindByIDAndTenant(ctx, subscriptionID, tenantID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	if row.DeletedAt != nil {
+		return nil, ErrDeleted
+	}
+
+	if !subscriptions.IsKnownStatus(targetStatus) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidStatus, targetStatus)
+	}
+
+	previousStatus := row.Status
+	if err := subscriptions.CanTransition(previousStatus, targetStatus); err != nil {
+		if !subscriptions.IsKnownStatus(previousStatus) {
+			return nil, fmt.Errorf("%w: %s", ErrUnknownCurrentState, previousStatus)
+		}
+		return nil, fmt.Errorf("%w: %s", ErrInvalidTransition, err.Error())
+	}
+
+	changed := previousStatus != targetStatus
+	if changed {
+		if err := s.subRepo.UpdateStatus(ctx, subscriptionID, tenantID, targetStatus); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, ErrNotFound
+			}
+			return nil, err
+		}
+	}
+
+	return &SubscriptionStatusChange{
+		ID:             subscriptionID,
+		PreviousStatus: previousStatus,
+		Status:         targetStatus,
+		Changed:        changed,
+	}, nil
+}

@@ -8,10 +8,10 @@ import (
 type JobStatus string
 
 const (
-	JobStatusPending   JobStatus = "pending"
-	JobStatusRunning   JobStatus = "running"
-	JobStatusCompleted JobStatus = "completed"
-	JobStatusFailed    JobStatus = "failed"
+	JobStatusPending    JobStatus = "pending"
+	JobStatusRunning    JobStatus = "running"
+	JobStatusCompleted  JobStatus = "completed"
+	JobStatusFailed     JobStatus = "failed"
 	JobStatusDeadLetter JobStatus = "dead_letter"
 )
 
@@ -30,6 +30,10 @@ type Job struct {
 	Payload        map[string]interface{}
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+
+	// ParentTraceID links a job to its originating HTTP request trace.
+	// Empty if the job was triggered manually or by a scheduler (no HTTP origin).
+	ParentTraceID string
 }
 
 // JobStore defines the interface for job persistence
@@ -41,4 +45,7 @@ type JobStore interface {
 	ListDeadLetter() ([]*Job, error)
 	AcquireLock(jobID string, workerID string, ttl time.Duration) (bool, error)
 	ReleaseLock(jobID string, workerID string) error
+
+	QueueDepth() int
+	OldestPending() *Job
 }

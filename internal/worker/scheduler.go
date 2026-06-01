@@ -3,6 +3,8 @@ package worker
 import (
 	"fmt"
 	"time"
+
+	"stellarbill-backend/internal/timeutil"
 )
 
 // Scheduler provides utilities for creating and scheduling billing jobs
@@ -22,15 +24,15 @@ func (s *Scheduler) ScheduleCharge(subscriptionID string, scheduledAt time.Time,
 		SubscriptionID: subscriptionID,
 		Type:           "charge",
 		Status:         JobStatusPending,
-		ScheduledAt:    scheduledAt,
+		ScheduledAt:    timeutil.NormalizeUTC(scheduledAt),
 		MaxAttempts:    maxAttempts,
 		Attempts:       0,
 	}
-	
+
 	if err := s.store.Create(job); err != nil {
 		return nil, fmt.Errorf("failed to schedule charge: %w", err)
 	}
-	
+
 	return job, nil
 }
 
@@ -41,15 +43,15 @@ func (s *Scheduler) ScheduleInvoice(subscriptionID string, scheduledAt time.Time
 		SubscriptionID: subscriptionID,
 		Type:           "invoice",
 		Status:         JobStatusPending,
-		ScheduledAt:    scheduledAt,
+		ScheduledAt:    timeutil.NormalizeUTC(scheduledAt),
 		MaxAttempts:    maxAttempts,
 		Attempts:       0,
 	}
-	
+
 	if err := s.store.Create(job); err != nil {
 		return nil, fmt.Errorf("failed to schedule invoice: %w", err)
 	}
-	
+
 	return job, nil
 }
 
@@ -60,19 +62,18 @@ func (s *Scheduler) ScheduleReminder(subscriptionID string, scheduledAt time.Tim
 		SubscriptionID: subscriptionID,
 		Type:           "reminder",
 		Status:         JobStatusPending,
-		ScheduledAt:    scheduledAt,
+		ScheduledAt:    timeutil.NormalizeUTC(scheduledAt),
 		MaxAttempts:    maxAttempts,
 		Attempts:       0,
 	}
-	
+
 	if err := s.store.Create(job); err != nil {
 		return nil, fmt.Errorf("failed to schedule reminder: %w", err)
 	}
-	
+
 	return job, nil
 }
 
 func generateJobID(jobType string) string {
-	return fmt.Sprintf("%s-%d", jobType, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%d", jobType, timeutil.NowUTC().UnixNano())
 }
-

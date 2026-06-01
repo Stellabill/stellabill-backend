@@ -14,4 +14,13 @@ var (
 
 	// ErrBillingParse is returned when the subscription's amount cannot be parsed.
 	ErrBillingParse = errors.New("billing parse error")
+
+	// ErrInvalidStatus is returned when the requested target status is unknown.
+	ErrInvalidStatus = errors.New("invalid subscription status")
+
+	// ErrInvalidTransition is returned when a requested state change is not allowed.
+	ErrInvalidTransition = errors.New("invalid subscription transition")
+
+	// ErrUnknownCurrentState is returned when persisted subscription state is outside the known graph.
+	ErrUnknownCurrentState = errors.New("unknown subscription state")
 )

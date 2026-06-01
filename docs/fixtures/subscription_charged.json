@@ -1,0 +1,14 @@
+{
+  "event_type": "subscription_charged",
+  "id": "chg_001",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "data": {
+    "subscription_id": "sub_001",
+    "charge_id": "chg_001",
+    "amount": 2999,
+    "currency": "USD",
+    "status": "succeeded",
+    "description": "Monthly subscription charge",
+    "invoice_id": "inv_001"
+  }
+}

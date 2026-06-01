@@ -8,16 +8,17 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
+	"stellarbill-backend/internal/db"
 )
 
 // PostgreSQL repository implementation
 type postgresRepository struct {
-	db *sql.DB
+	db db.DBTX
 }
 
 // NewPostgresRepository creates a new PostgreSQL repository
-func NewPostgresRepository(db *sql.DB) Repository {
-	return &postgresRepository{db: db}
+func NewPostgresRepository(executor db.DBTX) Repository {
+	return &postgresRepository{db: executor}
 }
 
 // Store stores a new outbox event
@@ -26,8 +27,8 @@ func (r *postgresRepository) Store(event *Event) error {
 		INSERT INTO outbox_events (
 			id, event_type, event_data, aggregate_id, aggregate_type,
 			occurred_at, status, retry_count, max_retries, next_retry_at,
-			error_message, created_at, updated_at, version
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			error_message, created_at, updated_at, version, deduplication_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`
 	
 	_, err := r.db.Exec(query,
@@ -45,6 +46,7 @@ func (r *postgresRepository) Store(event *Event) error {
 		event.CreatedAt,
 		event.UpdatedAt,
 		event.Version,
+		event.DeduplicationID,
 	)
 	
 	if err != nil {
@@ -59,7 +61,7 @@ func (r *postgresRepository) GetPendingEvents(limit int) ([]*Event, error) {
 	query := `
 		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version
+			   error_message, created_at, updated_at, version, deduplication_id
 		FROM outbox_events
 		WHERE status = $1 OR (status = $2 AND next_retry_at <= $3)
 		ORDER BY occurred_at ASC
@@ -93,7 +95,7 @@ func (r *postgresRepository) GetByID(id uuid.UUID) (*Event, error) {
 	query := `
 		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version
+			   error_message, created_at, updated_at, version, deduplication_id
 		FROM outbox_events
 		WHERE id = $1
 	`
@@ -178,10 +180,68 @@ func (r *postgresRepository) DeleteCompletedEvents(olderThan time.Time) (int64, 
 	return result.RowsAffected()
 }
 
+// ListDeadLetteredEvents retrieves dead-lettered (failed) events
+func (r *postgresRepository) ListDeadLetteredEvents(limit int) ([]*Event, error) {
+	query := `
+		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			   occurred_at, status, retry_count, max_retries, next_retry_at,
+			   error_message, created_at, updated_at, version, deduplication_id
+		FROM dead_letter_events
+		LIMIT $1
+	`
+	
+	rows, err := r.db.Query(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list dead-lettered events: %w", err)
+	}
+	defer rows.Close()
+	
+	var events []*Event
+	for rows.Next() {
+		event, err := r.scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating dead-lettered events: %w", err)
+	}
+	
+	return events, nil
+}
+
+// RequeueEvent resets a failed event to pending for reprocessing
+func (r *postgresRepository) RequeueEvent(id uuid.UUID) error {
+	query := `
+		UPDATE outbox_events
+		SET status = $1, retry_count = 0, next_retry_at = NULL, error_message = NULL
+		WHERE id = $2 AND status = $3
+	`
+	
+	result, err := r.db.Exec(query, StatusPending, id, StatusFailed)
+	if err != nil {
+		return fmt.Errorf("failed to requeue event: %w", err)
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	
+	if rowsAffected == 0 {
+		return fmt.Errorf("event not found or not in failed status")
+	}
+	
+	return nil
+}
+
 // scanEvent scans a database row into an Event struct
 func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) error }) (*Event, error) {
 	var event Event
-	var aggregateID, aggregateType, nextRetryAt, errorMessage sql.NullString
+	var aggregateID, aggregateType, errorMessage, deduplicationID sql.NullString
+	var nextRetryAt sql.NullTime
 	
 	err := scanner.Scan(
 		&event.ID,
@@ -198,10 +258,15 @@ func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) e
 		&event.CreatedAt,
 		&event.UpdatedAt,
 		&event.Version,
+		&deduplicationID,
 	)
 	
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan event: %w", err)
+	}
+	
+	if deduplicationID.Valid {
+		event.DeduplicationID = &deduplicationID.String
 	}
 	
 	if aggregateID.Valid {
@@ -225,6 +290,11 @@ func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) e
 
 // NewEvent creates a new outbox event
 func NewEvent(eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
+	return NewEventWithDeduplication(eventType, data, aggregateID, aggregateType, nil)
+}
+
+// NewEventWithDeduplication creates a new outbox event with an optional deduplication ID
+func NewEventWithDeduplication(eventType string, data interface{}, aggregateID, aggregateType *string, deduplicationID *string) (*Event, error) {
 	eventData := EventData{
 		Type:      eventType,
 		Data:      data,
@@ -250,5 +320,6 @@ func NewEvent(eventType string, data interface{}, aggregateID, aggregateType *st
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
 		Version:       1,
+		DeduplicationID: deduplicationID,
 	}, nil
 }

@@ -1,26 +1,25 @@
 package reconciliation
 
 import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "io"
-    "net/http"
-
-	"stellarbill-backend/internal/httpclient"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
 )
 
 // HTTPAdapter fetches snapshots from a configured HTTP endpoint.
 type HTTPAdapter struct {
-    Client *httpclient.Client
-    URL    string
-    // Optional Authorization header value (e.g., Bearer <token>)
-    AuthHeader string
+	Client *http.Client
+	URL    string
+	// Optional Authorization header value (e.g., Bearer <token>)
+	AuthHeader string
 }
 
 // NewHTTPAdapter creates an adapter that will GET snapshots from url.
 func NewHTTPAdapter(url string, authHeader string) *HTTPAdapter {
-    return &HTTPAdapter{Client: httpclient.NewClient(), URL: url, AuthHeader: authHeader}
+	return &HTTPAdapter{Client: &http.Client{Timeout: 10 * time.Second}, URL: url, AuthHeader: authHeader}
 }
 
 // FetchSnapshots implements Adapter.

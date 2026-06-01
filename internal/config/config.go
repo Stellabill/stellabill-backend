@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"stellarbill-backend/internal/secrets"
@@ -21,7 +22,22 @@ const (
 	ErrInvalidPort      ConfigErrorType = "INVALID_PORT"
 	ErrInvalidURL       ConfigErrorType = "INVALID_URL"
 	ErrWeakSecret       ConfigErrorType = "WEAK_SECRET"
+	ErrInvalidValue     ConfigErrorType = "INVALID_VALUE"
 	ErrValidationFailed ConfigErrorType = "VALIDATION_FAILED"
+)
+
+const (
+	MinHeaderBytes        = 1024       // 1KB
+	MaxAllowedHeaderBytes = 1048576    // 1MB
+	MinTimeoutSeconds     = 1
+	MaxTimeoutSeconds     = 3600       // 1 hour
+	MinRateLimitRPS       = 1
+	MaxRateLimitRPS       = 10000
+	MinRateLimitBurst     = 1
+	MaxRateLimitBurst     = 100000
+	DefaultMaxRequestSize      = 1048576    // 1MB
+	DefaultMaxGzipUncompressed = 10485760   // 10MB
+	DefaultMaxGzipRatio        = 10.0
 )
 
 // ConfigError represents a typed configuration error
@@ -45,20 +61,30 @@ type Config struct {
 	Port      int
 	DBConn    string
 	JWTSecret string
+	JWKSURL   string
 	// Add additional secure defaults for optional configs
-	MaxHeaderBytes int
-	ReadTimeout    int
+	MaxHeaderBytes       int
+	MaxRequestSize       int64
+	MaxGzipUncompressed  int64
+	MaxGzipRatio         float64
+	ReadTimeout          int
 	WriteTimeout   int
 	IdleTimeout    int
+	AllowedOrigins string
+	AdminToken     string
 	// Rate limiting configuration
-	RateLimitEnabled    bool
-	RateLimitMode       string
-	RateLimitRPS        int
-	RateLimitBurst      int
-	RateLimitWhitelist  []string
+	RateLimitEnabled   bool
+	RateLimitMode      string
+	RateLimitRPS       int
+	RateLimitBurst     int
+	RateLimitWhitelist    []string
+	RateLimitTenantRPS    int
+	RateLimitTenantBurst  int
 	// Tracing configuration
-	TracingExporter string
+	TracingExporter    string
 	TracingServiceName string
+	// CORS configuration
+	AllowedOrigins string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -94,12 +120,38 @@ const (
 	DefaultReadTimeout  = 30      // seconds
 	DefaultWriteTimeout = 30      // seconds
 	DefaultIdleTimeout  = 120     // seconds
+
+	// DB pool defaults — chosen to be safe for a typical single-instance
+	// Postgres with max_connections=100.  Tune upward for larger deployments.
+	DefaultDBPoolMaxConns          = 25   // leave headroom for other clients
+	DefaultDBPoolMinConns          = 2    // keep 2 warm to avoid cold-start latency
+	DefaultDBPoolMaxConnLifetime   = 3600 // 1 hour — recycle before firewalls drop
+	DefaultDBPoolMaxConnIdleTime   = 600  // 10 min — evict idle before firewall timeout
+	DefaultDBPoolConnectTimeout    = 5    // 5 s per dial attempt
+	DefaultDBPoolHealthCheckPeriod = 30   // 30 s proactive idle-conn check
+	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
+
+	// Validation bounds
+	MinDBPoolMaxConns = 1
+	MaxDBPoolMaxConns = 500
+	MinDBPoolTimeout  = 1   // seconds
+	MaxDBPoolTimeout  = 300 // seconds
+
+	MinHeaderBytes        = 1024        // 1KB
+	MaxAllowedHeaderBytes = 10 << 20    // 10MB
+	MinTimeoutSeconds     = 1
+	MaxTimeoutSeconds     = 600
+	MinRateLimitRPS       = 1
+	MaxRateLimitRPS       = 1000
+	MinRateLimitBurst     = 1
+	MaxRateLimitBurst     = 2000
 )
 
 // Required environment variables
 var requiredEnvVars = []string{
 	"DATABASE_URL",
 	"JWT_SECRET",
+	"ADMIN_TOKEN",
 }
 
 // Optional environment variables with defaults
@@ -110,8 +162,19 @@ var optionalEnvVars = map[string]string{
 	"READ_TIMEOUT":     "30",
 	"WRITE_TIMEOUT":    "30",
 	"IDLE_TIMEOUT":     "120",
-	"TRACING_EXPORTER": "stdout",
+	"TRACING_EXPORTER":     "stdout",
 	"TRACING_SERVICE_NAME": "stellabill-backend",
+	// DB pool
+	"DB_POOL_MAX_CONNS":           "25",
+	"DB_POOL_MIN_CONNS":           "2",
+	"DB_POOL_MAX_CONN_LIFETIME":   "3600",
+	"DB_POOL_MAX_CONN_IDLE_TIME":  "600",
+	"DB_POOL_CONNECT_TIMEOUT":     "5",
+	"DB_POOL_HEALTH_CHECK_PERIOD": "30",
+	"DB_POOL_METRICS_INTERVAL":    "15",
+	"MAX_REQUEST_SIZE":            "1048576",
+	"MAX_GZIP_UNCOMPRESSED":       "10485760",
+	"MAX_GZIP_RATIO":              "10.0",
 }
 
 // Option configures the Load function.
@@ -133,6 +196,7 @@ func WithSecretsProvider(p secrets.Provider) Option {
 var secretKeys = []string{
 	"DATABASE_URL",
 	"JWT_SECRET",
+	"ADMIN_TOKEN",
 }
 
 // Load loads configuration from environment variables with validation.
@@ -150,13 +214,18 @@ func Load(opts ...Option) (Config, error) {
 		Env:            getEnv("ENV", "development"),
 		Port:           DefaultPort,
 		DBConn:         "",
-		JWTSecret:      "",
-		MaxHeaderBytes: MaxHeaderBytes,
-		ReadTimeout:    DefaultReadTimeout,
+		JWTSecret:           "",
+		JWKSURL:             getEnv("JWKS_URL", ""),
+		MaxHeaderBytes:      MaxHeaderBytes,
+		MaxRequestSize:      getEnvInt64("MAX_REQUEST_SIZE", DefaultMaxRequestSize),
+		MaxGzipUncompressed: getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
+		MaxGzipRatio:        getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
+		ReadTimeout:         DefaultReadTimeout,
 		WriteTimeout:   DefaultWriteTimeout,
 		IdleTimeout:    DefaultIdleTimeout,
-		TracingExporter: getEnv("TRACING_EXPORTER", "stdout"),
+		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
 	}
 
 	// Resolve secrets through the provider
@@ -274,37 +343,70 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		}
 	}
 
+	if token, ok := resolvedSecrets["ADMIN_TOKEN"]; ok {
+		if !isValidSecret(token) {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrWeakSecret,
+				Key:     "ADMIN_TOKEN",
+				Message: fmt.Sprintf("must be at least %d characters and contain upper/lower/digit/special characters", MinSecretLength),
+				Value:   maskSecret(token),
+			})
+		} else {
+			c.AdminToken = token
+		}
+	}
+
 	// Validate optional MAX_HEADER_BYTES
 	if val := os.Getenv("MAX_HEADER_BYTES"); val != "" {
-		if max, err := strconv.Atoi(val); err == nil && max > 0 {
+		if max, err := strconv.Atoi(val); err == nil && max >= MinHeaderBytes && max <= MaxAllowedHeaderBytes {
 			c.MaxHeaderBytes = max
 		} else {
-			result.Warnings = append(result.Warnings, "MAX_HEADER_BYTES invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "MAX_HEADER_BYTES",
+				Message: fmt.Sprintf("must be between %d and %d", MinHeaderBytes, MaxAllowedHeaderBytes),
+				Value:   val,
+			})
 		}
 	}
 
 	// Validate optional timeouts
 	if val := os.Getenv("READ_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil && timeout > 0 {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
 			c.ReadTimeout = timeout
 		} else {
-			result.Warnings = append(result.Warnings, "READ_TIMEOUT invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "READ_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
 		}
 	}
 
 	if val := os.Getenv("WRITE_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil && timeout > 0 {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
 			c.WriteTimeout = timeout
 		} else {
-			result.Warnings = append(result.Warnings, "WRITE_TIMEOUT invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "WRITE_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
 		}
 	}
 
 	if val := os.Getenv("IDLE_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil && timeout > 0 {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
 			c.IdleTimeout = timeout
 		} else {
-			result.Warnings = append(result.Warnings, "IDLE_TIMEOUT invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "IDLE_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
 		}
 	}
 
@@ -313,7 +415,12 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		if enabled, err := strconv.ParseBool(val); err == nil {
 			c.RateLimitEnabled = enabled
 		} else {
-			result.Warnings = append(result.Warnings, "RATE_LIMIT_ENABLED invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_ENABLED",
+				Message: "must be a valid boolean",
+				Value:   val,
+			})
 		}
 	}
 
@@ -322,39 +429,124 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		if validModes[mode] {
 			c.RateLimitMode = mode
 		} else {
-			result.Warnings = append(result.Warnings, "RATE_LIMIT_MODE invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_MODE",
+				Message: "must be one of: ip, user, hybrid",
+				Value:   mode,
+			})
 		}
 	}
 
+	// Security-focused defaults: conservative limits by default
 	if val := os.Getenv("RATE_LIMIT_RPS"); val != "" {
-		if rps, err := strconv.Atoi(val); err == nil && rps > 0 && rps <= 1000 {
+		if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitRPS && rps <= MaxRateLimitRPS {
 			c.RateLimitRPS = rps
 		} else {
-			result.Warnings = append(result.Warnings, "RATE_LIMIT_RPS invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_RPS",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitRPS, MaxRateLimitRPS),
+				Value:   val,
+			})
 		}
+	} else {
+		c.RateLimitRPS = 10 // Conservative default for security
 	}
 
 	if val := os.Getenv("RATE_LIMIT_BURST"); val != "" {
-		if burst, err := strconv.Atoi(val); err == nil && burst > 0 && burst <= 5000 {
+		if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitBurst && burst <= MaxRateLimitBurst {
 			c.RateLimitBurst = burst
 		} else {
-			result.Warnings = append(result.Warnings, "RATE_LIMIT_BURST invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_BURST",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitBurst, MaxRateLimitBurst),
+				Value:   val,
+			})
 		}
+	} else {
+		c.RateLimitBurst = 20 // Conservative default (2x RPS)
+	}
+
+	if c.RateLimitBurst < c.RateLimitRPS {
+		result.Errors = append(result.Errors, ConfigError{
+			Type:    ErrInvalidValue,
+			Key:     "RATE_LIMIT_BURST",
+			Message: "must be greater than or equal to RATE_LIMIT_RPS",
+			Value:   strconv.Itoa(c.RateLimitBurst),
+		})
 	}
 
 	if whitelist := os.Getenv("RATE_LIMIT_WHITELIST"); whitelist != "" {
 		paths := strings.Split(whitelist, ",")
 		for i, path := range paths {
-			paths[i] = strings.TrimSpace(path)
+			clean := strings.TrimSpace(path)
+			if clean == "" || !strings.HasPrefix(clean, "/") {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrInvalidValue,
+					Key:     "RATE_LIMIT_WHITELIST",
+					Message: "each whitelist path must be non-empty and start with '/'",
+					Value:   clean,
+				})
+			}
+			paths[i] = clean
 		}
 		c.RateLimitWhitelist = paths
+	} else {
+		c.RateLimitWhitelist = []string{"/api/health"} // Only health check whitelisted by default
 	}
 
 	// Validate TRACING_EXPORTER
 	if exporter := os.Getenv("TRACING_EXPORTER"); exporter != "" {
+		// Validate per-tenant rate limiting configuration
+		if val := os.Getenv("RATE_LIMIT_TENANT_RPS"); val != "" {
+			if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitRPS && rps <= MaxRateLimitRPS {
+				c.RateLimitTenantRPS = rps
+			} else {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrInvalidValue,
+					Key:     "RATE_LIMIT_TENANT_RPS",
+					Message: fmt.Sprintf("must be between %d and %d", MinRateLimitRPS, MaxRateLimitRPS),
+					Value:   val,
+				})
+			}
+		} else {
+			c.RateLimitTenantRPS = 5 // Conservative default for per-tenant limits
+		}
+
+		if val := os.Getenv("RATE_LIMIT_TENANT_BURST"); val != "" {
+			if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitBurst && burst <= MaxRateLimitBurst {
+				c.RateLimitTenantBurst = burst
+			} else {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrInvalidValue,
+					Key:     "RATE_LIMIT_TENANT_BURST",
+					Message: fmt.Sprintf("must be between %d and %d", MinRateLimitBurst, MaxRateLimitBurst),
+					Value:   val,
+				})
+			}
+		} else {
+			c.RateLimitTenantBurst = 10 // Conservative default (2x tenant RPS)
+		}
+
+		if c.RateLimitTenantBurst < c.RateLimitTenantRPS {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: "must be greater than or equal to RATE_LIMIT_TENANT_RPS",
+				Value:   strconv.Itoa(c.RateLimitTenantBurst),
+			})
+		}
+
 		validExporters := map[string]bool{"stdout": true, "otlp": true, "none": true}
 		if !validExporters[exporter] {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("TRACING_EXPORTER invalid: %s, using default", exporter))
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "TRACING_EXPORTER",
+				Message: "must be one of: stdout, otlp, none",
+				Value:   exporter,
+			})
 		} else {
 			c.TracingExporter = exporter
 		}
@@ -363,6 +555,20 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	if svcName := os.Getenv("TRACING_SERVICE_NAME"); svcName != "" {
 		c.TracingServiceName = svcName
 	}
+
+	// Validate ALLOWED_ORIGINS
+	allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+	if err := validateAllowedOrigins(allowedOrigins, c.Env); err != nil {
+		result.Errors = append(result.Errors, ConfigError{
+			Type:    ErrInvalidValue,
+			Key:     "ALLOWED_ORIGINS",
+			Message: err.Error(),
+			Value:   allowedOrigins,
+		})
+	}
+
+	// Validate DB pool configuration
+	validateDBPool(c, result)
 
 	// Set optional env values
 	c.Env = getEnv("ENV", "development")
@@ -433,7 +639,7 @@ func isValidSecret(secret string) bool {
 
 	_ = hasSpecial
 
-	return hasUpper && hasLower && hasDigit
+	return hasUpper && hasLower && hasDigit && hasSpecial
 }
 
 // maskPassword masks the password in a database URL for security
@@ -442,16 +648,13 @@ func maskPassword(dbURL string) string {
 	if err != nil {
 		return "***"
 	}
-
 	if parsed.User == nil {
 		return dbURL
 	}
-
 	password, ok := parsed.User.Password()
 	if !ok || password == "" {
 		return dbURL
 	}
-
 	return strings.Replace(dbURL, password, "***", 1)
 }
 
@@ -471,44 +674,95 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-// getEnvBool retrieves an environment variable as boolean with a fallback value
-func getEnvBool(key string, fallback bool) bool {
+// getEnvInt64 retrieves an environment variable as int64 with a fallback value
+func getEnvInt64(key string, fallback int64) int64 {
 	if v := os.Getenv(key); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			return b
-		}
-	}
-	return fallback
-}
-
-// getEnvInt retrieves an environment variable as integer with a fallback value
-func getEnvInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
+		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return i
 		}
 	}
 	return fallback
 }
 
-// getEnvSlice retrieves an environment variable as string slice with a fallback value
-func getEnvSlice(key string, fallback []string) []string {
+// getEnvFloat64 retrieves an environment variable as float64 with a fallback value
+func getEnvFloat64(key string, fallback float64) float64 {
 	if v := os.Getenv(key); v != "" {
-		parts := strings.Split(v, ",")
-		for i, part := range parts {
-			parts[i] = strings.TrimSpace(part)
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
-		return parts
 	}
 	return fallback
 }
 
-// GetRequiredEnvVars returns the list of required environment variables
-func GetRequiredEnvVars() []string {
-	return requiredEnvVars
+func getEnvInt64(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return i
+		}
+	}
+	return fallback
 }
 
-// GetOptionalEnvVars returns the map of optional environment variables with their defaults
-func GetOptionalEnvVars() map[string]string {
-	return optionalEnvVars
+func getEnvFloat64(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return fallback
 }
+
+// validateDBPool reads DB_POOL_* env vars, validates them, and writes safe
+// values back into cfg.  Invalid values produce warnings (not hard errors) so
+// the server can still start with defaults rather than refusing to boot.
+func validateDBPool(c *Config, result *ValidationResult) {
+	type poolIntVar struct {
+		envKey   string
+		min, max int
+		target   *int
+		defVal   int
+	}
+
+	vars := []poolIntVar{
+		{"DB_POOL_MAX_CONNS", MinDBPoolMaxConns, MaxDBPoolMaxConns, &c.DBPoolMaxConns, DefaultDBPoolMaxConns},
+		{"DB_POOL_MIN_CONNS", 0, MaxDBPoolMaxConns, &c.DBPoolMinConns, DefaultDBPoolMinConns},
+		{"DB_POOL_MAX_CONN_LIFETIME", MinDBPoolTimeout, 86400, &c.DBPoolMaxConnLifetime, DefaultDBPoolMaxConnLifetime},
+		{"DB_POOL_MAX_CONN_IDLE_TIME", MinDBPoolTimeout, 86400, &c.DBPoolMaxConnIdleTime, DefaultDBPoolMaxConnIdleTime},
+		{"DB_POOL_CONNECT_TIMEOUT", MinDBPoolTimeout, MaxDBPoolTimeout, &c.DBPoolConnectTimeout, DefaultDBPoolConnectTimeout},
+		{"DB_POOL_HEALTH_CHECK_PERIOD", MinDBPoolTimeout, MaxDBPoolTimeout, &c.DBPoolHealthCheckPeriod, DefaultDBPoolHealthCheckPeriod},
+		{"DB_POOL_METRICS_INTERVAL", MinDBPoolTimeout, MaxDBPoolTimeout, &c.DBPoolMetricsInterval, DefaultDBPoolMetricsInterval},
+	}
+
+	for _, v := range vars {
+		raw := os.Getenv(v.envKey)
+		if raw == "" {
+			continue // keep the default already set in Load()
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < v.min || n > v.max {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("%s invalid (value=%q, allowed %d–%d), using default %d",
+					v.envKey, raw, v.min, v.max, v.defVal))
+			continue
+		}
+		*v.target = n
+	}
+
+	// Cross-field: MinConns must not exceed MaxConns.
+	if c.DBPoolMinConns > c.DBPoolMaxConns {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("DB_POOL_MIN_CONNS (%d) > DB_POOL_MAX_CONNS (%d); clamping min to max",
+				c.DBPoolMinConns, c.DBPoolMaxConns))
+		c.DBPoolMinConns = c.DBPoolMaxConns
+	}
+
+	// Cross-field: IdleTime must be less than Lifetime to avoid evicting
+	// connections before they have a chance to be recycled gracefully.
+	if c.DBPoolMaxConnIdleTime >= c.DBPoolMaxConnLifetime {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("DB_POOL_MAX_CONN_IDLE_TIME (%ds) >= DB_POOL_MAX_CONN_LIFETIME (%ds); "+
+				"idle connections will be evicted before lifetime recycle fires — consider reducing idle time",
+				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
+	}
+}
+

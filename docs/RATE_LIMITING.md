@@ -204,6 +204,7 @@ The implementation includes comprehensive tests covering:
 - **Edge Cases**: Malformed headers, clock drift, shared proxies
 - **Concurrent Access**: Thread safety and race conditions
 - **Memory Management**: Bucket cleanup and resource management
+- **Integration Tests for RateLimiter**: Rate-limiter whitelist and burst integration tests
 
 ### Running Tests
 

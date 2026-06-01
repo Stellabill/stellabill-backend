@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+
 func TestLoggerRedactsSensitiveMetadata(t *testing.T) {
 	sink := &MemorySink{}
 	logger := NewLogger("secret", sink)

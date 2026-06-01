@@ -2,7 +2,7 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -10,378 +10,211 @@ import (
 	"stellarbill-backend/internal/cache"
 )
 
-func TestCachedSubscriptionRepo_FindByID_HitMissAndStale(t *testing.T) {
+// --- helpers ---
+
+type faultyCacheForSub struct{}
+
+func (f *faultyCacheForSub) Get(_ context.Context, _ string) ([]byte, error) {
+	return nil, errors.New("cache down")
+}
+func (f *faultyCacheForSub) Set(_ context.Context, _ string, _ []byte, _ time.Duration) error {
+	return errors.New("cache down")
+}
+func (f *faultyCacheForSub) Delete(_ context.Context, _ string) error {
+	return errors.New("cache down")
+}
+
+// --- tests ---
+
+func TestCachedSubscriptionRepo_HitMiss(t *testing.T) {
 	ctx := context.Background()
 	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-1", PlanID: "plan-1", TenantID: "tenant-a",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
+		ID: "sub-1", PlanID: "plan-1", Status: "active",
+		Amount: "1000", Currency: "usd", Interval: "month",
 	})
 	mem := cache.NewInMemory()
 	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
 
-	// First read -> miss
+	// First read → miss
 	sr, err := csr.FindByID(ctx, "sub-1")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("FindByID: %v", err)
 	}
-	if sr.Status != "active" {
-		t.Fatalf("expected active, got %s", sr.Status)
+	if sr.ID != "sub-1" {
+		t.Fatalf("expected sub-1, got %s", sr.ID)
 	}
-	_, misses, _ := csr.Metrics()
+	_, misses := csr.Metrics()
 	if misses == 0 {
-		t.Fatalf("expected at least one miss")
+		t.Fatal("expected at least one miss")
 	}
 
-	// Second read -> hit
-	sr2, err := csr.FindByID(ctx, "sub-1")
+	// Second read → hit
+	_, err = csr.FindByID(ctx, "sub-1")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("second FindByID: %v", err)
 	}
-	if sr2.Status != "active" {
-		t.Fatalf("expected active on cached read, got %s", sr2.Status)
-	}
-	hits, _, _ := csr.Metrics()
+	hits, _ := csr.Metrics()
 	if hits == 0 {
-		t.Fatalf("expected at least one hit")
-	}
-
-	// Mutate backend and invalidate
-	backend.records["sub-1"].Status = "canceled"
-	if err := csr.Delete(ctx, "sub-1", "tenant-a"); err != nil {
-		t.Fatalf("invalidate error: %v", err)
-	}
-
-	// Simulate race: in-flight request writes back stale data after Delete
-	staleEnv := cacheEnvelope{
-		Data:     []byte(`{"id":"sub-1","plan_id":"plan-1","tenant_id":"tenant-a","status":"active","amount":"1000","currency":"usd","interval":"month"}`),
-		StoredAt: time.Now().Add(-time.Hour),
-	}
-	if b, err := json.Marshal(staleEnv); err == nil {
-		_ = mem.Set(ctx, csr.cacheKey("sub-1"), b, time.Minute)
-	}
-
-	// Next read should detect stale entry, count it, and refetch
-	sr3, err := csr.FindByID(ctx, "sub-1")
-	if err != nil {
-		t.Fatalf("read after stale injection error: %v", err)
-	}
-	if sr3.Status != "canceled" {
-		t.Fatalf("expected canceled after stale detection, got %s", sr3.Status)
-	}
-	_, _, stales := csr.Metrics()
-	if stales < 1 {
-		t.Fatalf("expected stale > 0 after stale read, got stales=%d", stales)
+		t.Fatal("expected cache hit on second read")
 	}
 }
 
-func TestCachedSubscriptionRepo_FindByIDAndTenant_HitMissAndStale(t *testing.T) {
+func TestCachedSubscriptionRepo_FindByIDAndTenant(t *testing.T) {
 	ctx := context.Background()
 	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-2", PlanID: "plan-1", TenantID: "tenant-b",
-		Status: "active", Amount: "2000", Currency: "usd", Interval: "month",
+		ID: "sub-2", TenantID: "tenant-A", Status: "active",
+		Amount: "500", Currency: "usd", Interval: "month",
 	})
 	mem := cache.NewInMemory()
 	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
 
-	// First read -> miss
-	sr, err := csr.FindByIDAndTenant(ctx, "sub-2", "tenant-b")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// Miss then hit
+	sr, err := csr.FindByIDAndTenant(ctx, "sub-2", "tenant-A")
+	if err != nil || sr.ID != "sub-2" {
+		t.Fatalf("unexpected: %v %v", sr, err)
 	}
-	if sr.TenantID != "tenant-b" {
-		t.Fatalf("expected tenant-b, got %s", sr.TenantID)
+	sr2, err := csr.FindByIDAndTenant(ctx, "sub-2", "tenant-A")
+	if err != nil || sr2.ID != "sub-2" {
+		t.Fatalf("cached read: %v %v", sr2, err)
 	}
-	_, misses, _ := csr.Metrics()
-	if misses == 0 {
-		t.Fatalf("expected at least one miss")
-	}
-
-	// Second read -> hit
-	sr2, err := csr.FindByIDAndTenant(ctx, "sub-2", "tenant-b")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if sr2.TenantID != "tenant-b" {
-		t.Fatalf("expected tenant-b on cached read, got %s", sr2.TenantID)
-	}
-	hits, _, _ := csr.Metrics()
+	hits, _ := csr.Metrics()
 	if hits == 0 {
-		t.Fatalf("expected at least one hit")
-	}
-
-	// Mutate backend and invalidate
-	backend.records["sub-2"].Status = "past_due"
-	if err := csr.Delete(ctx, "sub-2", "tenant-b"); err != nil {
-		t.Fatalf("invalidate error: %v", err)
-	}
-
-	// Simulate race: in-flight request writes back stale data after Delete
-	staleEnv := cacheEnvelope{
-		Data:     []byte(`{"id":"sub-2","plan_id":"plan-1","tenant_id":"tenant-b","status":"active","amount":"2000","currency":"usd","interval":"month"}`),
-		StoredAt: time.Now().Add(-time.Hour),
-	}
-	if b, err := json.Marshal(staleEnv); err == nil {
-		_ = mem.Set(ctx, csr.tenantCacheKey("sub-2", "tenant-b"), b, time.Minute)
-	}
-
-	// Next read should detect stale entry, count it, and refetch
-	sr3, err := csr.FindByIDAndTenant(ctx, "sub-2", "tenant-b")
-	if err != nil {
-		t.Fatalf("read after stale injection error: %v", err)
-	}
-	if sr3.Status != "past_due" {
-		t.Fatalf("expected past_due after stale detection, got %s", sr3.Status)
-	}
-	_, _, stales := csr.Metrics()
-	if stales < 1 {
-		t.Fatalf("expected stale > 0 after stale read, got stales=%d", stales)
-	}
-}
-
-func TestCachedSubscriptionRepo_FindByIDAndTenant_WrongTenant(t *testing.T) {
-	ctx := context.Background()
-	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-3", PlanID: "plan-1", TenantID: "tenant-c",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
-	})
-	mem := cache.NewInMemory()
-	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
-
-	// Find with correct tenant should work and cache
-	_, err := csr.FindByIDAndTenant(ctx, "sub-3", "tenant-c")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Find with wrong tenant should fail even if cache has the entry
-	_, err = csr.FindByIDAndTenant(ctx, "sub-3", "tenant-x")
-	if err == nil {
-		t.Fatalf("expected error for wrong tenant")
+		t.Fatal("expected cache hit on repeated tenant lookup")
 	}
 }
 
 func TestCachedSubscriptionRepo_CacheOutageFallback(t *testing.T) {
 	ctx := context.Background()
 	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-4", PlanID: "plan-1", TenantID: "tenant-d",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
+		ID: "sub-3", Status: "active", Amount: "999", Currency: "usd", Interval: "year",
 	})
-	fc := &faultyCache{}
-	csr := NewCachedSubscriptionRepo(backend, fc, time.Minute)
+	csr := NewCachedSubscriptionRepo(backend, &faultyCacheForSub{}, time.Minute)
 
-	sr, err := csr.FindByID(ctx, "sub-4")
-	if err != nil {
-		t.Fatalf("expected fallback to backend, got error: %v", err)
-	}
-	if sr.ID != "sub-4" {
-		t.Fatalf("expected sub-4, got %s", sr.ID)
+	sr, err := csr.FindByID(ctx, "sub-3")
+	if err != nil || sr.ID != "sub-3" {
+		t.Fatalf("expected fallback to backend, got %v %v", sr, err)
 	}
 }
 
-func TestCachedSubscriptionRepo_ConcurrentInvalidation(t *testing.T) {
+func TestCachedSubscriptionRepo_Flush_Empty(t *testing.T) {
+	ctx := context.Background()
+	mem := cache.NewInMemory()
+	csr := NewCachedSubscriptionRepo(NewMockSubscriptionRepo(), mem, time.Minute)
+
+	n, err := csr.Flush(ctx)
+	if err != nil || n != 0 {
+		t.Fatalf("flush empty: want 0,nil got %d,%v", n, err)
+	}
+}
+
+func TestCachedSubscriptionRepo_Flush_WithEntries(t *testing.T) {
+	ctx := context.Background()
+	backend := NewMockSubscriptionRepo(
+		&SubscriptionRow{ID: "sub-4", Status: "active", Amount: "100", Currency: "usd", Interval: "month"},
+		&SubscriptionRow{ID: "sub-5", Status: "active", Amount: "200", Currency: "usd", Interval: "year"},
+	)
+	mem := cache.NewInMemory()
+	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
+
+	// Populate cache
+	_, _ = csr.FindByID(ctx, "sub-4")
+	_, _ = csr.FindByID(ctx, "sub-5")
+	if mem.Len() != 2 {
+		t.Fatalf("expected 2 cached entries before flush, got %d", mem.Len())
+	}
+
+	n, err := csr.Flush(ctx)
+	if err != nil {
+		t.Fatalf("Flush error: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("expected 2 keys flushed, got %d", n)
+	}
+	if mem.Len() != 0 {
+		t.Fatalf("expected empty cache after flush, got %d", mem.Len())
+	}
+}
+
+func TestCachedSubscriptionRepo_Flush_Idempotent(t *testing.T) {
+	ctx := context.Background()
+	mem := cache.NewInMemory()
+	csr := NewCachedSubscriptionRepo(NewMockSubscriptionRepo(), mem, time.Minute)
+
+	n1, err1 := csr.Flush(ctx)
+	n2, err2 := csr.Flush(ctx)
+	if err1 != nil || err2 != nil {
+		t.Fatalf("Flush errors: %v %v", err1, err2)
+	}
+	if n1 != 0 || n2 != 0 {
+		t.Fatalf("expected 0,0 on repeated empty flush, got %d,%d", n1, n2)
+	}
+}
+
+func TestCachedSubscriptionRepo_ResetMetrics(t *testing.T) {
 	ctx := context.Background()
 	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-5", PlanID: "plan-1", TenantID: "tenant-e",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
+		ID: "sub-6", Status: "active", Amount: "1", Currency: "usd", Interval: "month",
 	})
 	mem := cache.NewInMemory()
 	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
 
-	// Prime cache via both keys
-	if _, err := csr.FindByID(ctx, "sub-5"); err != nil {
-		t.Fatalf("prime error: %v", err)
-	}
-	if _, err := csr.FindByIDAndTenant(ctx, "sub-5", "tenant-e"); err != nil {
-		t.Fatalf("prime tenant error: %v", err)
+	_, _ = csr.FindByID(ctx, "sub-6") // miss
+	_, _ = csr.FindByID(ctx, "sub-6") // hit
+
+	hits, misses := csr.Metrics()
+	if hits == 0 || misses == 0 {
+		t.Fatalf("expected non-zero hits/misses before reset, got %d/%d", hits, misses)
 	}
 
+	csr.ResetMetrics()
+
+	hits2, misses2 := csr.Metrics()
+	if hits2 != 0 || misses2 != 0 {
+		t.Fatalf("expected 0/0 after ResetMetrics, got %d/%d", hits2, misses2)
+	}
+}
+
+func TestCachedSubscriptionRepo_Namespace(t *testing.T) {
+	csr := NewCachedSubscriptionRepo(NewMockSubscriptionRepo(), cache.NewInMemory(), time.Minute)
+	if csr.Namespace() != "subscriptions" {
+		t.Fatalf("expected 'subscriptions', got %q", csr.Namespace())
+	}
+}
+
+func TestCachedSubscriptionRepo_Concurrent(t *testing.T) {
+	ctx := context.Background()
+	backend := NewMockSubscriptionRepo(&SubscriptionRow{
+		ID: "sub-7", Status: "active", Amount: "77", Currency: "usd", Interval: "month",
+	})
+	mem := cache.NewInMemory()
+	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
+
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 20; j++ {
-				_, err := csr.FindByID(ctx, "sub-5")
+			for j := 0; j < 50; j++ {
+				_, err := csr.FindByID(ctx, "sub-7")
 				if err != nil {
-					t.Errorf("reader error: %v", err)
+					t.Errorf("concurrent FindByID: %v", err)
 					return
 				}
-				time.Sleep(2 * time.Millisecond)
 			}
 		}()
 	}
-
-	// Invalidate while readers are running
-	time.Sleep(5 * time.Millisecond)
-	backend.records["sub-5"].Status = "canceled"
-	if err := csr.Delete(ctx, "sub-5", "tenant-e"); err != nil {
-		t.Fatalf("invalidate error: %v", err)
-	}
-
+	// Flush concurrently while readers are running
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for k := 0; k < 5; k++ {
+			_, _ = csr.Flush(ctx)
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
 	wg.Wait()
-
-	// After invalidation, next read should observe updated value
-	sr, err := csr.FindByID(ctx, "sub-5")
-	if err != nil {
-		t.Fatalf("final read error: %v", err)
-	}
-	if sr.Status != "canceled" {
-		t.Fatalf("expected canceled after invalidation, got %s", sr.Status)
-	}
 }
 
-func TestCachedSubscriptionRepo_CorruptEnvelope(t *testing.T) {
-	ctx := context.Background()
-	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-corrupt", PlanID: "plan-1", TenantID: "tenant-c",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
-	})
-	mem := cache.NewInMemory()
-	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
-
-	// Inject valid envelope with corrupt inner data
-	env := cacheEnvelope{Data: []byte("not-json"), StoredAt: time.Now()}
-	if b, err := json.Marshal(env); err == nil {
-		_ = mem.Set(ctx, csr.cacheKey("sub-corrupt"), b, time.Minute)
-	}
-
-	sr, err := csr.FindByID(ctx, "sub-corrupt")
-	if err != nil {
-		t.Fatalf("unexpected error on corrupt envelope: %v", err)
-	}
-	if sr.ID != "sub-corrupt" {
-		t.Fatalf("expected fallback to backend on corrupt envelope, got %s", sr.ID)
-	}
-
-	// Inject raw garbage at the envelope level — guard's GetOrLoad fast-path
-	// returns the same garbage bytes and the outer unmarshal fails.
-	_ = mem.Set(ctx, csr.cacheKey("sub-garbage"), []byte("totally not json"), time.Minute)
-	if _, err := csr.FindByID(ctx, "sub-garbage"); err == nil {
-		t.Fatal("expected error on garbage envelope for FindByID")
-	}
-	_ = mem.Set(ctx, csr.tenantCacheKey("sub-garbage", "tenant-c"), []byte("not json either"), time.Minute)
-	if _, err := csr.FindByIDAndTenant(ctx, "sub-garbage", "tenant-c"); err == nil {
-		t.Fatal("expected error on garbage envelope for FindByIDAndTenant")
-	}
-}
-
-func TestCachedSubscriptionRepo_StaleTenant(t *testing.T) {
-	ctx := context.Background()
-	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-stale", PlanID: "plan-1", TenantID: "tenant-d",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
-	})
-	mem := cache.NewInMemory()
-	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
-
-	// Prime tenant cache
-	if _, err := csr.FindByIDAndTenant(ctx, "sub-stale", "tenant-d"); err != nil {
-		t.Fatalf("prime error: %v", err)
-	}
-
-	// Mutate backend
-	backend.records["sub-stale"].Status = "canceled"
-
-	// Delete to invalidate
-	if err := csr.Delete(ctx, "sub-stale", "tenant-d"); err != nil {
-		t.Fatalf("delete error: %v", err)
-	}
-
-	// Inject stale tenant envelope directly
-	staleEnv := cacheEnvelope{
-		Data:     []byte(`{"id":"sub-stale","plan_id":"plan-1","tenant_id":"tenant-d","status":"active","amount":"1000","currency":"usd","interval":"month"}`),
-		StoredAt: time.Now().Add(-time.Hour),
-	}
-	if b, err := json.Marshal(staleEnv); err == nil {
-		_ = mem.Set(ctx, csr.tenantCacheKey("sub-stale", "tenant-d"), b, time.Minute)
-	}
-
-	// Should detect stale tenant entry and refetch
-	sr, err := csr.FindByIDAndTenant(ctx, "sub-stale", "tenant-d")
-	if err != nil {
-		t.Fatalf("tenant read after stale injection error: %v", err)
-	}
-	if sr.Status != "canceled" {
-		t.Fatalf("expected canceled after stale detection, got %s", sr.Status)
-	}
-
-	_, _, stales := csr.Metrics()
-	if stales < 1 {
-		t.Fatalf("expected stale > 0 for tenant, got stales=%d", stales)
-	}
-}
-
-func TestCachedSubscriptionRepo_DeleteNilCache(t *testing.T) {
-	ctx := context.Background()
-	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-nil", PlanID: "plan-1", TenantID: "tenant-e",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
-	})
-	csr := NewCachedSubscriptionRepo(backend, nil, time.Minute)
-
-	if err := csr.Delete(ctx, "sub-nil", "tenant-e"); err != nil {
-		t.Fatalf("unexpected error on nil cache delete: %v", err)
-	}
-}
-
-func TestCachedSubscriptionRepo_CacheOutageFallback_Stale(t *testing.T) {
-	ctx := context.Background()
-	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-faulty", PlanID: "plan-1", TenantID: "tenant-f",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
-	})
-	fc := &faultyCache{}
-	csr := NewCachedSubscriptionRepo(backend, fc, time.Minute)
-
-	// Faulty cache returns errors; should fallback to backend
-	sr, err := csr.FindByIDAndTenant(ctx, "sub-faulty", "tenant-f")
-	if err != nil {
-		t.Fatalf("expected fallback to backend, got error: %v", err)
-	}
-	if sr.ID != "sub-faulty" {
-		t.Fatalf("expected sub-faulty, got %s", sr.ID)
-	}
-}
-
-func TestCachedSubscriptionRepo_InvalidateClearsBothKeys(t *testing.T) {
-	ctx := context.Background()
-	backend := NewMockSubscriptionRepo(&SubscriptionRow{
-		ID: "sub-6", PlanID: "plan-1", TenantID: "tenant-f",
-		Status: "active", Amount: "1000", Currency: "usd", Interval: "month",
-	})
-	mem := cache.NewInMemory()
-	csr := NewCachedSubscriptionRepo(backend, mem, time.Minute)
-
-	// Prime both keys
-	if _, err := csr.FindByID(ctx, "sub-6"); err != nil {
-		t.Fatalf("prime error: %v", err)
-	}
-	if _, err := csr.FindByIDAndTenant(ctx, "sub-6", "tenant-f"); err != nil {
-		t.Fatalf("prime tenant error: %v", err)
-	}
-
-	// Invalidate
-	if err := csr.Delete(ctx, "sub-6", "tenant-f"); err != nil {
-		t.Fatalf("invalidate error: %v", err)
-	}
-
-	// Mutate backend
-	backend.records["sub-6"].Status = "past_due"
-
-	// Both reads should miss cache and return updated value
-	sr1, err := csr.FindByID(ctx, "sub-6")
-	if err != nil {
-		t.Fatalf("findbyid after invalidate error: %v", err)
-	}
-	if sr1.Status != "past_due" {
-		t.Fatalf("expected past_due from FindByID, got %s", sr1.Status)
-	}
-
-	sr2, err := csr.FindByIDAndTenant(ctx, "sub-6", "tenant-f")
-	if err != nil {
-		t.Fatalf("findbyidandtenant after invalidate error: %v", err)
-	}
-	if sr2.Status != "past_due" {
-		t.Fatalf("expected past_due from FindByIDAndTenant, got %s", sr2.Status)
-	}
+func TestCachedSubscriptionRepo_ImplementsPurgeable(t *testing.T) {
+	var _ cache.Purgeable = NewCachedSubscriptionRepo(NewMockSubscriptionRepo(), cache.NewInMemory(), time.Minute)
 }

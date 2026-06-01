@@ -11,7 +11,9 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/featureflags"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
@@ -22,6 +24,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -53,6 +56,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TraceIDMiddleware())
+	r.Use(metrics.MetricsMiddleware())
 
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
 
@@ -62,7 +66,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		Mode:           middleware.RateLimitMode(cfg.RateLimitMode),
 		RequestsPerSec: int64(cfg.RateLimitRPS),
 		BurstSize:      int64(cfg.RateLimitBurst),
-		WhitelistPaths: cfg.RateLimitWhitelist,
+		WhitelistPaths: append(cfg.RateLimitWhitelist, "/metrics"),
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
@@ -86,6 +90,27 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		} else {
 			repository.ApplySQLDBPoolConfig(planDB, cfg)
 		}
+	}
+
+	var stopMetrics chan struct{}
+	if dbPool != nil {
+		stopMetrics = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(time.Duration(cfg.DBPoolMetricsInterval) * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					stats := dbPool.Stat()
+					metrics.DBPoolMetrics.WithLabelValues("total_conns").Set(float64(stats.TotalConns()))
+					metrics.DBPoolMetrics.WithLabelValues("idle_conns").Set(float64(stats.IdleConns()))
+					metrics.DBPoolMetrics.WithLabelValues("active_conns").Set(float64(stats.TotalConns() - stats.IdleConns()))
+					metrics.DBPoolMetrics.WithLabelValues("max_conns").Set(float64(stats.MaxConns()))
+				case <-stopMetrics:
+					return
+				}
+			}
+		}()
 	}
 
 	var idemStore middleware.IdempotencyStore
@@ -138,11 +163,16 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
 	adminHandler := handlers.NewAdminHandler(adminToken, cachedPlanRepo, cachedSubRepo)
+
+	// Feature flags handler
+	featureFlagsHandler := handlers.NewFeatureFlagsHandler(featureflags.GetInstance())
+
 	// Wire the cached plan repo into the package-level ListPlans handler.
 	handlers.SetPlanRepository(cachedPlanRepo)
 
 	// API Groups
 	api := r.Group("/api")
+	api.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	v1 := api.Group("/v1")
 
 	dep := middleware.DeprecationHeaders()
@@ -208,9 +238,16 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
+
+		// Feature flags endpoints
+		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
+		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
 	}
 
 	return func(ctx context.Context) error {
+		if stopMetrics != nil {
+			close(stopMetrics)
+		}
 		if dbPool != nil {
 			log.Printf("closing database pool")
 			dbPool.Close()
@@ -221,14 +258,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 				return fmt.Errorf("close plan database handle: %w", err)
 			}
 		}
-
 		if tracerShutdown != nil {
 			log.Printf("flushing tracer")
 			if err := tracerShutdown(ctx); err != nil {
 				return fmt.Errorf("shutdown tracer: %w", err)
 			}
 		}
-
 		return nil
 	}
 }

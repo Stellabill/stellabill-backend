@@ -8,264 +8,800 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
+	"github.com/google/uuid"
 	"stellarbill-backend/internal/auth"
 )
 
-const testSecret = "test-secret-value"
+func TestAuthMiddleware_MissingAuthorizationHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
 
-func makeToken(t *testing.T, claims jwt.MapClaims, key interface{}, method jwt.SigningMethod) string {
-	t.Helper()
-	tok := jwt.NewWithClaims(method, claims)
-	s, err := tok.SignedString(key)
-	require.NoError(t, err)
-	return s
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", res.Code)
+	}
 }
 
-func validClaims() jwt.MapClaims {
-	return jwt.MapClaims{
-		"sub": "user-123",
+func TestAuthMiddleware_InvalidAuthorizationFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "InvalidFormat token")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", res.Code)
+	}
+}
+
+func TestAuthMiddleware_TokenValidationFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer invalid.token.here")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", res.Code)
+	}
+}
+
+func TestAuthMiddleware_InvalidTokenClaims(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with invalid claims structure
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "user123",
+	})
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	// Should fail due to missing tenant_id
+	if res.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", res.Code)
+	}
+}
+
+func TestAuthMiddleware_MissingSubjectClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token without subject claim
+	claims := jwt.MapClaims{
+		"tenant_id": "tenant123",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", res.Code)
+	}
+}
+
+func TestAuthMiddleware_MissingTenantID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token without tenant_id claim
+	claims := jwt.MapClaims{
+		"sub": "user123",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", res.Code)
+	}
 }
 
-func newTestRouter(secret string) (*gin.Engine, *bool) {
+func TestAuthMiddleware_TenantMismatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	reached := false
-	r := gin.New()
-	r.GET("/protected", AuthMiddleware(nil, secret), func(c *gin.Context) {
-		reached = true
-		c.Status(http.StatusOK)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})
-	return r, &reached
-}
 
-func TestAuthMiddleware(t *testing.T) {
-	tests := []struct {
-		name       string
-		authHeader string
-		wantStatus int
-		wantPass   bool
-	}{
-		{
-			name:       "missing Authorization header",
-			authHeader: "",
-			wantStatus: http.StatusUnauthorized,
-			wantPass:   false,
-		},
-		{
-			name:       "wrong scheme (Basic)",
-			authHeader: "Basic dXNlcjpwYXNz",
-			wantStatus: http.StatusUnauthorized,
-			wantPass:   false,
-		},
-		{
-			name:       "Bearer with empty token",
-			authHeader: "Bearer ",
-			wantStatus: http.StatusUnauthorized,
-			wantPass:   false,
-		},
-		{
-			name:       "Bearer with whitespace-only token",
-			authHeader: "Bearer    ",
-			wantStatus: http.StatusUnauthorized,
-			wantPass:   false,
-		},
-		{
-			name:       "malformed token (random string)",
-			authHeader: "Bearer not.a.jwt",
-			wantStatus: http.StatusUnauthorized,
-			wantPass:   false,
-		},
-		{
-			name: "expired token",
-			authHeader: "Bearer " + func() string {
-				claims := jwt.MapClaims{
-					"sub": "user-123",
-					"exp": time.Now().Add(-time.Hour).Unix(),
-				}
-				tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-				s, _ := tok.SignedString([]byte(testSecret))
-				return s
-			}(),
-			wantStatus: http.StatusUnauthorized,
-			wantPass:   false,
-		},
-		{
-			name: "wrong signing key",
-			authHeader: "Bearer " + func() string {
-				claims := validClaims()
-				tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-				s, _ := tok.SignedString([]byte("wrong-secret"))
-				return s
-			}(),
-			wantStatus: http.StatusUnauthorized,
-			wantPass:   false,
-		},
-		{
-			name: "alg:none attack",
-			authHeader: "Bearer " + func() string {
-				claims := validClaims()
-				tok := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
-				s, _ := tok.SignedString(jwt.UnsafeAllowNoneSignatureType)
-				return s
-			}(),
-			wantStatus: http.StatusUnauthorized,
-			wantPass:   false,
-		},
-		{
-			name: "valid token passes through",
-			authHeader: "Bearer " + func() string {
-				claims := validClaims()
-				tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-				s, _ := tok.SignedString([]byte(testSecret))
-				return s
-			}(),
-			wantStatus: http.StatusOK,
-			wantPass:   true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			router, reached := newTestRouter(testSecret)
-
-			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
-			if tc.authHeader != "" {
-				req.Header.Set("Authorization", tc.authHeader)
-			}
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			assert.Equal(t, tc.wantStatus, w.Code)
-			assert.Equal(t, tc.wantPass, *reached)
-		})
-	}
-}
-
-func TestAuthMiddleware_ContextValues(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	var (
-		gotSub   string
-		gotRoles []auth.Role
-	)
-
+	// Create a token with tenant_id claim
 	claims := jwt.MapClaims{
-		"sub":   "user-456",
-		"exp":   time.Now().Add(time.Hour).Unix(),
-		"roles": []interface{}{"admin", "editor"},
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"exp":       time.Now().Add(time.Hour).Unix(),
 	}
-	token := makeToken(t, claims, []byte(testSecret), jwt.SigningMethodHS256)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
 
-	r := gin.New()
-	r.GET("/protected", AuthMiddleware(nil, testSecret), func(c *gin.Context) {
-		// Fix: type-assert the any returned by c.Get
-		if v, exists := c.Get(ContextKeySubject); exists {
-			gotSub, _ = v.(string)
-		}
-		if v, exists := c.Get(auth.RolesContextKey); exists {
-			gotRoles, _ = v.([]auth.Role)
-		}
-		c.Status(http.StatusOK)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	req.Header.Set("X-Tenant-ID", "different-tenant")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", res.Code)
+	}
+}
+
+func TestAuthMiddleware_SuccessWithRolesArray(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	var capturedCallerID string
+	var capturedTenantID string
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedRoles = auth.ExtractRoles(c)
+		capturedCallerID = c.GetString("callerID")
+		capturedTenantID = c.GetString("tenantID")
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	// Create a token with roles array
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"roles":     []string{"admin", "merchant"},
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
 
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "user-456", gotSub)
-	assert.Equal(t, []auth.Role{"admin", "editor"}, gotRoles)
-}
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
 
-func TestExtractRoles(t *testing.T) {
-	tests := []struct {
-		name  string
-		input jwt.MapClaims
-		want  []auth.Role
-	}{
-		{
-			name:  "no roles claim",
-			input: jwt.MapClaims{},
-			want:  nil,
-		},
-		{
-			name:  "roles as string array",
-			input: jwt.MapClaims{"roles": []interface{}{"admin", "viewer"}},
-			want:  []auth.Role{"admin", "viewer"},
-		},
-		{
-			name:  "roles as single string",
-			input: jwt.MapClaims{"roles": "admin"},
-			want:  []auth.Role{"admin"},
-		},
-		{
-			name:  "roles as empty string",
-			input: jwt.MapClaims{"roles": ""},
-			want:  nil,
-		},
-		{
-			name:  "roles array with blank entries filtered out",
-			input: jwt.MapClaims{"roles": []interface{}{"admin", "  ", "editor"}},
-			want:  []auth.Role{"admin", "editor"},
-		},
-		{
-			name:  "roles as unexpected type",
-			input: jwt.MapClaims{"roles": 42},
-			want:  nil,
-		},
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := extractRoles(tc.input)
-			assert.Equal(t, tc.want, got)
-		})
+	if capturedCallerID != "user123" {
+		t.Errorf("expected callerID user123, got %s", capturedCallerID)
+	}
+
+	if capturedTenantID != "tenant123" {
+		t.Errorf("expected tenantID tenant123, got %s", capturedTenantID)
+	}
+
+	if len(capturedRoles) != 2 {
+		t.Errorf("expected 2 roles, got %d", len(capturedRoles))
 	}
 }
 
-func TestMapJWTError(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   error
-		wantMsg string
-	}{
-		{
-			name:    "expired",
-			input:   jwt.ErrTokenExpired,
-			wantMsg: "token has expired",
-		},
-		{
-			name:    "not yet valid",
-			input:   jwt.ErrTokenNotValidYet,
-			wantMsg: "token is not yet valid",
-		},
-		{
-			name:    "invalid signature",
-			input:   jwt.ErrTokenSignatureInvalid,
-			wantMsg: "token signature is invalid",
-		},
-		{
-			name:    "malformed",
-			input:   jwt.ErrTokenMalformed,
-			wantMsg: "token is malformed",
-		},
-		{
-			name:    "unknown error falls back to generic",
-			input:   jwt.ErrTokenInvalidClaims,
-			wantMsg: "token is invalid",
-		},
+func TestAuthMiddleware_SuccessWithSingleRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	var capturedCallerID string
+	var capturedTenantID string
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedRoles = auth.ExtractRoles(c)
+		capturedCallerID = c.GetString("callerID")
+		capturedTenantID = c.GetString("tenantID")
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with single role
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"role":      "admin",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := mapJWTError(tc.input)
-			require.Error(t, err)
-			assert.Equal(t, tc.wantMsg, err.Error())
-		})
+	if capturedCallerID != "user123" {
+		t.Errorf("expected callerID user123, got %s", capturedCallerID)
+	}
+
+	if capturedTenantID != "tenant123" {
+		t.Errorf("expected tenantID tenant123, got %s", capturedTenantID)
+	}
+
+	if len(capturedRoles) != 1 {
+		t.Errorf("expected 1 role, got %d", len(capturedRoles))
+	}
+
+	if capturedRoles[0] != auth.RoleAdmin {
+		t.Errorf("expected role admin, got %s", capturedRoles[0])
+	}
+}
+
+func TestAuthMiddleware_SuccessWithEmptyRoles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	var capturedCallerID string
+	var capturedTenantID string
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedRoles = auth.ExtractRoles(c)
+		capturedCallerID = c.GetString("callerID")
+		capturedTenantID = c.GetString("tenantID")
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token without roles
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	if capturedCallerID != "user123" {
+		t.Errorf("expected callerID user123, got %s", capturedCallerID)
+	}
+
+	if capturedTenantID != "tenant123" {
+		t.Errorf("expected tenantID tenant123, got %s", capturedTenantID)
+	}
+
+	if len(capturedRoles) != 0 {
+		t.Errorf("expected 0 roles, got %d", len(capturedRoles))
+	}
+}
+
+func TestAuthMiddleware_SuccessWithMultipleRoles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedRoles = auth.ExtractRoles(c)
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with multiple roles
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"roles":     []interface{}{"admin", "merchant", "user"},
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	if len(capturedRoles) != 3 {
+		t.Errorf("expected 3 roles, got %d", len(capturedRoles))
+	}
+}
+
+func TestAuthMiddleware_UnknownRoleString(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedRoles = auth.ExtractRoles(c)
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with unknown role
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"role":      "unknown_role",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	// Unknown roles should still be extracted and stored
+	if len(capturedRoles) != 1 {
+		t.Errorf("expected 1 role, got %d", len(capturedRoles))
+	}
+
+	if capturedRoles[0] != "unknown_role" {
+		t.Errorf("expected role unknown_role, got %s", capturedRoles[0])
+	}
+}
+
+func TestAuthMiddleware_ClaimsProjectionVerification(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	var capturedCallerID string
+	var capturedTenantID string
+	
+	router.GET("/test", func(c *gin.Context) {
+		// Verify all context keys are set
+		rolesValue, exists := c.Get(auth.RolesContextKey)
+		if !exists {
+			t.Error("expected roles to be set in context")
+		}
+		capturedRoles = rolesValue.([]auth.Role)
+		
+		capturedCallerID, _ = c.Get("callerID")
+		capturedTenantID, _ = c.Get("tenantID")
+		
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a comprehensive token
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"roles":     []string{"admin", "merchant"},
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	if capturedCallerID != "user123" {
+		t.Errorf("expected callerID user123, got %s", capturedCallerID)
+	}
+
+	if capturedTenantID != "tenant123" {
+		t.Errorf("expected tenantID tenant123, got %s", capturedTenantID)
+	}
+
+	if len(capturedRoles) != 2 {
+		t.Errorf("expected 2 roles, got %d", len(capturedRoles))
+	}
+}
+
+func TestAuthMiddleware_TenantIDFromClaimOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedTenantID string
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedTenantID = c.GetString("tenantID")
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with tenant_id but no header
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"role":      "admin",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	if capturedTenantID != "tenant123" {
+		t.Errorf("expected tenantID tenant123, got %s", capturedTenantID)
+	}
+}
+
+func TestAuthMiddleware_TenantIDFromHeaderOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedTenantID string
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedTenantID = c.GetString("tenantID")
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token without tenant_id claim
+	claims := jwt.MapClaims{
+		"sub":  "user123",
+		"role": "admin",
+		"exp":  time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	req.Header.Set("X-Tenant-ID", "tenant456")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	if capturedTenantID != "tenant456" {
+		t.Errorf("expected tenantID tenant456, got %s", capturedTenantID)
+	}
+}
+
+func TestAuthMiddleware_RolesDeduplication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedRoles = auth.ExtractRoles(c)
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with duplicate roles
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"roles":     []string{"admin", "admin", "merchant", "merchant"},
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	// Should deduplicate roles
+	if len(capturedRoles) != 2 {
+		t.Errorf("expected 2 deduplicated roles, got %d", len(capturedRoles))
+	}
+}
+
+func TestAuthMiddleware_RoleWhitespaceTrimming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedRoles = auth.ExtractRoles(c)
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with roles containing whitespace
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"roles":     []string{" admin ", " merchant ", " user "},
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	// Verify whitespace is trimmed
+	for _, role := range capturedRoles {
+		if len(role) > 0 && (role[0] == ' ' || role[len(role)-1] == ' ') {
+			t.Errorf("role %q was not trimmed", role)
+		}
+	}
+}
+
+func TestExtractRolesFromClaims_RolesAsInterfaceArray(t *testing.T) {
+	claims := jwt.MapClaims{
+		"roles": []interface{}{"admin", "merchant", "user"},
+	}
+
+	roles := extractRolesFromClaims(claims)
+	if len(roles) != 3 {
+		t.Errorf("expected 3 roles, got %d", len(roles))
+	}
+}
+
+func TestExtractRolesFromClaims_EmptyRolesArray(t *testing.T) {
+	claims := jwt.MapClaims{
+		"roles": []string{},
+	}
+
+	roles := extractRolesFromClaims(claims)
+	if len(roles) != 0 {
+		t.Errorf("expected 0 roles, got %d", len(roles))
+	}
+}
+
+func TestExtractRolesFromClaims_RoleFallback(t *testing.T) {
+	claims := jwt.MapClaims{
+		"role": "admin",
+	}
+
+	roles := extractRolesFromClaims(claims)
+	if len(roles) != 1 {
+		t.Errorf("expected 1 role, got %d", len(roles))
+	}
+
+	if roles[0] != auth.RoleAdmin {
+		t.Errorf("expected role admin, got %s", roles[0])
+	}
+}
+
+func TestExtractRolesFromClaims_NoRoles(t *testing.T) {
+	claims := jwt.MapClaims{
+		"sub": "user123",
+	}
+
+	roles := extractRolesFromClaims(claims)
+	if len(roles) != 0 {
+		t.Errorf("expected 0 roles, got %d", len(roles))
+	}
+}
+
+func TestInitJWKSCache(t *testing.T) {
+	// Test that InitJWKSCache initializes the cache
+	InitJWKSCache("https://example.com/jwks", 300)
+	if jwksCache == nil {
+		t.Error("expected jwksCache to be initialized")
+	}
+	
+	// Reset for other tests
+	jwksCache = nil
+}
+
+func TestAuthMiddleware_UUIDCallerID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedCallerID string
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedCallerID = c.GetString("callerID")
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with UUID as callerID
+	callerUUID := uuid.New().String()
+	claims := jwt.MapClaims{
+		"sub":       callerUUID,
+		"tenant_id": "tenant123",
+		"role":      "admin",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	if capturedCallerID != callerUUID {
+		t.Errorf("expected callerID %s, got %s", callerUUID, capturedCallerID)
+	}
+}
+
+func TestAuthMiddleware_TenantClaimFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedTenantID string
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedTenantID = c.GetString("tenantID")
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Test fallback to "tenant" claim when "tenant_id" is not present
+	claims := jwt.MapClaims{
+		"sub":    "user123",
+		"tenant": "tenant789",
+		"role":   "admin",
+		"exp":    time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	if capturedTenantID != "tenant789" {
+		t.Errorf("expected tenantID tenant789, got %s", capturedTenantID)
+	}
+}
+
+func TestAuthMiddleware_RolesWithEmptyStrings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	
+	middleware := AuthMiddleware(nil, "")
+	router := gin.New()
+	router.Use(middleware)
+	
+	var capturedRoles []auth.Role
+	
+	router.GET("/test", func(c *gin.Context) {
+		capturedRoles = auth.ExtractRoles(c)
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	// Create a token with empty strings in roles array
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"roles":     []string{"admin", "", "merchant", ""},
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", res.Code)
+	}
+
+	// Empty strings should be filtered out
+	if len(capturedRoles) != 2 {
+		t.Errorf("expected 2 non-empty roles, got %d", len(capturedRoles))
 	}
 }

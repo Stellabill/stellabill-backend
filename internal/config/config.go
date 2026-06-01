@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"stellarbill-backend/internal/secrets"
@@ -26,16 +27,16 @@ const (
 )
 
 const (
-	MinHeaderBytes             = 1024    // 1KB
-	MaxAllowedHeaderBytes      = 1048576 // 1MB
-	MinTimeoutSeconds          = 1
-	MaxTimeoutSeconds          = 3600 // 1 hour
-	MinRateLimitRPS            = 1
-	MaxRateLimitRPS            = 10000
-	MinRateLimitBurst          = 1
-	MaxRateLimitBurst          = 100000
-	DefaultMaxRequestSize      = 1048576  // 1MB
-	DefaultMaxGzipUncompressed = 10485760 // 10MB
+	MinHeaderBytes        = 1024       // 1KB
+	MaxAllowedHeaderBytes = 1048576    // 1MB
+	MinTimeoutSeconds     = 1
+	MaxTimeoutSeconds     = 3600       // 1 hour
+	MinRateLimitRPS       = 1
+	MaxRateLimitRPS       = 10000
+	MinRateLimitBurst     = 1
+	MaxRateLimitBurst     = 100000
+	DefaultMaxRequestSize      = 1048576    // 1MB
+	DefaultMaxGzipUncompressed = 10485760   // 10MB
 	DefaultMaxGzipRatio        = 10.0
 )
 
@@ -62,33 +63,28 @@ type Config struct {
 	JWTSecret string
 	JWKSURL   string
 	// Add additional secure defaults for optional configs
-	MaxHeaderBytes          int
-	MaxRequestSize          int64
-	MaxGzipUncompressed     int64
-	MaxGzipRatio            float64
-	ReadTimeout             int
-	WriteTimeout            int
-	IdleTimeout             int
-	AllowedOrigins          string
-	AdminToken              string
-	DBPoolMaxConns          int
-	DBPoolMinConns          int
-	DBPoolMaxConnLifetime   int
-	DBPoolMaxConnIdleTime   int
-	DBPoolConnectTimeout    int
-	DBPoolHealthCheckPeriod int
-	DBPoolMetricsInterval   int
+	MaxHeaderBytes       int
+	MaxRequestSize       int64
+	MaxGzipUncompressed  int64
+	MaxGzipRatio         float64
+	ReadTimeout          int
+	WriteTimeout   int
+	IdleTimeout    int
+	AllowedOrigins string
+	AdminToken     string
 	// Rate limiting configuration
 	RateLimitEnabled   bool
 	RateLimitMode      string
 	RateLimitRPS       int
 	RateLimitBurst     int
-	RateLimitWhitelist []string
+	RateLimitWhitelist    []string
+	RateLimitTenantRPS    int
+	RateLimitTenantBurst  int
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
-	SecurityFrameAncestors string
 	// CORS configuration
+	AllowedOrigins string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -140,6 +136,15 @@ const (
 	MaxDBPoolMaxConns = 500
 	MinDBPoolTimeout  = 1   // seconds
 	MaxDBPoolTimeout  = 300 // seconds
+
+	MinHeaderBytes        = 1024        // 1KB
+	MaxAllowedHeaderBytes = 10 << 20    // 10MB
+	MinTimeoutSeconds     = 1
+	MaxTimeoutSeconds     = 600
+	MinRateLimitRPS       = 1
+	MaxRateLimitRPS       = 1000
+	MinRateLimitBurst     = 1
+	MaxRateLimitBurst     = 2000
 )
 
 // Required environment variables
@@ -151,12 +156,12 @@ var requiredEnvVars = []string{
 
 // Optional environment variables with defaults
 var optionalEnvVars = map[string]string{
-	"PORT":                 "8080",
-	"ENV":                  "development",
-	"MAX_HEADER_BYTES":     "1048576",
-	"READ_TIMEOUT":         "30",
-	"WRITE_TIMEOUT":        "30",
-	"IDLE_TIMEOUT":         "120",
+	"PORT":             "8080",
+	"ENV":              "development",
+	"MAX_HEADER_BYTES": "1048576",
+	"READ_TIMEOUT":     "30",
+	"WRITE_TIMEOUT":    "30",
+	"IDLE_TIMEOUT":     "120",
 	"TRACING_EXPORTER":     "stdout",
 	"TRACING_SERVICE_NAME": "stellabill-backend",
 	// DB pool
@@ -170,7 +175,6 @@ var optionalEnvVars = map[string]string{
 	"MAX_REQUEST_SIZE":            "1048576",
 	"MAX_GZIP_UNCOMPRESSED":       "10485760",
 	"MAX_GZIP_RATIO":              "10.0",
-	"SECURITY_FRAME_ANCESTORS":    "'none'",
 }
 
 // Option configures the Load function.
@@ -207,9 +211,9 @@ func Load(opts ...Option) (Config, error) {
 	}
 
 	cfg := Config{
-		Env:                 getEnv("ENV", "development"),
-		Port:                DefaultPort,
-		DBConn:              "",
+		Env:            getEnv("ENV", "development"),
+		Port:           DefaultPort,
+		DBConn:         "",
 		JWTSecret:           "",
 		JWKSURL:             getEnv("JWKS_URL", ""),
 		MaxHeaderBytes:      MaxHeaderBytes,
@@ -217,19 +221,11 @@ func Load(opts ...Option) (Config, error) {
 		MaxGzipUncompressed: getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
 		MaxGzipRatio:        getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
 		ReadTimeout:         DefaultReadTimeout,
-		WriteTimeout:        DefaultWriteTimeout,
-		IdleTimeout:         DefaultIdleTimeout,
-		TracingExporter:     getEnv("TRACING_EXPORTER", "stdout"),
-		TracingServiceName:  getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
-		AllowedOrigins:      getEnv("ALLOWED_ORIGINS", ""),
-		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
-		DBPoolMaxConns:          DefaultDBPoolMaxConns,
-		DBPoolMinConns:          DefaultDBPoolMinConns,
-		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
-		DBPoolMaxConnIdleTime:   DefaultDBPoolMaxConnIdleTime,
-		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
-		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
-		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
+		WriteTimeout:   DefaultWriteTimeout,
+		IdleTimeout:    DefaultIdleTimeout,
+		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
+		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
 	}
 
 	// Resolve secrets through the provider
@@ -358,12 +354,6 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		} else {
 			c.AdminToken = token
 		}
-	}
-
-	if val := os.Getenv("SECURITY_FRAME_ANCESTORS"); val != "" {
-		c.SecurityFrameAncestors = val
-	} else {
-		c.SecurityFrameAncestors = "'none'"
 	}
 
 	// Validate optional MAX_HEADER_BYTES
@@ -509,6 +499,46 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 
 	// Validate TRACING_EXPORTER
 	if exporter := os.Getenv("TRACING_EXPORTER"); exporter != "" {
+		// Validate per-tenant rate limiting configuration
+		if val := os.Getenv("RATE_LIMIT_TENANT_RPS"); val != "" {
+			if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitRPS && rps <= MaxRateLimitRPS {
+				c.RateLimitTenantRPS = rps
+			} else {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrInvalidValue,
+					Key:     "RATE_LIMIT_TENANT_RPS",
+					Message: fmt.Sprintf("must be between %d and %d", MinRateLimitRPS, MaxRateLimitRPS),
+					Value:   val,
+				})
+			}
+		} else {
+			c.RateLimitTenantRPS = 5 // Conservative default for per-tenant limits
+		}
+
+		if val := os.Getenv("RATE_LIMIT_TENANT_BURST"); val != "" {
+			if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitBurst && burst <= MaxRateLimitBurst {
+				c.RateLimitTenantBurst = burst
+			} else {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrInvalidValue,
+					Key:     "RATE_LIMIT_TENANT_BURST",
+					Message: fmt.Sprintf("must be between %d and %d", MinRateLimitBurst, MaxRateLimitBurst),
+					Value:   val,
+				})
+			}
+		} else {
+			c.RateLimitTenantBurst = 10 // Conservative default (2x tenant RPS)
+		}
+
+		if c.RateLimitTenantBurst < c.RateLimitTenantRPS {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: "must be greater than or equal to RATE_LIMIT_TENANT_RPS",
+				Value:   strconv.Itoa(c.RateLimitTenantBurst),
+			})
+		}
+
 		validExporters := map[string]bool{"stdout": true, "otlp": true, "none": true}
 		if !validExporters[exporter] {
 			result.Errors = append(result.Errors, ConfigError{
@@ -664,6 +694,24 @@ func getEnvFloat64(key string, fallback float64) float64 {
 	return fallback
 }
 
+func getEnvInt64(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return i
+		}
+	}
+	return fallback
+}
+
+func getEnvFloat64(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return fallback
+}
+
 // validateDBPool reads DB_POOL_* env vars, validates them, and writes safe
 // values back into cfg.  Invalid values produce warnings (not hard errors) so
 // the server can still start with defaults rather than refusing to boot.
@@ -718,24 +766,3 @@ func validateDBPool(c *Config, result *ValidationResult) {
 	}
 }
 
-func validateAllowedOrigins(origins string, env string) error {
-	if origins == "" {
-		return nil
-	}
-	parts := strings.Split(origins, ",")
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if env == "production" {
-			if p == "*" {
-				return fmt.Errorf("wildcard origin not allowed in production")
-			}
-			if !strings.HasPrefix(p, "https://") && !strings.HasPrefix(p, "http://localhost") && !strings.HasPrefix(p, "http://127.0.0.1") {
-				return fmt.Errorf("origin must use HTTPS in production: %s", p)
-			}
-		}
-	}
-	return nil
-}

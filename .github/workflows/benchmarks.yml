@@ -40,6 +40,22 @@ jobs:
       - name: Install benchstat
         run: go install golang.org/x/perf/cmd/benchstat@latest
       
+      - name: Install k6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y k6
+      
+      - name: Run load test smoke profile
+        run: |
+          set -euo pipefail
+          JWT_SECRET=dev-secret go run ./cmd/server >/tmp/loadtest-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $$SERVER_PID >/dev/null 2>&1' EXIT
+          sleep 4
+          LOADTEST_TARGET=http://127.0.0.1:8080 JWT_SECRET=dev-secret k6 run --summary-export=./plans-smoke-summary.json ./scripts/loadtest/plans.js
+          LOADTEST_TARGET=http://127.0.0.1:8080 JWT_SECRET=dev-secret k6 run --summary-export=./subscriptions-smoke-summary.json ./scripts/loadtest/subscriptions.js
+          LOADTEST_TARGET=http://127.0.0.1:8080 JWT_SECRET=dev-secret k6 run --summary-export=./statements-smoke-summary.json ./scripts/loadtest/statements.js
+      
       - name: Download baseline
         continue-on-error: true
         run: |

@@ -5,14 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/auth"
+	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/reconciliation"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ---------------------------------------------------------------------------
@@ -47,10 +50,28 @@ func (f *failingStore) SaveReports(_ []reconciliation.Report) error { return f.e
 func (f *failingStore) ListReports() ([]reconciliation.Report, error) {
 	return nil, nil
 }
+func (f *failingStore) ListReportsByTenant(_ string) ([]reconciliation.Report, error) {
+	return nil, nil
+}
 
 // ---------------------------------------------------------------------------
-// Helper: build a router for reconciliation tests
+// Helpers
 // ---------------------------------------------------------------------------
+
+func setupReconcileRouter(adapter reconciliation.Adapter, store reconciliation.Store, tenantID string, role string) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(injectContextMiddleware(role, tenantID))
+	r.POST("/reconcile",
+		auth.RequirePermission(auth.PermManageReconciliation),
+		NewReconcileHandler(adapter, store),
+	)
+	r.GET("/reports",
+		auth.RequirePermission(auth.PermReadReconciliation),
+		NewListReportsHandler(store),
+	)
+	return r
+}
 
 func buildReconcileRouter(
 	role, tenantID string,
@@ -472,11 +493,157 @@ func TestReconcileHandler_RoleAsString_Merchant(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Test ListReportsHandler tests
+// ---------------------------------------------------------------------------
+
+func TestListReportsHandler_TenantIsolation(t *testing.T) {
+	store := reconciliation.NewMemoryStore()
+	// Add reports for two different tenants
+	store.SaveReports([]reconciliation.Report{
+		{SubscriptionID: "sub-1", TenantID: "tenant-a"},
+		{SubscriptionID: "sub-2", TenantID: "tenant-b"},
+	})
+
+	// Test for tenant-a
+	r := setupReconcileRouter(nil, store, "tenant-a", string(auth.RoleMerchant))
+	req := httptest.NewRequest(http.MethodGet, "/reports", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Reports []reconciliation.Report `json:"reports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(resp.Reports) != 1 {
+		t.Errorf("expected 1 report, got %d", len(resp.Reports))
+	}
+	if resp.Reports[0].TenantID != "tenant-a" {
+		t.Errorf("expected tenantID=tenant-a, got %q", resp.Reports[0].TenantID)
+	}
+}
+
+func TestListReportsHandler_AdminSeesAll(t *testing.T) {
+	store := reconciliation.NewMemoryStore()
+	store.SaveReports([]reconciliation.Report{
+		{SubscriptionID: "sub-1", TenantID: "tenant-a"},
+		{SubscriptionID: "sub-2", TenantID: "tenant-b"},
+	})
+
+	r := setupReconcileRouter(nil, store, "any-tenant", string(auth.RoleAdmin))
+	req := httptest.NewRequest(http.MethodGet, "/reports", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Reports []reconciliation.Report `json:"reports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(resp.Reports) != 2 {
+		t.Errorf("expected 2 reports, got %d", len(resp.Reports))
+	}
+}
+
+func TestListReportsHandler_InvalidCursor(t *testing.T) {
+	store := reconciliation.NewMemoryStore()
+	r := setupReconcileRouter(nil, store, "tenant-1", string(auth.RoleMerchant))
+
+	req := httptest.NewRequest(http.MethodGet, "/reports?cursor=invalid", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid cursor, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var response ErrorEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if response.Code != "VALIDATION_FAILED" {
+		t.Fatalf("expected VALIDATION_FAILED, got %s", response.Code)
+	}
+}
+
+func TestListReportsHandler_RejectsScopedCursorFromDifferentTenant(t *testing.T) {
+	store := reconciliation.NewMemoryStore()
+	r := setupReconcileRouter(nil, store, "tenant-b", string(auth.RoleMerchant))
+
+	cursor := pagination.EncodeScopedCursor("sub-1", "sub-1", "tenant-a")
+	req := httptest.NewRequest(http.MethodGet, "/reports?cursor="+cursor, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for cross-tenant cursor, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var response ErrorEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if response.Code != "VALIDATION_FAILED" {
+		t.Fatalf("expected VALIDATION_FAILED, got %s", response.Code)
+	}
+	if response.Details["reason"] != "cursor does not belong to this tenant" {
+		t.Fatalf("expected tenant mismatch reason, got %#v", response.Details["reason"])
+	}
+}
+
+func TestListReportsHandler_LimitClamping(t *testing.T) {
+	store := reconciliation.NewMemoryStore()
+	// Add 30 reports
+	reports := make([]reconciliation.Report, 30)
+	for i := 0; i < 30; i++ {
+		reports[i] = reconciliation.Report{
+			SubscriptionID: fmt.Sprintf("sub-%d", i),
+			TenantID:       "tenant-1",
+		}
+	}
+	store.SaveReports(reports)
+
+	r := setupReconcileRouter(nil, store, "tenant-1", string(auth.RoleMerchant))
+
+	// Request with limit 100, should be clamped to 20
+	req := httptest.NewRequest(http.MethodGet, "/reports?limit=100", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Reports []reconciliation.Report `json:"reports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(resp.Reports) > 20 {
+		t.Errorf("expected at most 20 reports due to clamping, got %d", len(resp.Reports))
+	}
+}
+
 func TestListReportsHandler_InvalidLimit(t *testing.T) {
 	store := reconciliation.NewMemoryStore()
 	r := setupReconcileRouter(nil, store, "tenant-1", "merchant")
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/reports?limit=abc", nil)
+	req := httptest.NewRequest(http.MethodGet, "/reports?limit=abc", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

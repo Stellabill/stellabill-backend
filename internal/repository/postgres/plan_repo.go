@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/repository"
 
 	"go.opentelemetry.io/otel"
@@ -39,8 +40,10 @@ func (r *PlanRepo) FindByID(ctx context.Context, id string) (*repository.PlanRow
 		trace.WithAttributes(attribute.String("plan.id", id)))
 	defer span.End()
 
+	timer := metrics.DBTimer("find_by_id", "plans")
 	err := r.pool.QueryRow(ctx, q, id).
 		Scan(&p.ID, &p.Name, &p.Amount, &p.Currency, &p.Interval, &p.Description)
+	timer(err)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, repository.ErrNotFound

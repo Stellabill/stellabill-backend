@@ -71,7 +71,7 @@ func (h *AdminHandler) PurgeCache(c *gin.Context) {
 	// --- Auth check ---
 	token := c.GetHeader("X-Admin-Token")
 	if token != h.expectedToken {
-		audit.LogAction(c, action, c.FullPath(), "denied", map[string]string{
+		audit.LogAction(c, "admin_purge", c.FullPath(), "denied", map[string]string{
 			"reason": "invalid_token",
 		})
 		RespondWithError(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "invalid admin token")

@@ -5,13 +5,15 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/security"
 )
 
 const (
-	AuthSubjectKey  = "auth_subject"
+	AuthSubjectKey = "auth_subject"
 )
 
 type RateLimiter struct {
@@ -36,19 +38,6 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
-
-
-func Recovery(logger *log.Logger) gin.HandlerFunc {
-	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		requestID, _ := c.Get(RequestIDKey)
-		logger.Printf("panic recovered request_id=%v err=%v", requestID, recovered)
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error":      "internal server error",
-			"request_id": requestID,
-		})
-	})
-}
-
 func Logging(logger *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -67,11 +56,9 @@ func Logging(logger *log.Logger) gin.HandlerFunc {
 			requestID,
 			time.Since(start).Round(time.Millisecond),
 		)
-		logger.SafePrintf("%s", msg)
+		logger.Printf("%s", msg)
 	}
 }
-
-
 
 func RateLimit(limiter *RateLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -137,17 +124,22 @@ func (r *RateLimiter) Allow(key string) bool {
 	return true
 }
 
+// DeprecationHeaders marks legacy /api/* aliases as deprecated and points
+// clients at the canonical /api/v1/* successor. Do not attach it to /api/v1/*
+// routes.
 func DeprecationHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		const legacyPrefix = "/api/"
+		const canonicalPrefix = "/api/v1/"
+		if !strings.HasPrefix(path, legacyPrefix) || strings.HasPrefix(path, canonicalPrefix) {
+			c.Next()
+			return
+		}
+
 		c.Header("Deprecation", "true")
 		c.Header("Sunset", time.Now().Add(180*24*time.Hour).Format(time.RFC1123))
-
-		path := c.Request.URL.Path
-		const prefix = "/api"
-		if strings.HasPrefix(path, prefix) {
-			successor := prefix + "/v1" + path[len(prefix):]
-			c.Header("Link", `<`+successor+`>; rel="successor-version"`)
-		}
+		c.Header("Link", `</api/v1`+path[len("/api"):]+`>; rel="successor-version"`)
 
 		c.Next()
 	}

@@ -175,7 +175,7 @@ func (d *dispatcher) processEvent(event *Event) error {
 	// Process in a goroutine to respect timeout
 	done := make(chan error, 1)
 	go func() {
-		done <- d.publisher.Publish(event)
+		done <- d.publisher.Publish(ctx, event)
 	}()
 	
 	select {

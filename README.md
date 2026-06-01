@@ -52,7 +52,7 @@ The backend includes a production-ready background worker system for automated b
 - **Distributed Locking**: Prevents duplicate processing when running multiple worker instances
 - **Retry Policy**: Automatic retry with exponential backoff (1s, 4s, 9s) for failed jobs
 - **Dead-Letter Queue**: Failed jobs after max attempts are moved for manual review
-- **Graceful Shutdown**: Workers complete in-flight jobs before shutting down
+- **Graceful Shutdown**: Workers and the HTTP server complete in-flight work before shutting down
 - **Metrics Tracking**: Monitor job processing statistics (processed, succeeded, failed, dead-lettered)
 - **Concurrent Workers**: Multiple workers can run safely without duplicate processing
 
@@ -667,6 +667,7 @@ This project follows a **spec-first** approach using OpenAPI 3.0.3. The specific
 - **Contract Tests**: Automatically validate that implementation matches the spec (`go test ./internal/contract/...`).
 - **CI Enforcement**: Pull requests are checked for undocumented endpoints via `go run ./cmd/openapi-validate`.
 - **Versioning**: Versioned endpoints use `/api/v1/` prefix; unversioned public endpoints (like health) stay at `/api/`.
+- **Legacy Alias Policy**: When a protected `/api/*` alias is retained for backward compatibility, it must reuse the same handler and RBAC as `/api/v1/*`, and only the legacy alias gets deprecation headers.
 - **Contributor Checklist**: See `docs/OPENAPI_GUIDE.md` for the full checklist when modifying API endpoints.
 
 ### Useful Commands

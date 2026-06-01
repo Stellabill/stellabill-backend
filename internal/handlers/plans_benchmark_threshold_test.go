@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )

@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -9,8 +10,8 @@ import (
 	"stellarbill-backend/internal/service"
 )
 
-func TestGetDetail_HappyPath(t *testing.T) {
-	plan := &repository.PlanRow{
+func basePlanRow() repository.PlanRow {
+	return repository.PlanRow{
 		ID:          "plan-1",
 		Name:        "Pro",
 		Amount:      "2999",
@@ -18,31 +19,43 @@ func TestGetDetail_HappyPath(t *testing.T) {
 		Interval:    "month",
 		Description: "Pro plan",
 	}
-	sub := &repository.SubscriptionRow{
-		ID:          "sub-1",
-		PlanID:      "plan-1",
-		TenantID:    "tenant-1",
-		CustomerID:  "cust-1",
-		Status:      "active",
-		Amount:      "2999",
-		Currency:    "usd",
-		Interval:    "month",
-		NextBilling: "2024-08-01T00:00:00Z",
-		DeletedAt:   nil,
+}
+
+func baseSubscriptionRow() repository.SubscriptionRow {
+	return repository.SubscriptionRow{
+		ID:         "sub-1",
+		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
+		CustomerID: "cust-1",
+		Status:     "active",
+		Amount:     "2999",
+		Currency:   "usd",
+		Interval:   "month",
 	}
+}
+
+func assertWarnings(t *testing.T, got, want []string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("warnings: got %v, want %v", got, want)
+	}
+}
+
+func TestGetDetail_HappyPath(t *testing.T) {
+	plan := basePlanRow()
+	sub := baseSubscriptionRow()
+	sub.NextBilling = "2024-08-01T00:00:00Z"
 
 	svc := service.NewSubscriptionService(
-		repository.NewMockSubscriptionRepo(sub),
-		repository.NewMockPlanRepo(plan),
+		repository.NewMockSubscriptionRepo(&sub),
+		repository.NewMockPlanRepo(&plan),
 	)
 
 	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-1", "sub-1")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if len(warnings) != 0 {
-		t.Fatalf("expected no warnings, got %v", warnings)
-	}
+	assertWarnings(t, warnings, nil)
 
 	// Core fields
 	if detail.ID != "sub-1" {
@@ -90,21 +103,17 @@ func TestGetDetail_HappyPath(t *testing.T) {
 }
 
 func TestGetDetail_MissingPlan(t *testing.T) {
-	sub := &repository.SubscriptionRow{
-		ID:         "sub-2",
-		PlanID:     "plan-missing",
-		TenantID:   "tenant-1",
-		CustomerID: "cust-2",
-		Status:     "active",
-		Amount:     "999",
-		Currency:   "EUR",
-		Interval:   "year",
-		DeletedAt:  nil,
-	}
+	sub := baseSubscriptionRow()
+	sub.ID = "sub-2"
+	sub.PlanID = "plan-missing"
+	sub.CustomerID = "cust-2"
+	sub.Amount = "999"
+	sub.Currency = "EUR"
+	sub.Interval = "year"
 
 	svc := service.NewSubscriptionService(
-		repository.NewMockSubscriptionRepo(sub),
-		repository.NewMockPlanRepo(), // empty — no plans
+		repository.NewMockSubscriptionRepo(&sub),
+		repository.NewMockPlanRepo(),
 	)
 
 	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-2", "sub-2")
@@ -114,154 +123,197 @@ func TestGetDetail_MissingPlan(t *testing.T) {
 	if detail.Plan != nil {
 		t.Error("expected Plan to be nil when plan not found")
 	}
-	if len(warnings) != 1 || warnings[0] != "plan not found" {
-		t.Errorf("expected warnings=[\"plan not found\"], got %v", warnings)
-	}
+	assertWarnings(t, warnings, []string{"plan not found"})
 }
 
 func TestGetDetail_SoftDeleted(t *testing.T) {
-	now := time.Now()
-	sub := &repository.SubscriptionRow{
-		ID:         "sub-3",
-		PlanID:     "plan-1",
-		TenantID:   "tenant-1",
-		CustomerID: "cust-3",
-		Status:     "cancelled",
-		Amount:     "500",
-		Currency:   "USD",
-		Interval:   "month",
-		DeletedAt:  &now,
-	}
+	deletedAt := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	sub := baseSubscriptionRow()
+	sub.ID = "sub-3"
+	sub.CustomerID = "cust-3"
+	sub.Status = "cancelled"
+	sub.Amount = "500"
+	sub.Currency = "USD"
+	sub.DeletedAt = &deletedAt
 
 	svc := service.NewSubscriptionService(
-		repository.NewMockSubscriptionRepo(sub),
+		repository.NewMockSubscriptionRepo(&sub),
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-3", "sub-3")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-3", "sub-3")
 	if err != service.ErrDeleted {
 		t.Errorf("expected ErrDeleted, got %v", err)
 	}
+	if detail != nil {
+		t.Fatalf("expected nil detail, got %+v", detail)
+	}
+	assertWarnings(t, warnings, nil)
 }
 
 func TestGetDetail_NotFound(t *testing.T) {
 	svc := service.NewSubscriptionService(
-		repository.NewMockSubscriptionRepo(), // empty
+		repository.NewMockSubscriptionRepo(),
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-x", "sub-unknown")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-x", "sub-unknown")
 	if err != service.ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
+	if detail != nil {
+		t.Fatalf("expected nil detail, got %+v", detail)
+	}
+	assertWarnings(t, warnings, nil)
 }
 
 func TestGetDetail_UnparseableAmount(t *testing.T) {
-	sub := &repository.SubscriptionRow{
-		ID:         "sub-4",
-		PlanID:     "plan-1",
-		TenantID:   "tenant-1",
-		CustomerID: "cust-4",
-		Status:     "active",
-		Amount:     "not-a-number",
-		Currency:   "USD",
-		Interval:   "month",
-		DeletedAt:  nil,
-	}
+	sub := baseSubscriptionRow()
+	sub.ID = "sub-4"
+	sub.CustomerID = "cust-4"
+	sub.Amount = "not-a-number"
+	sub.Currency = "USD"
 
 	svc := service.NewSubscriptionService(
-		repository.NewMockSubscriptionRepo(sub),
+		repository.NewMockSubscriptionRepo(&sub),
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-4", "sub-4")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-4", "sub-4")
 	if err != service.ErrBillingParse {
 		t.Errorf("expected ErrBillingParse, got %v", err)
 	}
+	if detail != nil {
+		t.Fatalf("expected nil detail, got %+v", detail)
+	}
+	assertWarnings(t, warnings, nil)
 }
 
 func TestGetDetail_WrongCaller(t *testing.T) {
-	sub := &repository.SubscriptionRow{
-		ID:         "sub-5",
-		PlanID:     "plan-1",
-		TenantID:   "tenant-1",
-		CustomerID: "cust-5",
-		Status:     "active",
-		Amount:     "1000",
-		Currency:   "USD",
-		Interval:   "month",
-		DeletedAt:  nil,
-	}
+	sub := baseSubscriptionRow()
+	sub.ID = "sub-5"
+	sub.CustomerID = "cust-5"
+	sub.Amount = "1000"
+	sub.Currency = "USD"
 
 	svc := service.NewSubscriptionService(
-		repository.NewMockSubscriptionRepo(sub),
+		repository.NewMockSubscriptionRepo(&sub),
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-other", "sub-5")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-other", "sub-5")
 	if err != service.ErrForbidden {
 		t.Errorf("expected ErrForbidden, got %v", err)
 	}
+	if detail != nil {
+		t.Fatalf("expected nil detail, got %+v", detail)
+	}
+	assertWarnings(t, warnings, nil)
 }
 
 func TestGetDetail_CrossTenantPrevention(t *testing.T) {
-	sub := &repository.SubscriptionRow{
-		ID:         "sub-6",
-		PlanID:     "plan-1",
-		TenantID:   "tenant-1",
-		CustomerID: "cust-6",
-		Status:     "active",
-		Amount:     "1000",
-		Currency:   "USD",
-		Interval:   "month",
-		DeletedAt:  nil,
-	}
+	sub := baseSubscriptionRow()
+	sub.ID = "sub-6"
+	sub.CustomerID = "cust-6"
+	sub.Amount = "1000"
+	sub.Currency = "USD"
 
 	svc := service.NewSubscriptionService(
-		repository.NewMockSubscriptionRepo(sub),
+		repository.NewMockSubscriptionRepo(&sub),
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "tenant-2", "cust-6", "sub-6")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-2", "cust-6", "sub-6")
 	if err != service.ErrNotFound {
 		t.Errorf("expected ErrNotFound for cross-tenant query, got %v", err)
 	}
+	if detail != nil {
+		t.Fatalf("expected nil detail, got %+v", detail)
+	}
+	assertWarnings(t, warnings, nil)
 }
 
 func TestGetDetail_NormalizesNextBillingToUTC(t *testing.T) {
-	plan := &repository.PlanRow{
-		ID:          "plan-utc",
-		Name:        "UTC Plan",
-		Amount:      "1999",
-		Currency:    "usd",
-		Interval:    "month",
-		Description: "UTC plan",
-	}
-	sub := &repository.SubscriptionRow{
-		ID:          "sub-utc",
-		PlanID:      "plan-utc",
-		TenantID:    "tenant-utc",
-		CustomerID:  "cust-utc",
-		Status:      "active",
-		Amount:      "1999",
-		Currency:    "usd",
-		Interval:    "month",
-		NextBilling: "2026-04-23T10:30:00+02:00",
-	}
+	plan := basePlanRow()
+	plan.ID = "plan-utc"
+	plan.Name = "UTC Plan"
+	plan.Amount = "1999"
+	plan.Description = "UTC plan"
+	sub := baseSubscriptionRow()
+	sub.ID = "sub-utc"
+	sub.PlanID = plan.ID
+	sub.TenantID = "tenant-utc"
+	sub.CustomerID = "cust-utc"
+	sub.Amount = "1999"
+	sub.NextBilling = "2026-04-23T10:30:00+02:00"
 
 	svc := service.NewSubscriptionService(
-		repository.NewMockSubscriptionRepo(sub),
-		repository.NewMockPlanRepo(plan),
+		repository.NewMockSubscriptionRepo(&sub),
+		repository.NewMockPlanRepo(&plan),
 	)
 
-	detail, _, err := svc.GetDetail(context.Background(), "tenant-utc", "cust-utc", "sub-utc")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-utc", "cust-utc", "sub-utc")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	assertWarnings(t, warnings, nil)
 	if detail.BillingSummary.NextBillingDate == nil {
 		t.Fatal("expected next_billing_date")
 	}
 	if *detail.BillingSummary.NextBillingDate != "2026-04-23T08:30:00Z" {
 		t.Fatalf("unexpected normalized next_billing_date: %s", *detail.BillingSummary.NextBillingDate)
+	}
+}
+
+func TestGetDetail_FallsBackToRawNextBillingWhenNormalizationFails(t *testing.T) {
+	plan := basePlanRow()
+	plan.ID = "plan-raw"
+	sub := baseSubscriptionRow()
+	sub.ID = "sub-raw"
+	sub.PlanID = plan.ID
+	sub.TenantID = "tenant-raw"
+	sub.CustomerID = "cust-raw"
+	sub.NextBilling = "not-a-timestamp"
+
+	svc := service.NewSubscriptionService(
+		repository.NewMockSubscriptionRepo(&sub),
+		repository.NewMockPlanRepo(&plan),
+	)
+
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-raw", "cust-raw", "sub-raw")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	assertWarnings(t, warnings, nil)
+	if detail.BillingSummary.NextBillingDate == nil {
+		t.Fatal("expected next_billing_date fallback to preserve raw value")
+	}
+	if *detail.BillingSummary.NextBillingDate != "not-a-timestamp" {
+		t.Fatalf("expected raw next_billing fallback, got %q", *detail.BillingSummary.NextBillingDate)
+	}
+}
+
+func TestGetDetail_EmptyNextBillingLeavesNil(t *testing.T) {
+	plan := basePlanRow()
+	plan.ID = "plan-empty-next"
+	sub := baseSubscriptionRow()
+	sub.ID = "sub-empty-next"
+	sub.PlanID = plan.ID
+	sub.TenantID = "tenant-empty-next"
+	sub.CustomerID = "cust-empty-next"
+	sub.NextBilling = ""
+
+	svc := service.NewSubscriptionService(
+		repository.NewMockSubscriptionRepo(&sub),
+		repository.NewMockPlanRepo(&plan),
+	)
+
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-empty-next", "cust-empty-next", "sub-empty-next")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	assertWarnings(t, warnings, nil)
+	if detail.BillingSummary.NextBillingDate != nil {
+		t.Fatalf("expected nil next_billing_date for empty input, got %q", *detail.BillingSummary.NextBillingDate)
 	}
 }

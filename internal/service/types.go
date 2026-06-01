@@ -29,6 +29,16 @@ type SubscriptionDetail struct {
 	BillingSummary BillingSummary `json:"billing_summary" redacted:"amount"`
 }
 
+func (sd SubscriptionDetail) MarshalJSON() ([]byte, error) {
+	type Alias SubscriptionDetail
+	copysd := Alias(sd)
+	if copysd.Customer != "" {
+		copysd.Customer = "cust_***"
+	}
+	return json.Marshal(copysd)
+}
+
+
 
 // SubscriptionStatusChange is returned after a successful status mutation.
 type SubscriptionStatusChange struct {

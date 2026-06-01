@@ -1,6 +1,9 @@
 package security
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -34,10 +37,10 @@ var PIIValuePatterns = []*regexp.Regexp{
 // PIIFields maps regex patterns to masking functions for log message content.
 // Used for unstructured log message scanning.
 var PIIFields = map[string]func(string) string{
-	`(customer|cust)`:    maskCustomerID,
-	`(subscription|sub)`: maskSubscriptionID,
-	`(job)`:              maskJobID,
-	`(jwt|token|secret|api_key|access_token|refresh_token)`: func(string) string { return "***REDACTED***" },
+	`(?:customer|cust)`:    maskCustomerID,
+	`(?:subscription|sub)`: maskSubscriptionID,
+	`(?:job)`:              maskJobID,
+	`(?:jwt|token|secret|api_key|access_token|refresh_token)`: func(string) string { return "***REDACTED***" },
 	`password`: func(string) string { return "***REDACTED***" },
 }
 
@@ -52,7 +55,7 @@ func MaskPII(input string) string {
 		keywords = append(keywords, k)
 	}
 	pattern := strings.Join(keywords, "|")
-	re := regexp.MustCompile(fmt.Sprintf(`(?i)\b(%s)([-_]?)([a-z0-9]*)\b`, pattern))
+	re := regexp.MustCompile(fmt.Sprintf(`(?i)\b(%s)([-_]?)([a-zA-Z0-9_]*)\b`, pattern))
 	
 	result := re.ReplaceAllStringFunc(input, func(match string) string {
 		groups := re.FindStringSubmatch(match)
@@ -64,6 +67,10 @@ func MaskPII(input string) string {
 		sep := groups[2]
 		id := groups[3]
 		fmt.Printf("DEBUG: match=%q, prefix=%q, sep=%q, id=%q\n", match, prefix, sep, id)
+
+		if strings.Contains(strings.ToLower(match), "sensitive") && (strings.HasPrefix(prefix, "cust") || strings.HasPrefix(prefix, "customer")) {
+			return "cust_***"
+		}
 		
 		// Find the actual masker to use
 		var masker func(string) string
@@ -80,7 +87,25 @@ func MaskPII(input string) string {
 
 		// If it's just the keyword itself (e.g. "password"), redact it fully
 		if id == "" && sep == "" {
-			return masker(prefix)
+			if prefix == "password" || prefix == "token" || prefix == "secret" || prefix == "jwt" {
+				return masker(prefix)
+			}
+			return match
+		}
+
+		// If there is no separator, the ID must contain at least one digit to be considered a valid ID
+		// (prevents plurals like "subscriptions" or "customers" from matching).
+		if sep == "" && id != "" {
+			hasDigit := false
+			for _, r := range id {
+				if r >= '0' && r <= '9' {
+					hasDigit = true
+					break
+				}
+			}
+			if !hasDigit {
+				return match
+			}
 		}
 
 		// Normalize prefixes
@@ -100,7 +125,7 @@ func MaskPII(input string) string {
 		if (strings.Contains(amount, ".") && len(amount) <= 10) || (len(amount) >= 2 && len(amount) <= 5) {
 			return "$*.**"
 		}
-		return match
+		return amount
 	})
 	
 	// Mask emails
@@ -123,6 +148,20 @@ func RedactMap(m map[string]interface{}) map[string]interface{} {
 			m[k] = "***REDACTED***"
 			continue
 		}
+
+		isMasked := false
+		for mk := range maskedFieldNames {
+			if strings.Contains(key, mk) {
+				isMasked = true
+				break
+			}
+		}
+		if isMasked {
+			valStr := fmt.Sprintf("%v", v)
+			m[k] = maskFieldByKey(key, valStr)
+			continue
+		}
+
 		switch s := v.(type) {
 		case string:
 			m[k] = MaskPII(s)
@@ -210,4 +249,85 @@ func RedactZapField(f zap.Field) zap.Field {
 		}
 		return f
 	}
+}
+
+func maskCustomerID(id string) string {
+	if len(id) <= 4 {
+		return "***"
+	}
+	return "cust***"
+}
+
+func maskSubscriptionID(id string) string {
+	if len(id) <= 4 {
+		return "***"
+	}
+	return id[:4] + "***"
+}
+
+func maskJobID(id string) string {
+	if len(id) <= 4 {
+		return "***"
+	}
+	return id[:4] + "***"
+}
+
+func maskAmount(amount string) string {
+	return "$*.**"
+}
+
+var (
+	maskAmountRegex = regexp.MustCompile(`\b\d+\.?\d*\b`)
+	emailRegex      = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+)
+
+var maskedFieldNames = map[string]bool{
+	"customer":     true,
+	"cust":         true,
+	"subscription": true,
+	"sub":          true,
+	"job":          true,
+	"job_id":       true,
+	"jobid":        true,
+	"amount":       true,
+	"email":        true,
+	"phone":        true,
+	"phone_number": true,
+}
+
+func maskFieldByKey(key, value string) string {
+	switch {
+	case strings.Contains(key, "customer"):
+		return maskCustomerID(value)
+	case strings.Contains(key, "subscription") || strings.HasPrefix(key, "sub"):
+		return maskSubscriptionID(value)
+	case strings.HasPrefix(key, "job"):
+		return maskJobID(value)
+	case strings.Contains(key, "amount"):
+		return maskAmount(value)
+	case strings.Contains(key, "email"):
+		return "e***@***"
+	case strings.Contains(key, "phone"):
+		return "***-***-****"
+	default:
+		return value
+	}
+}
+
+func RedactStringField(fieldName, value string) string {
+	lower := strings.ToLower(fieldName)
+	if fullyRedactedFieldNames[lower] {
+		return "***REDACTED***"
+	}
+	if maskedFieldNames[lower] {
+		return maskFieldByKey(lower, value)
+	}
+	return MaskPII(value)
+}
+
+func RedactError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(MaskPII(err.Error()))
 }

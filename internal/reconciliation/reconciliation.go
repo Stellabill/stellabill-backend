@@ -47,11 +47,26 @@ type Report struct {
     Contract       Snapshot            `json:"contract"`
 }
 
+func (r Report) GetID() string {
+	return r.SubscriptionID
+}
+
+func (r Report) GetSortValue() string {
+	return r.SubscriptionID
+}
+
 // Adapter defines how to fetch contract snapshots from an integration layer.
 type Adapter interface {
     // FetchSnapshots returns current contract snapshots. Implementations may return
     // partial data; callers must handle missing items.
     FetchSnapshots(ctx context.Context) ([]Snapshot, error)
+}
+
+// Store defines where reconciliation reports are persisted.
+type Store interface {
+	SaveReports(reports []Report) error
+	ListReports() ([]Report, error)
+	ListReportsByTenant(tenantID string) ([]Report, error)
 }
 
 // Reconciler performs comparisons between backend state and contract snapshots.

@@ -88,6 +88,20 @@ func (csr *CachedSubscriptionRepo) FindByIDAndTenant(ctx context.Context, id str
 	return sr, nil
 }
 
+// UpdateStatus implements SubscriptionRepository.
+// It delegates to the backend and invalidates the cached keys.
+func (csr *CachedSubscriptionRepo) UpdateStatus(ctx context.Context, id string, tenantID string, status string) error {
+	err := csr.backend.UpdateStatus(ctx, id, tenantID, status)
+	if err != nil {
+		return err
+	}
+	if csr.cache != nil {
+		_ = csr.cache.Delete(ctx, csr.byIDKey(id))
+		_ = csr.cache.Delete(ctx, csr.byTenantKey(id, tenantID))
+	}
+	return nil
+}
+
 // Metrics returns hit/miss counters for testing/monitoring.
 func (csr *CachedSubscriptionRepo) Metrics() (hits uint64, misses uint64) {
 	return atomic.LoadUint64(&csr.hits), atomic.LoadUint64(&csr.misses)

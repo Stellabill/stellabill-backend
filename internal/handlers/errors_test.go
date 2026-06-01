@@ -28,6 +28,10 @@ func (m *mockErrorService) GetDetail(_ context.Context, _, _, _ string) (*servic
 	return m.detail, m.warnings, nil
 }
 
+func (m *mockErrorService) ChangeStatus(ctx context.Context, tenantID string, actorID string, subscriptionID string, targetStatus string) (*service.SubscriptionStatusChange, error) {
+	return nil, nil
+}
+
 // setupErrorTestRouter builds a test router with trace ID middleware
 func setupErrorTestRouter(svc service.SubscriptionService, setCallerID bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -355,7 +359,7 @@ func TestErrorEnvelope_PIIRedaction(t *testing.T) {
 	assertFalse(strings.Contains(envelope.Message, "1234.56"), "amount should not be present")
 	assertTrue := func(cond bool, msg string) {
 		if !cond {
-			t.Errorf(msg)
+			t.Error(msg)
 		}
 	}
 	assertTrue(strings.Contains(envelope.Message, "cust_***"), "should contain redacted customer")

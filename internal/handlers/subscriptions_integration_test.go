@@ -37,7 +37,7 @@ func buildIntegrationRouter(subRepo repository.SubscriptionRepository, planRepo 
 	r := gin.New()
 	svc := service.NewSubscriptionService(subRepo, planRepo)
 	r.GET("/api/subscriptions/:id",
-		middleware.AuthMiddleware(testJWTSecret),
+		middleware.AuthMiddleware(nil, testJWTSecret),
 		NewGetSubscriptionHandler(svc),
 	)
 	return r

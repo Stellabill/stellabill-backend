@@ -8,8 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"golang.org/x/sync/singleflight"
 )
 
 type cacheEnvelope struct {
@@ -114,7 +112,7 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 	if err != nil {
 		return nil, err
 	}
-	return v.(*PlanRow), nil
+	return pr, nil
 }
 
 // List returns all plans. It caches the full list under a single key.
@@ -138,38 +136,32 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 				_ = cpr.cache.Delete(ctx, key)
 			} else {
 				var out []*PlanRow
-				if err := json.Unmarshal(env.Data, &out); err == nil {
+				if unmarshalErr := json.Unmarshal(env.Data, &out); unmarshalErr == nil {
 					atomic.AddUint64(&cpr.hits, 1)
 					return out, nil
+				} else {
+					// Corrupted envelope JSON
+					return nil, fmt.Errorf("corrupted cache envelope: %w", unmarshalErr)
 				}
-			} else {
-				// Corrupted envelope JSON
-				return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 			}
 		}
 	}
-	// Cache miss, use singleflight for list
+	// Cache miss — fetch from backend and populate cache.
 	atomic.AddUint64(&cpr.misses, 1)
-	v, err, _ := cpr.sf.Do(key, func() (interface{}, error) {
-		out, err := cpr.backend.List(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if cpr.cache != nil {
-			outBytes, err := json.Marshal(out)
-			if err == nil {
-				env := cacheEnvelope{Data: outBytes, StoredAt: time.Now()}
-				if envBytes, err := json.Marshal(env); err == nil {
-					_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
-				}
-			}
-		}
-		return out, nil
-	})
+	out, err := cpr.backend.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return v.([]*PlanRow), nil
+	if cpr.cache != nil {
+		outBytes, marshalErr := json.Marshal(out)
+		if marshalErr == nil {
+			env := cacheEnvelope{Data: outBytes, StoredAt: time.Now()}
+			if envBytes, marshalErr := json.Marshal(env); marshalErr == nil {
+				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
+			}
+		}
+	}
+	return out, nil
 }
 
 // Delete invalidates a cached plan entry and records the invalidation time.

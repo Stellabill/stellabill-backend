@@ -109,6 +109,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	stmtRepo := repository.NewMockStatementRepo()
 	stmtSvc := service.NewStatementService(rawSubRepo, stmtRepo)
 
+	// Fees and swap service wiring
+	feeSvc := service.NewFeeService()
+	feesHandler := handlers.NewFeesHandler(feeSvc)
+	swapRouter := service.NewSwapRouter()
+	swapHandler := handlers.NewSwapHandler(swapRouter)
+
 	// handlerSubSvc adapts the mock repo to satisfy handlers.SubscriptionService.
 	handlerSubSvc := &mockHandlerSubSvc{repo: rawSubRepo}
 	// handlerPlanSvc adapts the cached plan repo to satisfy handlers.PlanService.
@@ -144,6 +150,13 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		v1.GET("/plans", h.ListPlans)
 		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
+
+		// Fees module (#162)
+		v1.GET("/fees/history", feesHandler.GetFeeHistory)
+
+		// Swap router (#88)
+		v1.POST("/swap/exact-in", swapHandler.SwapExactTokensForTokens)
+		v1.POST("/swap/exact-out", swapHandler.SwapTokensForExactTokens)
 	}
 
 	// Legacy /api routes - also protected

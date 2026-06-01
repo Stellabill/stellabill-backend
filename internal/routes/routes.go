@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/lib/pq"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -65,11 +67,24 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
 	var dbPool *pgxpool.Pool
+	var planDB *sql.DB
 	if cfg.DBConn != "" {
-		var err error
-		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
+		poolConfig, err := pgxpool.ParseConfig(cfg.DBConn)
 		if err != nil {
-			fmt.Printf("Failed to initialize database pool: %v\n", err)
+			fmt.Printf("Failed to parse database pool config: %v\n", err)
+		} else {
+			applyPGXPoolConfig(poolConfig, cfg)
+			dbPool, err = pgxpool.NewWithConfig(context.Background(), poolConfig)
+			if err != nil {
+				fmt.Printf("Failed to initialize database pool: %v\n", err)
+			}
+		}
+
+		planDB, err = sql.Open("postgres", cfg.DBConn)
+		if err != nil {
+			fmt.Printf("Failed to initialize plan database handle: %v\n", err)
+		} else {
+			repository.ApplySQLDBPoolConfig(planDB, cfg)
 		}
 	}
 
@@ -93,7 +108,10 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	subCache := cache.NewInMemory()
 	const repoCacheTTL = 5 * time.Minute
 
-	rawPlanRepo := repository.NewMockPlanRepo()
+	var rawPlanRepo repository.PlanRepository = repository.NewMockPlanRepo()
+	if planDB != nil {
+		rawPlanRepo = repository.NewPostgresPlanRepo(planDB)
+	}
 	rawSubRepo := repository.NewMockSubscriptionRepo(
 		&repository.SubscriptionRow{ID: "sub-123", TenantID: "", CustomerID: "c1", Status: "active", PlanID: "p1"},
 		&repository.SubscriptionRow{ID: "sub-456", TenantID: "", CustomerID: "c2", Status: "active", PlanID: "p1"},
@@ -197,6 +215,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 			log.Printf("closing database pool")
 			dbPool.Close()
 		}
+		if planDB != nil {
+			log.Printf("closing plan database handle")
+			if err := planDB.Close(); err != nil {
+				return fmt.Errorf("close plan database handle: %w", err)
+			}
+		}
 
 		if tracerShutdown != nil {
 			log.Printf("flushing tracer")
@@ -207,6 +231,19 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 		return nil
 	}
+}
+
+func applyPGXPoolConfig(poolConfig *pgxpool.Config, cfg config.Config) {
+	if poolConfig == nil {
+		return
+	}
+
+	poolConfig.MaxConns = int32(cfg.DBPoolMaxConns)
+	poolConfig.MinConns = int32(cfg.DBPoolMinConns)
+	poolConfig.MaxConnLifetime = time.Duration(cfg.DBPoolMaxConnLifetime) * time.Second
+	poolConfig.MaxConnIdleTime = time.Duration(cfg.DBPoolMaxConnIdleTime) * time.Second
+	poolConfig.HealthCheckPeriod = time.Duration(cfg.DBPoolHealthCheckPeriod) * time.Second
+	poolConfig.ConnConfig.ConnectTimeout = time.Duration(cfg.DBPoolConnectTimeout) * time.Second
 }
 
 // mockHandlerSubSvc adapts *repository.MockSubscriptionRepo to handlers.SubscriptionService.

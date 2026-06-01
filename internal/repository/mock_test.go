@@ -86,32 +86,36 @@ func TestMockStatementRepo_ListAndFilters(t *testing.T) {
 			expectedTotal: 2,
 		},
 		{
-			name:          "Filter by StartAfter (strict boundary check - PeriodStart < StartAfter filters it out)",
+			name:          "Filter by StartAfter (time.Parse: PeriodStart must be strictly after StartAfter)",
 			customerID:    "cust-1",
 			query:         StatementQuery{StartAfter: "2026-02-01T00:00:00Z"},
+			// st-02 has PeriodStart == StartAfter → excluded (not strictly after)
+			expectedIDs:   []string{"st-03", "st-04"},
+			expectedTotal: 2,
+		},
+		{
+			name:          "Date boundary check - PeriodStart == StartAfter must be excluded (strictly after)",
+			customerID:    "cust-1",
+			query:         StatementQuery{StartAfter: "2026-01-01T00:00:00Z"},
+			// st-01 has PeriodStart == StartAfter → excluded
 			expectedIDs:   []string{"st-02", "st-03", "st-04"},
 			expectedTotal: 3,
 		},
 		{
-			name:          "Date boundary check - PeriodStart == StartAfter must be kept (not filtered out)",
-			customerID:    "cust-1",
-			query:         StatementQuery{StartAfter: "2026-01-01T00:00:00Z"},
-			expectedIDs:   []string{"st-01", "st-02", "st-03", "st-04"},
-			expectedTotal: 4,
-		},
-		{
-			name:          "Filter by EndBefore (strict boundary check - PeriodEnd > EndBefore filters it out)",
+			name:          "Filter by EndBefore (time.Parse: PeriodEnd must be strictly before EndBefore)",
 			customerID:    "cust-1",
 			query:         StatementQuery{EndBefore: "2026-03-31T23:59:59Z"},
-			expectedIDs:   []string{"st-01", "st-02", "st-03"},
-			expectedTotal: 3,
+			// st-03 has PeriodEnd == EndBefore → excluded (not strictly before)
+			expectedIDs:   []string{"st-01", "st-02"},
+			expectedTotal: 2,
 		},
 		{
-			name:          "Date boundary check - PeriodEnd == EndBefore must be kept (not filtered out)",
+			name:          "Date boundary check - PeriodEnd == EndBefore must be excluded (strictly before)",
 			customerID:    "cust-1",
 			query:         StatementQuery{EndBefore: "2026-04-30T23:59:59Z"},
-			expectedIDs:   []string{"st-01", "st-02", "st-03", "st-04"},
-			expectedTotal: 4,
+			// st-04 has PeriodEnd == EndBefore → excluded
+			expectedIDs:   []string{"st-01", "st-02", "st-03"},
+			expectedTotal: 3,
 		},
 		{
 			name:          "Combination: SubscriptionID + Kind + Status",
@@ -121,11 +125,11 @@ func TestMockStatementRepo_ListAndFilters(t *testing.T) {
 			expectedTotal: 1,
 		},
 		{
-			name:          "Combination: StartAfter + EndBefore",
+			name:          "Combination: StartAfter + EndBefore (all excluded with strict boundaries)",
 			customerID:    "cust-1",
 			query:         StatementQuery{StartAfter: "2026-02-01T00:00:00Z", EndBefore: "2026-03-31T23:59:59Z"},
-			expectedIDs:   []string{"st-02", "st-03"},
-			expectedTotal: 2,
+			expectedIDs:   []string{},
+			expectedTotal: 0,
 		},
 		{
 			name:          "Edge case: empty result set (no matching customer)",
@@ -164,64 +168,93 @@ func TestMockStatementRepo_ListAndFilters(t *testing.T) {
 	}
 }
 
-func TestMockStatementRepo_LimitAndTruncation(t *testing.T) {
-	// Create a repository with 15 statements for "cust-1"
+func TestMockStatementRepo_PaginationAndTruncation(t *testing.T) {
+	// Create 15 rows for cust-1 with incrementing PeriodStart so sort order is deterministic.
 	var rows []*StatementRow
 	for i := 1; i <= 15; i++ {
 		id := fmt.Sprintf("st-%02d", i)
 		rows = append(rows, &StatementRow{
-			ID:         id,
-			CustomerID: "cust-1",
+			ID:          id,
+			CustomerID:  "cust-1",
+			PeriodStart: fmt.Sprintf("2026-%02d-01T00:00:00Z", i),
 		})
 	}
-	// Add one row for another customer to make sure customer scoping still works
+	// One row for another customer to verify customer scoping
 	rows = append(rows, &StatementRow{
-		ID:         "st-other",
-		CustomerID: "cust-2",
+		ID:          "st-other",
+		CustomerID:  "cust-2",
+		PeriodStart: "2026-01-01T00:00:00Z",
 	})
 
 	r := NewMockStatementRepo(rows...)
 
+	// Sort by PeriodStart gives st-01 through st-15 in order.
+	expectedAll := make([]string, 15)
+	for i := range expectedAll {
+		expectedAll[i] = fmt.Sprintf("st-%02d", i+1)
+	}
+
 	tests := []struct {
 		name          string
-		limit         int
+		page          int
+		pageSize      int
 		expectedLen   int
 		expectedTotal int
 		expectedIDs   []string
 	}{
 		{
-			name:          "Default limit of 10 when limit is 0",
-			limit:         0,
+			name:          "Default page size of 10",
+			page:          1,
+			pageSize:      0,
 			expectedLen:   10,
 			expectedTotal: 15,
-			expectedIDs:   []string{"st-01", "st-02", "st-03", "st-04", "st-05", "st-06", "st-07", "st-08", "st-09", "st-10"},
+			expectedIDs:   expectedAll[:10],
 		},
 		{
-			name:          "Default limit of 10 when limit is negative",
-			limit:         -5,
+			name:          "Default page size of 10 when negative",
+			page:          1,
+			pageSize:      -5,
 			expectedLen:   10,
 			expectedTotal: 15,
-			expectedIDs:   []string{"st-01", "st-02", "st-03", "st-04", "st-05", "st-06", "st-07", "st-08", "st-09", "st-10"},
+			expectedIDs:   expectedAll[:10],
 		},
 		{
-			name:          "Limit smaller than available (truncation) and count semantics verified",
-			limit:         5,
+			name:          "PageSize smaller than available (truncation) and count semantics",
+			page:          1,
+			pageSize:      5,
 			expectedLen:   5,
 			expectedTotal: 15,
-			expectedIDs:   []string{"st-01", "st-02", "st-03", "st-04", "st-05"},
+			expectedIDs:   expectedAll[:5],
 		},
 		{
-			name:          "Limit larger than available",
-			limit:         20,
+			name:          "PageSize larger than available",
+			page:          1,
+			pageSize:      20,
 			expectedLen:   15,
 			expectedTotal: 15,
-			expectedIDs:   []string{"st-01", "st-02", "st-03", "st-04", "st-05", "st-06", "st-07", "st-08", "st-09", "st-10", "st-11", "st-12", "st-13", "st-14", "st-15"},
+			expectedIDs:   expectedAll,
+		},
+		{
+			name:          "Page 2 with PageSize 5",
+			page:          2,
+			pageSize:      5,
+			expectedLen:   5,
+			expectedTotal: 15,
+			expectedIDs:   expectedAll[5:10],
+		},
+		{
+			name:          "Page 4 with PageSize 5 (last partial page)",
+			page:          4,
+			pageSize:      5,
+			expectedLen:   0,
+			expectedTotal: 15,
+			expectedIDs:   nil,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, total, err := r.ListByCustomerID(context.Background(), "cust-1", StatementQuery{Limit: tc.limit})
+			got, total, err := r.ListByCustomerID(context.Background(), "cust-1", StatementQuery{Page: tc.page, PageSize: tc.pageSize})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -229,7 +262,7 @@ func TestMockStatementRepo_LimitAndTruncation(t *testing.T) {
 				t.Errorf("expected total %d, got %d", tc.expectedTotal, total)
 			}
 			if len(got) != tc.expectedLen {
-				t.Errorf("expected len %d, got %d", tc.expectedLen, len(got))
+				t.Fatalf("expected len %d, got %d", tc.expectedLen, len(got))
 			}
 			for i, expectedID := range tc.expectedIDs {
 				if got[i].ID != expectedID {

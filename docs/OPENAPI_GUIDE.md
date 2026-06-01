@@ -22,6 +22,7 @@ When adding or modifying API endpoints, follow this checklist:
 - [ ] Register the route in `internal/routes/routes.go` (only once!)
 - [ ] Ensure consistent API versioning (use `/api/v1/` prefix for versioned endpoints)
 - [ ] Add authentication/authorization as specified in the OpenAPI security scheme
+- [ ] If a legacy `/api/*` alias must remain temporarily, wire it to the same handler and `RequirePermission` middleware as `/api/v1/*`, and keep `DeprecationHeaders` on the legacy alias only
 
 ### 3. Validate Contract
 - [ ] Run `go test ./internal/contract/...` to verify the endpoint matches the spec
@@ -36,6 +37,7 @@ When adding or modifying API endpoints, follow this checklist:
 
 - **Versioned endpoints**: All endpoints that require authentication should be under `/api/v1/` prefix.
 - **Unversioned endpoints**: Only public endpoints like health check may remain under `/api/` without version.
+- **Legacy aliases**: Deprecated `/api/*` aliases may exist for backward compatibility, but they must remain behaviorally identical to `/api/v1/*` and carry the deprecation headers instead of the canonical `/api/v1/*` route.
 - **Backward compatibility**: When making changes to existing endpoints:
   - Non-breaking changes (adding optional fields) can be done in the same version.
   - Breaking changes (removing fields, changing types) require a new version (`/api/v2/`).

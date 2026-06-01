@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -14,9 +15,6 @@ type AdminHandler struct {
 
 // NewAdminHandler builds an admin handler with the expected token.
 func NewAdminHandler(token string) *AdminHandler {
-	if token == "" {
-		token = "change-me-admin-token"
-	}
 	return &AdminHandler{expectedToken: token}
 }
 
@@ -30,7 +28,29 @@ func (h *AdminHandler) PurgeCache(c *gin.Context) {
 	}
 
 	token := c.GetHeader("X-Admin-Token")
-	if token != h.expectedToken {
+
+	// Reject if the admin token is not configured (empty)
+	if h.expectedToken == "" {
+		audit.LogAction(c, "admin_purge", target, "denied", map[string]string{
+			"attempt": attempt,
+			"reason":  "invalid_token",
+		})
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid admin token"})
+		return
+	}
+
+	// Reject missing or empty X-Admin-Token header early
+	if token == "" {
+		audit.LogAction(c, "admin_purge", target, "denied", map[string]string{
+			"attempt": attempt,
+			"reason":  "invalid_token",
+		})
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid admin token"})
+		return
+	}
+
+	// Perform constant-time comparison to prevent timing side-channel attacks
+	if subtle.ConstantTimeCompare([]byte(token), []byte(h.expectedToken)) != 1 {
 		audit.LogAction(c, "admin_purge", target, "denied", map[string]string{
 			"attempt": attempt,
 			"reason":  "invalid_token",

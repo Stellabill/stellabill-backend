@@ -3,7 +3,7 @@ package middleware
 import (
 	"time"
 
-	"stellabill-backend/internal/logger"
+	"stellarbill-backend/internal/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"

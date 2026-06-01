@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"stellabill-backend/internal/logger"
+	"stellarbill-backend/internal/logger"
 
 	"github.com/gin-gonic/gin"
 )

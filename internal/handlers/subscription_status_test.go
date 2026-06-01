@@ -206,8 +206,9 @@ func TestChangeSubscriptionStatusHandler_RequiresManagePermission(t *testing.T) 
 
 	rUnauthorized := setupSubscriptionStatusRouter(svc, "tenant-1", nil, "merchant-1")
 	rec := performStatusChangeRequest(t, rUnauthorized, "sub-6", map[string]string{"status": "paused"})
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	
+	if rec.Code != http.StatusForbidden { 
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	rForbidden := setupSubscriptionStatusRouter(svc, "tenant-1", []auth.Role{auth.RoleCustomer}, "cust-1")

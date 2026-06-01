@@ -120,13 +120,14 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 
 // List returns all plans. It caches the full list under a single key.
 func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
-	key := "plan:list:all"
+	key := cpr.listKey()
+	
 	// Attempt cache fetch for list
 	if cpr.cache != nil {
 		if val, err := cpr.cache.Get(ctx, key); err == nil && val != nil {
 			var env cacheEnvelope
 			if err := json.Unmarshal(val, &env); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 			}
 			stale := false
 			if invTimeVal, ok := cpr.invalidatedAt.Load(key); ok {
@@ -143,12 +144,13 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 					atomic.AddUint64(&cpr.hits, 1)
 					return out, nil
 				} else {
-					// Corrupted envelope JSON
 					return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 				}
+				return nil, fmt.Errorf("corrupted cache data: %w", err)
 			}
 		}
 	}
+
 	// Cache miss, use singleflight for list
 	atomic.AddUint64(&cpr.misses, 1)
 	v, err, _ := cpr.sf.Do(key, func() (interface{}, error) {
@@ -167,6 +169,7 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 		}
 		return out, nil
 	})
+	
 	if err != nil {
 		return nil, err
 	}
@@ -180,11 +183,12 @@ func (cpr *CachedPlanRepo) Delete(ctx context.Context, id string) error {
 	}
 	key := cpr.cacheKey(id)
 	now := time.Now()
+	
 	cpr.invalidatedAt.Store(key, now)
-	cpr.invalidatedAt.Store("plan:list:all", now)
+	cpr.invalidatedAt.Store(cpr.listKey(), now)
 
 	_ = cpr.cache.Delete(ctx, key)
-	_ = cpr.cache.Delete(ctx, "plan:list:all")
+	_ = cpr.cache.Delete(ctx, cpr.listKey())
 	return nil
 }
 
@@ -207,7 +211,7 @@ func (cpr *CachedPlanRepo) Flush(ctx context.Context) (int, error) {
 		return f.Flush(ctx)
 	}
 	// Fallback: delete the two fixed keys we know about.
-	_ = cpr.cache.Delete(ctx, "plan:list:all")
+	_ = cpr.cache.Delete(ctx, cpr.listKey())
 	return 0, nil
 }
 

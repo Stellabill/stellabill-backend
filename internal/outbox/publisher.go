@@ -1,12 +1,22 @@
 package outbox
 
 import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
-// HTTPPublisher publishes events via HTTP (placeholder implementation)
 type HTTPPublisher struct {
 	endpoint string
 	client   HTTPClient
@@ -14,17 +24,62 @@ type HTTPPublisher struct {
 
 // HTTPClient interface for HTTP operations (allows for mocking)
 type HTTPClient interface {
-	Post(url string, contentType string, body []byte) (int, error)
+	Post(ctx context.Context, url string, contentType string, body []byte) (int, error)
 }
 
-// DefaultHTTPClient is a simple HTTP client implementation
-type DefaultHTTPClient struct{}
+type DefaultHTTPClient struct {
+	client *http.Client
+}
 
-func (c *DefaultHTTPClient) Post(url string, contentType string, body []byte) (int, error) {
-	// This is a placeholder implementation
-	// In a real implementation, you would use http.Client
-	log.Printf("Would send POST to %s with content-type %s and body: %s", url, contentType, string(body))
-	return 200, nil
+func NewDefaultHTTPClient(timeout time.Duration, caFile string) (*DefaultHTTPClient, error) {
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	if caFile != "" {
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA file %s: %w", caFile, err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate from %s", caFile)
+		}
+		transport.TLSClientConfig = &tls.Config{
+			RootCAs:    caCertPool,
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+
+	return &DefaultHTTPClient{
+		client: &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
+		},
+	}, nil
+}
+
+func (c *DefaultHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	const maxBodySize = 1024 * 1024
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBodySize))
+
+	return resp.StatusCode, nil
 }
 
 // NewHTTPPublisher creates a new HTTP publisher
@@ -36,20 +91,20 @@ func NewHTTPPublisher(endpoint string, client HTTPClient) Publisher {
 }
 
 // Publish publishes an event via HTTP
-func (p *HTTPPublisher) Publish(event *Event) error {
+func (p *HTTPPublisher) Publish(ctx context.Context, event *Event) error {
 	var eventData EventData
 	if err := json.Unmarshal(event.EventData, &eventData); err != nil {
 		return fmt.Errorf("failed to unmarshal event data: %w", err)
 	}
 
 	payload := map[string]interface{}{
-		"id":            event.ID,
-		"type":          event.EventType,
-		"data":          eventData.Data,
-		"occurred_at":   event.OccurredAt,
-		"aggregate_id":  event.AggregateID,
+		"id":             event.ID,
+		"type":           event.EventType,
+		"data":           eventData.Data,
+		"occurred_at":    event.OccurredAt,
+		"aggregate_id":   event.AggregateID,
 		"aggregate_type": event.AggregateType,
-		"version":       event.Version,
+		"version":        event.Version,
 	}
 
 	body, err := json.Marshal(payload)
@@ -57,7 +112,7 @@ func (p *HTTPPublisher) Publish(event *Event) error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	statusCode, err := p.client.Post(p.endpoint, "application/json", body)
+	statusCode, err := p.client.Post(ctx, p.endpoint, "application/json", body)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -78,7 +133,7 @@ func NewConsolePublisher() Publisher {
 }
 
 // Publish publishes an event to console
-func (p *ConsolePublisher) Publish(event *Event) error {
+func (p *ConsolePublisher) Publish(ctx context.Context, event *Event) error {
 	var eventData EventData
 	if err := json.Unmarshal(event.EventData, &eventData); err != nil {
 		return fmt.Errorf("failed to unmarshal event data: %w", err)
@@ -106,11 +161,11 @@ func NewMultiPublisher(publishers ...Publisher) Publisher {
 }
 
 // Publish publishes to all publishers
-func (p *MultiPublisher) Publish(event *Event) error {
+func (p *MultiPublisher) Publish(ctx context.Context, event *Event) error {
 	var lastError error
 	
 	for i, publisher := range p.publishers {
-		if err := publisher.Publish(event); err != nil {
+		if err := publisher.Publish(ctx, event); err != nil {
 			lastError = fmt.Errorf("publisher %d failed: %w", i, err)
 			log.Printf("Publisher %d failed: %v", i, err)
 		}

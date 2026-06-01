@@ -11,6 +11,7 @@ import (
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/featureflags"
+	"stellarbill-backend/internal/fees"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
@@ -148,6 +149,8 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	adminHandler := handlers.NewAdminHandler(adminToken, cachedPlanRepo, cachedSubRepo)
 	// Feature flags handler
 	featureFlagsHandler := handlers.NewFeatureFlagsHandler(featureflags.GetInstance())
+	// Fees handler
+	feesHandler := handlers.NewFeesHandler(fees.NewMemoryService())
 	// Wire the cached plan repo into the package-level ListPlans handler.
 	handlers.SetPlanRepository(cachedPlanRepo)
 
@@ -173,6 +176,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		v1.GET("/plans", h.ListPlans)
 		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
+		v1.GET("/fees", feesHandler.ListFees)
+		v1.GET("/fees/history", feesHandler.GetFeeHistory)
+		v1.GET("/fees/trends", feesHandler.GetFeeTrends)
 	}
 
 	// Legacy /api routes - also protected

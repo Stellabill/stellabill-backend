@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -16,7 +17,7 @@ var jwksCache *auth.JWKSCache
 // This should be called during application initialization
 func InitJWKSCache(jwksURL string, ttl int) {
 	if jwksURL != "" {
-		jwksCache = auth.NewJWKSCache(jwksURL, fmt.Sprintf("%ds", ttl))
+		jwksCache = auth.NewJWKSCache(jwksURL, time.Duration(ttl)*time.Second)
 	}
 }
 

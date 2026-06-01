@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 
 	"stellarbill-backend/internal/secrets"
@@ -83,8 +82,16 @@ type Config struct {
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
-	// CORS configuration
-	AllowedOrigins string
+	// Security configuration
+	SecurityFrameAncestors string
+	// DB pool configuration
+	DBPoolMaxConns          int
+	DBPoolMinConns          int
+	DBPoolMaxConnLifetime   int
+	DBPoolMaxConnIdleTime   int
+	DBPoolConnectTimeout    int
+	DBPoolHealthCheckPeriod int
+	DBPoolMetricsInterval   int
 }
 
 // ValidationResult holds the result of configuration validation
@@ -136,15 +143,6 @@ const (
 	MaxDBPoolMaxConns = 500
 	MinDBPoolTimeout  = 1   // seconds
 	MaxDBPoolTimeout  = 300 // seconds
-
-	MinHeaderBytes        = 1024        // 1KB
-	MaxAllowedHeaderBytes = 10 << 20    // 10MB
-	MinTimeoutSeconds     = 1
-	MaxTimeoutSeconds     = 600
-	MinRateLimitRPS       = 1
-	MaxRateLimitRPS       = 1000
-	MinRateLimitBurst     = 1
-	MaxRateLimitBurst     = 2000
 )
 
 // Required environment variables
@@ -226,6 +224,13 @@ func Load(opts ...Option) (Config, error) {
 		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
+		DBPoolMaxConns:          DefaultDBPoolMaxConns,
+		DBPoolMinConns:          DefaultDBPoolMinConns,
+		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
+		DBPoolMaxConnIdleTime:   DefaultDBPoolMaxConnIdleTime,
+		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
+		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
+		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
 	}
 
 	// Resolve secrets through the provider
@@ -577,6 +582,16 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 }
 
 // isValidDatabaseURL validates that the database URL has a valid scheme and structure
+// validateAllowedOrigins checks that ALLOWED_ORIGINS is set in production/staging.
+func validateAllowedOrigins(origins, env string) error {
+	if env == "production" || env == "staging" {
+		if origins == "" {
+			return fmt.Errorf("ALLOWED_ORIGINS must be set in %s environment", env)
+		}
+	}
+	return nil
+}
+
 func isValidDatabaseURL(dbURL string) bool {
 	if dbURL == "" {
 		return false
@@ -685,24 +700,6 @@ func getEnvInt64(key string, fallback int64) int64 {
 }
 
 // getEnvFloat64 retrieves an environment variable as float64 with a fallback value
-func getEnvFloat64(key string, fallback float64) float64 {
-	if v := os.Getenv(key); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
-		}
-	}
-	return fallback
-}
-
-func getEnvInt64(key string, fallback int64) int64 {
-	if v := os.Getenv(key); v != "" {
-		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
-
 func getEnvFloat64(key string, fallback float64) float64 {
 	if v := os.Getenv(key); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {

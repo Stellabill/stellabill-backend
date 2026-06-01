@@ -28,6 +28,8 @@ tags:
   - name: ContractEvents
   - name: LegacyAPI
     description: Legacy API endpoints (deprecated, use /api/v1/* instead)
+  - name: Fees
+    description: Fee history and trend analysis
 paths:
   /api/health:
     get:
@@ -483,6 +485,122 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/fees:
+    get:
+      tags: [Fees]
+      summary: List fees for a subscription
+      operationId: listFees
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: subscription_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Subscription ID to list fees for
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Filter by fee status (pending, paid, failed, refunded)
+        - name: kind
+          in: query
+          schema:
+            type: string
+          description: Filter by fee kind (charge, refund, adjustment)
+      responses:
+        "200":
+          description: Fees list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_version:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      fees:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Fee"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/fees/history:
+    get:
+      tags: [Fees]
+      summary: Get fee history for a subscription
+      operationId: getFeeHistory
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: subscription_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Subscription ID to get history for
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 200
+          description: Maximum number of history entries to return
+      responses:
+        "200":
+          description: Fee history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_version:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      history:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Fee"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/fees/trends:
+    get:
+      tags: [Fees]
+      summary: Get fee trend analysis for a subscription
+      operationId: getFeeTrends
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: subscription_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Subscription ID to get trends for
+      responses:
+        "200":
+          description: Fee trends
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_version:
+                    type: string
+                  data:
+                    $ref: "#/components/schemas/FeeTrend"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 components:
   parameters:
     Cursor:
@@ -500,6 +618,60 @@ components:
         default: 10
         maximum: 100
   schemas:
+    Fee:
+      type: object
+      properties:
+        id:
+          type: string
+        subscription_id:
+          type: string
+        plan_id:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        kind:
+          type: string
+          enum: [charge, refund, adjustment]
+        status:
+          type: string
+          enum: [pending, paid, failed, refunded]
+        billing_period:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    FeeTrendPoint:
+      type: object
+      properties:
+        period:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        count:
+          type: integer
+    FeeTrend:
+      type: object
+      properties:
+        subscription_id:
+          type: string
+        plan_id:
+          type: string
+        currency:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeeTrendPoint"
+        total_cents:
+          type: integer
+          format: int64
+        avg_cents:
+          type: integer
+          format: int64
     Error:
       type: object
       additionalProperties: false

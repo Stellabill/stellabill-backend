@@ -14,8 +14,10 @@ import (
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/secrets"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/tracing"
@@ -209,7 +211,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 	{
-		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
+		admin.POST("/purge", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
@@ -219,6 +221,25 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
+	}
+
+
+	return func(ctx context.Context) error {
+		if dbPool != nil {
+			log.Printf("closing database pool")
+			dbPool.Close()
+		}
+
+		if tracerShutdown != nil {
+			log.Printf("flushing tracer")
+			if err := tracerShutdown(ctx); err != nil {
+				return fmt.Errorf("shutdown tracer: %w", err)
+			}
+		}
+
+		return nil
+	}
+}
 
 		// Feature flags endpoints
 		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)

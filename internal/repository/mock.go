@@ -177,10 +177,6 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 
 	total := len(filtered)
 
-	if q.Limit > 0 && q.Limit < len(filtered) {
-		filtered = filtered[:q.Limit]
-	}
-
 	page := q.Page
 	if page <= 0 {
 		page = 1
@@ -195,9 +191,10 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 	}
 
 	end := start + pageSize
-	if end > len(filtered) { 
+	if end > len(filtered) {
 		end = len(filtered)
 	}
 
 	return filtered[start:end], total, nil
 }
+

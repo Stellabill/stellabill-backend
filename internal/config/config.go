@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 
 	"stellarbill-backend/internal/secrets"
@@ -27,16 +26,8 @@ const (
 )
 
 const (
-	MinHeaderBytes        = 1024       // 1KB
-	MaxAllowedHeaderBytes = 1048576    // 1MB
-	MinTimeoutSeconds     = 1
-	MaxTimeoutSeconds     = 3600       // 1 hour
-	MinRateLimitRPS       = 1
-	MaxRateLimitRPS       = 10000
-	MinRateLimitBurst     = 1
-	MaxRateLimitBurst     = 100000
-	DefaultMaxRequestSize      = 1048576    // 1MB
-	DefaultMaxGzipUncompressed = 10485760   // 10MB
+	DefaultMaxRequestSize      = 1048576  // 1MB
+	DefaultMaxGzipUncompressed = 10485760 // 10MB
 	DefaultMaxGzipRatio        = 10.0
 )
 
@@ -63,28 +54,35 @@ type Config struct {
 	JWTSecret string
 	JWKSURL   string
 	// Add additional secure defaults for optional configs
-	MaxHeaderBytes       int
-	MaxRequestSize       int64
-	MaxGzipUncompressed  int64
-	MaxGzipRatio         float64
-	ReadTimeout          int
-	WriteTimeout   int
-	IdleTimeout    int
-	AllowedOrigins string
-	AdminToken     string
+	MaxHeaderBytes      int
+	MaxRequestSize      int64
+	MaxGzipUncompressed int64
+	MaxGzipRatio        float64
+	ReadTimeout         int
+	WriteTimeout        int
+	IdleTimeout         int
+	AdminToken          string
 	// Rate limiting configuration
-	RateLimitEnabled   bool
-	RateLimitMode      string
-	RateLimitRPS       int
-	RateLimitBurst     int
-	RateLimitWhitelist    []string
-	RateLimitTenantRPS    int
-	RateLimitTenantBurst  int
+	RateLimitEnabled     bool
+	RateLimitMode        string
+	RateLimitRPS         int
+	RateLimitBurst       int
+	RateLimitWhitelist   []string
+	RateLimitTenantRPS   int
+	RateLimitTenantBurst int
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
 	// CORS configuration
 	AllowedOrigins string
+	// DB connection pool tuning (seconds for the time-based fields)
+	DBPoolMaxConns          int
+	DBPoolMinConns          int
+	DBPoolMaxConnLifetime   int
+	DBPoolMaxConnIdleTime   int
+	DBPoolConnectTimeout    int
+	DBPoolHealthCheckPeriod int
+	DBPoolMetricsInterval   int
 }
 
 // ValidationResult holds the result of configuration validation
@@ -137,8 +135,8 @@ const (
 	MinDBPoolTimeout  = 1   // seconds
 	MaxDBPoolTimeout  = 300 // seconds
 
-	MinHeaderBytes        = 1024        // 1KB
-	MaxAllowedHeaderBytes = 10 << 20    // 10MB
+	MinHeaderBytes        = 1024     // 1KB
+	MaxAllowedHeaderBytes = 10 << 20 // 10MB
 	MinTimeoutSeconds     = 1
 	MaxTimeoutSeconds     = 600
 	MinRateLimitRPS       = 1
@@ -156,12 +154,12 @@ var requiredEnvVars = []string{
 
 // Optional environment variables with defaults
 var optionalEnvVars = map[string]string{
-	"PORT":             "8080",
-	"ENV":              "development",
-	"MAX_HEADER_BYTES": "1048576",
-	"READ_TIMEOUT":     "30",
-	"WRITE_TIMEOUT":    "30",
-	"IDLE_TIMEOUT":     "120",
+	"PORT":                 "8080",
+	"ENV":                  "development",
+	"MAX_HEADER_BYTES":     "1048576",
+	"READ_TIMEOUT":         "30",
+	"WRITE_TIMEOUT":        "30",
+	"IDLE_TIMEOUT":         "120",
 	"TRACING_EXPORTER":     "stdout",
 	"TRACING_SERVICE_NAME": "stellabill-backend",
 	// DB pool
@@ -211,9 +209,9 @@ func Load(opts ...Option) (Config, error) {
 	}
 
 	cfg := Config{
-		Env:            getEnv("ENV", "development"),
-		Port:           DefaultPort,
-		DBConn:         "",
+		Env:                 getEnv("ENV", "development"),
+		Port:                DefaultPort,
+		DBConn:              "",
 		JWTSecret:           "",
 		JWKSURL:             getEnv("JWKS_URL", ""),
 		MaxHeaderBytes:      MaxHeaderBytes,
@@ -221,11 +219,19 @@ func Load(opts ...Option) (Config, error) {
 		MaxGzipUncompressed: getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
 		MaxGzipRatio:        getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
 		ReadTimeout:         DefaultReadTimeout,
-		WriteTimeout:   DefaultWriteTimeout,
-		IdleTimeout:    DefaultIdleTimeout,
-		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
-		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
-		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
+		WriteTimeout:        DefaultWriteTimeout,
+		IdleTimeout:         DefaultIdleTimeout,
+		TracingExporter:     getEnv("TRACING_EXPORTER", "stdout"),
+		TracingServiceName:  getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		AllowedOrigins:      getEnv("ALLOWED_ORIGINS", ""),
+		// DB pool defaults; overridden by valid DB_POOL_* env vars in validateDBPool.
+		DBPoolMaxConns:          DefaultDBPoolMaxConns,
+		DBPoolMinConns:          DefaultDBPoolMinConns,
+		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
+		DBPoolMaxConnIdleTime:   DefaultDBPoolMaxConnIdleTime,
+		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
+		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
+		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
 	}
 
 	// Resolve secrets through the provider
@@ -576,6 +582,35 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	return result
 }
 
+// validateAllowedOrigins validates the CORS ALLOWED_ORIGINS setting. In
+// production a wildcard ("*") is rejected because it disables same-origin
+// protections; explicit, scheme-qualified origins are required. In non-production
+// environments any value (including empty) is accepted to ease local development.
+func validateAllowedOrigins(allowedOrigins, env string) error {
+	if allowedOrigins == "" {
+		return nil
+	}
+
+	isProd := strings.EqualFold(env, "production")
+	for _, raw := range strings.Split(allowedOrigins, ",") {
+		origin := strings.TrimSpace(raw)
+		if origin == "" {
+			continue
+		}
+		if origin == "*" {
+			if isProd {
+				return errors.New("wildcard origin '*' is not allowed in production")
+			}
+			continue
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("invalid origin %q: must include scheme and host (e.g. https://app.example.com)", origin)
+		}
+	}
+	return nil
+}
+
 // isValidDatabaseURL validates that the database URL has a valid scheme and structure
 func isValidDatabaseURL(dbURL string) bool {
 	if dbURL == "" {
@@ -694,24 +729,6 @@ func getEnvFloat64(key string, fallback float64) float64 {
 	return fallback
 }
 
-func getEnvInt64(key string, fallback int64) int64 {
-	if v := os.Getenv(key); v != "" {
-		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
-
-func getEnvFloat64(key string, fallback float64) float64 {
-	if v := os.Getenv(key); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
-		}
-	}
-	return fallback
-}
-
 // validateDBPool reads DB_POOL_* env vars, validates them, and writes safe
 // values back into cfg.  Invalid values produce warnings (not hard errors) so
 // the server can still start with defaults rather than refusing to boot.
@@ -765,4 +782,3 @@ func validateDBPool(c *Config, result *ValidationResult) {
 				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
 	}
 }
-

@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel"
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/repository"
 )
+
+const plansTracerName = "handler/plans"
 
 type Plan struct {
 	ID          string `json:"id"`
@@ -20,8 +24,17 @@ type Plan struct {
 func (p Plan) GetID() string        { return p.ID }
 func (p Plan) GetSortValue() string { return p.Name }
 
-
 func (h *Handler) ListPlans(c *gin.Context) {
+	baseCtx := context.Background()
+	if c.Request != nil {
+		baseCtx = c.Request.Context()
+	}
+	ctx, span := otel.Tracer(plansTracerName).Start(baseCtx, "handler.ListPlans")
+	defer span.End()
+	if c.Request != nil {
+		c.Request = c.Request.WithContext(ctx)
+	}
+
 	limitStr := c.Query("limit")
 	limit, err := pagination.ParseLimit(limitStr, 10)
 	if err != nil {
@@ -65,14 +78,22 @@ func SetPlanRepository(r repository.PlanRepository) {
 }
 
 func ListPlans(c *gin.Context) {
-	// 1. Require planRepo to be set by routes.Register in normal runs. If nil,
-	// respond with empty list for backwards compatibility with tests.
+	baseCtx := context.Background()
+	if c.Request != nil {
+		baseCtx = c.Request.Context()
+	}
+	ctx, span := otel.Tracer(plansTracerName).Start(baseCtx, "handler.ListPlans")
+	defer span.End()
+	if c.Request != nil {
+		c.Request = c.Request.WithContext(ctx)
+	}
+
 	if planRepo == nil {
 		c.JSON(http.StatusOK, gin.H{"plans": []Plan{}})
 		return
 	}
 
-	rows, err := planRepo.List(c.Request.Context())
+	rows, err := planRepo.List(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return

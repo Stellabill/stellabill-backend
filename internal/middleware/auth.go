@@ -7,7 +7,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"stellarbill-backend/internal/auth"
+	"github.com/google/uuid"
+	"strings"
+	"fmt"
+	"stellarbill-backend/internal/auth" // Adjust this import path to your module name
 )
 
 var jwksCache *auth.JWKSCache

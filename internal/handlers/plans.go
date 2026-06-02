@@ -22,6 +22,13 @@ func (p Plan) GetSortValue() string { return p.Name }
 
 
 func (h *Handler) ListPlans(c *gin.Context) {
+	// Guard against an unwired dependency: returning 503 is preferable to a
+	// nil-pointer panic if the Handler was constructed without a PlanService.
+	if h.Plans == nil {
+		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "plan service is unavailable")
+		return
+	}
+
 	limitStr := c.Query("limit")
 	limit, err := pagination.ParseLimit(limitStr, 10)
 	if err != nil {

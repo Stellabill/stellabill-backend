@@ -26,6 +26,13 @@ func (s Subscription) GetID() string        { return s.ID }
 func (s Subscription) GetSortValue() string { return s.Customer } // Sort by customer for now
 
 func (h *Handler) ListSubscriptions(c *gin.Context) {
+	// Guard against an unwired dependency: returning 503 is preferable to a
+	// nil-pointer panic if the Handler was constructed without a SubscriptionService.
+	if h.Subscriptions == nil {
+		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service is unavailable")
+		return
+	}
+
 	limitStr := c.Query("limit")
 	limit, err := pagination.ParseLimit(limitStr, 10)
 	if err != nil {
@@ -58,6 +65,11 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 }
 
 func (h *Handler) GetSubscription(c *gin.Context) {
+	if h.Subscriptions == nil {
+		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service is unavailable")
+		return
+	}
+
 	id := c.Param("id")
 	sub, err := h.Subscriptions.GetSubscription(c, id)
 	if err != nil {

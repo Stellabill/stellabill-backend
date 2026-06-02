@@ -55,6 +55,43 @@ func TestListPlans(t *testing.T) {
 		assert.Equal(t, "failed to load plans", response["error"])
 	})
 
+	t.Run("nil dependency returns 503 instead of panicking", func(t *testing.T) {
+		h := &Handler{} // Plans deliberately left nil
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/plans", nil)
+
+		assert.NotPanics(t, func() { h.ListPlans(c) })
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		var response ErrorEnvelope
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, "SERVICE_UNAVAILABLE", response.Code)
+		assert.Contains(t, response.Message, "plan service is unavailable")
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		mockSvc := new(MockPlanService)
+		h := &Handler{Plans: mockSvc}
+
+		mockSvc.On("ListPlans", mock.Anything).Return([]Plan{}, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/plans", nil)
+
+		h.ListPlans(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Empty(t, response["plans"])
+		assert.Equal(t, false, response["has_more"])
+	})
+
 	t.Run("invalid limits", func(t *testing.T) {
 		invalidInputs := []string{"abc", "1abc", " ", "  "}
 		for _, input := range invalidInputs {

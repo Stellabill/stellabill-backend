@@ -99,6 +99,43 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 		assert.Contains(t, response.Message, "Failed to retrieve subscription")
 	})
 
+	t.Run("nil dependency returns 503 instead of panicking", func(t *testing.T) {
+		h := &Handler{} // Subscriptions deliberately left nil
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/subscriptions", nil)
+
+		assert.NotPanics(t, func() { h.ListSubscriptions(c) })
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		var response ErrorEnvelope
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, "SERVICE_UNAVAILABLE", response.Code)
+		assert.Contains(t, response.Message, "subscription service is unavailable")
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		mockSvc := new(MockSubscriptionService)
+		h := &Handler{Subscriptions: mockSvc}
+
+		mockSvc.On("ListSubscriptions", mock.Anything).Return([]Subscription{}, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/subscriptions", nil)
+
+		h.ListSubscriptions(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Empty(t, response["subscriptions"])
+		assert.Equal(t, false, response["has_more"])
+	})
+
 	t.Run("invalid limits", func(t *testing.T) {
 		invalidInputs := []string{"abc", "1abc", " ", "  "}
 		for _, input := range invalidInputs {

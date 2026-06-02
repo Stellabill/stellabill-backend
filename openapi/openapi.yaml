@@ -483,6 +483,136 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/v1/fees/history:
+    get:
+      tags: [Fees]
+      summary: Get fee history with trend analysis
+      operationId: getFeeHistory
+      description: Returns fee records and trend analysis for the given period. Closes issue #162.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: Filter by fee type (e.g. transaction, subscription)
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start of period (RFC3339). Defaults to 30 days ago.
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End of period (RFC3339). Defaults to now.
+      responses:
+        "200":
+          description: Fee history and trend analysis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  records:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        type: { type: string }
+                        amount: { type: number }
+                        currency: { type: string }
+                        description: { type: string }
+                        created_at: { type: string, format: date-time }
+                  trends:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string }
+                        period_start: { type: string }
+                        period_end: { type: string }
+                        total_amount: { type: number }
+                        average_amount: { type: number }
+                        count: { type: integer }
+                        change_percent: { type: number }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/swap/exact-in:
+    post:
+      tags: [Swap]
+      summary: Swap exact tokens for tokens (exact input)
+      operationId: swapExactTokensForTokens
+      description: Swaps an exact amount of token_in for as many token_out as possible. Closes issue #88.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token_in, token_out, amount_in]
+              properties:
+                token_in: { type: string }
+                token_out: { type: string }
+                amount_in: { type: number, minimum: 0, exclusiveMinimum: true }
+                min_amount_out: { type: number, minimum: 0 }
+      responses:
+        "200":
+          description: Swap result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwapResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: Insufficient liquidity
+
+  /api/v1/swap/exact-out:
+    post:
+      tags: [Swap]
+      summary: Swap tokens for exact tokens (exact output)
+      operationId: swapTokensForExactTokens
+      description: Swaps as few token_in as possible for an exact amount of token_out. Closes issue #88.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token_in, token_out, amount_out, max_amount_in]
+              properties:
+                token_in: { type: string }
+                token_out: { type: string }
+                amount_out: { type: number, minimum: 0, exclusiveMinimum: true }
+                max_amount_in: { type: number, minimum: 0, exclusiveMinimum: true }
+      responses:
+        "200":
+          description: Swap result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwapResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: Insufficient liquidity
 components:
   parameters:
     Cursor:
@@ -500,6 +630,15 @@ components:
         default: 10
         maximum: 100
   schemas:
+    SwapResult:
+      type: object
+      properties:
+        token_in: { type: string }
+        token_out: { type: string }
+        amount_in: { type: number }
+        amount_out: { type: number }
+        price_impact: { type: number }
+        fee: { type: number }
     Error:
       type: object
       additionalProperties: false

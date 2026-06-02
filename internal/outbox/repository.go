@@ -180,6 +180,63 @@ func (r *postgresRepository) DeleteCompletedEvents(olderThan time.Time) (int64, 
 	return result.RowsAffected()
 }
 
+// ListDeadLetteredEvents retrieves dead-lettered (failed) events
+func (r *postgresRepository) ListDeadLetteredEvents(limit int) ([]*Event, error) {
+	query := `
+		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			   occurred_at, status, retry_count, max_retries, next_retry_at,
+			   error_message, created_at, updated_at, version, deduplication_id
+		FROM dead_letter_events
+		LIMIT $1
+	`
+	
+	rows, err := r.db.Query(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list dead-lettered events: %w", err)
+	}
+	defer rows.Close()
+	
+	var events []*Event
+	for rows.Next() {
+		event, err := r.scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating dead-lettered events: %w", err)
+	}
+	
+	return events, nil
+}
+
+// RequeueEvent resets a failed event to pending for reprocessing
+func (r *postgresRepository) RequeueEvent(id uuid.UUID) error {
+	query := `
+		UPDATE outbox_events
+		SET status = $1, retry_count = 0, next_retry_at = NULL, error_message = NULL
+		WHERE id = $2 AND status = $3
+	`
+	
+	result, err := r.db.Exec(query, StatusPending, id, StatusFailed)
+	if err != nil {
+		return fmt.Errorf("failed to requeue event: %w", err)
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	
+	if rowsAffected == 0 {
+		return fmt.Errorf("event not found or not in failed status")
+	}
+	
+	return nil
+}
+
 // scanEvent scans a database row into an Event struct
 func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) error }) (*Event, error) {
 	var event Event

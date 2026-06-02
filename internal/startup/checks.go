@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"stellarbill-backend/internal/config"
+	"github.com/sony/gobreaker"
 )
 
 // Status represents the result of a single startup check.
@@ -26,12 +27,29 @@ type CheckResult struct {
 	DurationMs int64         `json:"duration_ms"`
 }
 
+// BreakerStateProvider is an interface to get circuit breaker state and counts.
+type BreakerStateProvider interface {
+	State() gobreaker.State
+	Counts() gobreaker.Counts
+}
+
 // DiagnosticsResponse is the machine-readable diagnostics payload.
 type DiagnosticsResponse struct {
-	Status        string        `json:"status"`
-	Timestamp     string        `json:"timestamp"`
-	UptimeSeconds float64       `json:"uptime_seconds"`
-	Checks        []CheckResult `json:"checks"`
+	Status              string               `json:"status"`
+	Timestamp           string               `json:"timestamp"`
+	UptimeSeconds       float64              `json:"uptime_seconds"`
+	Checks              []CheckResult        `json:"checks"`
+	CircuitBreakerState *CircuitBreakerInfo  `json:"circuit_breaker,omitempty"`
+}
+
+// CircuitBreakerInfo holds circuit breaker metrics.
+type CircuitBreakerInfo struct {
+	State                string `json:"state"`
+	Requests             uint32 `json:"requests"`
+	TotalSuccesses       uint32 `json:"total_successes"`
+	TotalFailures        uint32 `json:"total_failures"`
+	ConsecutiveSuccesses uint32 `json:"consecutive_successes"`
+	ConsecutiveFailures  uint32 `json:"consecutive_failures"`
 }
 
 // DBPinger abstracts database connectivity checks.

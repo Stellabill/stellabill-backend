@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -15,18 +16,24 @@ import (
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/secrets"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/tracing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
+<<<<<<< Open-and-inject-a-real-database-connection-pool-at-startup
 
+=======
+>>>>>>> main
 
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
@@ -74,15 +81,33 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// fields. When DATABASE_URL is empty (local dev) NewPool returns (nil, nil)
 	// and we degrade gracefully to in-memory dependencies below.
 	var dbPool *pgxpool.Pool
+	var planDB *sql.DB
 	if cfg.DBConn != "" {
+<<<<<<< Open-and-inject-a-real-database-connection-pool-at-startup
 		connectCtx, cancel := context.WithTimeout(
 			context.Background(),
 			time.Duration(cfg.DBPoolConnectTimeout)*time.Second,
 		)
 		dbPool, err = db.NewPool(connectCtx, cfg)
 		cancel()
+=======
+		poolConfig, err := pgxpool.ParseConfig(cfg.DBConn)
+>>>>>>> main
 		if err != nil {
-			fmt.Printf("Failed to initialize database pool: %v\n", err)
+			fmt.Printf("Failed to parse database pool config: %v\n", err)
+		} else {
+			applyPGXPoolConfig(poolConfig, cfg)
+			dbPool, err = pgxpool.NewWithConfig(context.Background(), poolConfig)
+			if err != nil {
+				fmt.Printf("Failed to initialize database pool: %v\n", err)
+			}
+		}
+
+		planDB, err = sql.Open("postgres", cfg.DBConn)
+		if err != nil {
+			fmt.Printf("Failed to initialize plan database handle: %v\n", err)
+		} else {
+			repository.ApplySQLDBPoolConfig(planDB, cfg)
 		}
 	}
 
@@ -127,7 +152,10 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	subCache := cache.NewInMemory()
 	const repoCacheTTL = 5 * time.Minute
 
-	rawPlanRepo := repository.NewMockPlanRepo()
+	var rawPlanRepo repository.PlanRepository = repository.NewMockPlanRepo()
+	if planDB != nil {
+		rawPlanRepo = repository.NewPostgresPlanRepo(planDB)
+	}
 	rawSubRepo := repository.NewMockSubscriptionRepo(
 		&repository.SubscriptionRow{ID: "sub-123", TenantID: "", CustomerID: "c1", Status: "active", PlanID: "p1"},
 		&repository.SubscriptionRow{ID: "sub-456", TenantID: "", CustomerID: "c2", Status: "active", PlanID: "p1"},
@@ -142,6 +170,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// Statement service wiring (in-memory mock for test/dev)
 	stmtRepo := repository.NewMockStatementRepo()
 	stmtSvc := service.NewStatementService(rawSubRepo, stmtRepo)
+
+	// Fees and swap service wiring
+	feeSvc := service.NewFeeService()
+	feesHandler := handlers.NewFeesHandler(feeSvc)
+	swapRouter := service.NewSwapRouter()
+	swapHandler := handlers.NewSwapHandler(swapRouter)
 
 	// handlerSubSvc adapts the mock repo to satisfy handlers.SubscriptionService.
 	handlerSubSvc := &mockHandlerSubSvc{repo: rawSubRepo}
@@ -160,8 +194,10 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// Admin handler receives the cached repos so PurgeCache can invalidate them.
 	adminToken := os.Getenv("ADMIN_TOKEN")
 	adminHandler := handlers.NewAdminHandler(adminToken, cachedPlanRepo, cachedSubRepo)
+
 	// Feature flags handler
 	featureFlagsHandler := handlers.NewFeatureFlagsHandler(featureflags.GetInstance())
+
 	// Wire the cached plan repo into the package-level ListPlans handler.
 	handlers.SetPlanRepository(cachedPlanRepo)
 
@@ -187,6 +223,13 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		v1.GET("/plans", h.ListPlans)
 		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
+
+		// Fees module (#162)
+		v1.GET("/fees/history", feesHandler.GetFeeHistory)
+
+		// Swap router (#88)
+		v1.POST("/swap/exact-in", swapHandler.SwapExactTokensForTokens)
+		v1.POST("/swap/exact-out", swapHandler.SwapTokensForExactTokens)
 	}
 
 	// Legacy /api routes - also protected
@@ -223,7 +266,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 	{
-		admin.POST("/purge", idemMiddleware, adminHandler.PurgeCache)
+		admin.POST("/purge", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
@@ -233,11 +276,8 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
-
-		// Feature flags endpoints
-		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
-		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
 	}
+
 
 	return func(ctx context.Context) error {
 		if dbPool != nil {
@@ -254,6 +294,48 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 		return nil
 	}
+}
+
+		// Feature flags endpoints
+		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
+		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
+	}
+
+	return func(ctx context.Context) error {
+		if stopMetrics != nil {
+			close(stopMetrics)
+		}
+		if dbPool != nil {
+			log.Printf("closing database pool")
+			dbPool.Close()
+		}
+		if planDB != nil {
+			log.Printf("closing plan database handle")
+			if err := planDB.Close(); err != nil {
+				return fmt.Errorf("close plan database handle: %w", err)
+			}
+		}
+		if tracerShutdown != nil {
+			log.Printf("flushing tracer")
+			if err := tracerShutdown(ctx); err != nil {
+				return fmt.Errorf("shutdown tracer: %w", err)
+			}
+		}
+		return nil
+	}
+}
+
+func applyPGXPoolConfig(poolConfig *pgxpool.Config, cfg config.Config) {
+	if poolConfig == nil {
+		return
+	}
+
+	poolConfig.MaxConns = int32(cfg.DBPoolMaxConns)
+	poolConfig.MinConns = int32(cfg.DBPoolMinConns)
+	poolConfig.MaxConnLifetime = time.Duration(cfg.DBPoolMaxConnLifetime) * time.Second
+	poolConfig.MaxConnIdleTime = time.Duration(cfg.DBPoolMaxConnIdleTime) * time.Second
+	poolConfig.HealthCheckPeriod = time.Duration(cfg.DBPoolHealthCheckPeriod) * time.Second
+	poolConfig.ConnConfig.ConnectTimeout = time.Duration(cfg.DBPoolConnectTimeout) * time.Second
 }
 
 // mockHandlerSubSvc adapts *repository.MockSubscriptionRepo to handlers.SubscriptionService.

@@ -17,7 +17,7 @@ type cacheEnvelope struct {
 
 type inflightLoad struct {
 	wg  sync.WaitGroup
-	row *PlanRow
+	row interface{}
 	err error
 }
 
@@ -98,7 +98,7 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 		if inflight.err == nil {
 			atomic.AddUint64(&cpr.hits, 1)
 		}
-		return inflight.row, inflight.err
+		return inflight.row.(*PlanRow), inflight.err
 	}
 
 	defer func() {
@@ -142,6 +142,9 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 					atomic.AddUint64(&cpr.hits, 1)
 					return out, nil
 				} else {
+					// Corrupted envelope JSON
+					return nil, fmt.Errorf("corrupted cache envelope: %w", err)
+				}
 					return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 				}
 				return nil, fmt.Errorf("corrupted cache data: %w", err)
@@ -151,20 +154,29 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 
 	// Cache miss, use singleflight for list
 	atomic.AddUint64(&cpr.misses, 1)
-	v, err, _ := cpr.sf.Do(key, func() (interface{}, error) {
-		out, err := cpr.backend.List(ctx)
-		if err != nil {
-			return nil, err
+	load := &inflightLoad{}
+	load.wg.Add(1)
+	actual, loaded := cpr.inflight.LoadOrStore(key, load)
+	if loaded {
+		inflight := actual.(*inflightLoad)
+		inflight.wg.Wait()
+		if inflight.err == nil {
+			atomic.AddUint64(&cpr.hits, 1)
 		}
-		if cpr.cache != nil {
-			outBytes, err := json.Marshal(out)
-			if err == nil {
-				env := cacheEnvelope{Data: outBytes, StoredAt: time.Now()}
-				if envBytes, err := json.Marshal(env); err == nil {
-					_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
-				}
-			}
+		if inflight.row == nil {
+			return nil, inflight.err
 		}
+		return inflight.row.([]*PlanRow), inflight.err
+	}
+
+	defer func() {
+		load.wg.Done()
+		cpr.inflight.Delete(key)
+	}()
+
+	out, err := cpr.backend.List(ctx)
+	load.row = out
+	load.err = err
 		return out, nil
 	})
 	

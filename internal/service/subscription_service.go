@@ -18,7 +18,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var tracer = otel.Tracer("service/subscriptions")
+const svcTracerName = "service/subscriptions"
 
 // SubscriptionService defines the business logic interface for subscriptions.
 type SubscriptionService interface {
@@ -42,7 +42,7 @@ func NewSubscriptionService(subRepo repository.SubscriptionRepository, planRepo 
 //
 // handles soft-deletes, joins plan metadata, and normalizes billing fields.
 func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error) {
-	ctx, span := tracer.Start(ctx, "SubscriptionService.GetDetail",
+	ctx, span := otel.Tracer(svcTracerName).Start(ctx, "SubscriptionService.GetDetail",
 		trace.WithAttributes(
 			attribute.String("subscription.id", subscriptionID),
 			attribute.String("tenant.id", tenantID),
@@ -134,7 +134,7 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 
 // ChangeStatus validates and persists a tenant-scoped subscription status change.
 func (s *subscriptionService) ChangeStatus(ctx context.Context, tenantID string, actorID string, subscriptionID string, targetStatus string) (*SubscriptionStatusChange, error) {
-	ctx, span := tracer.Start(ctx, "SubscriptionService.ChangeStatus",
+	ctx, span := otel.Tracer(svcTracerName).Start(ctx, "SubscriptionService.ChangeStatus",
 		trace.WithAttributes(
 			attribute.String("subscription.id", subscriptionID),
 			attribute.String("tenant.id", tenantID),

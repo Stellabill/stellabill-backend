@@ -1,16 +1,22 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/validation"
 )
+
+const subsTracerName = "handler/subscriptions"
 
 type Subscription struct {
 	ID          string `json:"id"`
@@ -23,9 +29,19 @@ type Subscription struct {
 }
 
 func (s Subscription) GetID() string        { return s.ID }
-func (s Subscription) GetSortValue() string { return s.Customer } // Sort by customer for now
+func (s Subscription) GetSortValue() string { return s.Customer }
 
 func (h *Handler) ListSubscriptions(c *gin.Context) {
+	baseCtx := context.Background()
+	if c.Request != nil {
+		baseCtx = c.Request.Context()
+	}
+	ctx, span := otel.Tracer(subsTracerName).Start(baseCtx, "handler.ListSubscriptions")
+	defer span.End()
+	if c.Request != nil {
+		c.Request = c.Request.WithContext(ctx)
+	}
+
 	limitStr := c.Query("limit")
 	limit, err := pagination.ParseLimit(limitStr, 10)
 	if err != nil {
@@ -74,6 +90,11 @@ type changeSubscriptionStatusRequest struct {
 // NewChangeSubscriptionStatusHandler returns a tenant-scoped status mutation handler.
 func NewChangeSubscriptionStatusHandler(svc service.SubscriptionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		ctx, span := otel.Tracer(subsTracerName).Start(c.Request.Context(), "handler.ChangeSubscriptionStatus",
+			trace.WithAttributes(attribute.String("subscription.id", c.Param("id"))))
+		defer span.End()
+		c.Request = c.Request.WithContext(ctx)
+
 		if svc == nil {
 			RespondWithInternalError(c, "Subscription service is unavailable")
 			return
@@ -130,7 +151,11 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 			return
 		}
 
-		// Minimal, safe handler that validates caller and path, then delegates to the service.
+		ctx, span := otel.Tracer(subsTracerName).Start(c.Request.Context(), "handler.GetSubscription",
+			trace.WithAttributes(attribute.String("subscription.id", c.Param("id"))))
+		defer span.End()
+		c.Request = c.Request.WithContext(ctx)
+
 		callerID, exists := c.Get("callerID")
 		if !exists {
 			RespondWithAuthError(c, "unauthorized")
@@ -152,7 +177,7 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		if !ok {
 			return
 		}
-		// Delegate to service (note: real implementation may include ownership checks)
+
 		detail, _, err := svc.GetDetail(c.Request.Context(), tenantID, callerID.(string), id)
 		if err != nil {
 			code, errCode, msg := MapServiceErrorToResponse(err)

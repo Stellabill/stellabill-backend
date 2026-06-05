@@ -35,7 +35,7 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 This service is the **backend only**. A separate frontend (or any client) can:
 
 - **Health check** - `GET /api/health` to verify the API is up.
-- **Plans** - `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). Currently returns an empty list; DB integration is planned.
+- **Plans** - `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). When `DATABASE_URL` is configured, plans are read from PostgreSQL via the `plans` table; otherwise the app falls back to the in-memory repository.
 - **Subscriptions** - `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
 
 CORS is enabled for all origins in development so a frontend on another port or domain can call these endpoints.

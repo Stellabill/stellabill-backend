@@ -36,7 +36,11 @@ function createJwtToken(secret, role, subject) {
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
-  const signature = base64UrlEncode(crypto.hmac('sha256', signingInput, secret, 'raw'));
+  const signature = crypto
+    .hmac('sha256', signingInput, secret, 'base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 
   return `${signingInput}.${signature}`;
 }

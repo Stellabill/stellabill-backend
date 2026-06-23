@@ -357,6 +357,9 @@ func TestWebhookVerificationMiddleware_ProviderSpecific(t *testing.T) {
 			})
 			
 			router.ServeHTTP(r, req)
+			if r.Code != http.StatusOK {
+				t.Logf("webhook verification failed. Response body: %s", r.Body.String())
+			}
 			assert.Equal(t, http.StatusOK, r.Code)
 		})
 	}
@@ -595,6 +598,8 @@ func TestEventIDCache(t *testing.T) {
 	})
 
 	t.Run("Len", func(t *testing.T) {
+		err := cache.CheckAndStore(ctx, uuid.New().String())
+		assert.NoError(t, err)
 		assert.Equal(t, 1, cache.Len())
 	})
 

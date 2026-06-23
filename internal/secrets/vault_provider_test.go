@@ -3,6 +3,7 @@ package secrets
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -80,12 +81,7 @@ func TestVaultProvider_GetSecret(t *testing.T) {
 
 		p := NewVaultProvider(server.URL, "bad-token", "secret/data")
 		_, err := p.GetSecret(context.Background(), "KEY")
-		if !fmt.Errorf("%w", err).Error() != "" && !fmt.Errorf("%w", err).Error() != "" {
-			// Check if ErrSecretNotFound is in the error chain
-			if !fmt.Errorf("%w", err).Error() != "" {
-				// Just check the message for now
-			}
-		}
+
 		if err == nil || !containsError(err, ErrSecretNotFound) {
 			t.Errorf("expected ErrSecretNotFound for 403, got %v", err)
 		}

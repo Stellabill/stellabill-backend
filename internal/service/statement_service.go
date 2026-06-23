@@ -149,6 +149,13 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 		Statements: make([]*StatementDetail, 0, len(rows)),
 	}
 	for _, row := range rows {
+		if isMerchant {
+			sub, err := s.subRepo.FindByID(ctx, row.SubscriptionID)
+			if err != nil || sub.TenantID != callerID {
+				continue
+			}
+		}
+
 		periodStart := normalizeRFC3339OrKeep(row.PeriodStart)
 		periodEnd := normalizeRFC3339OrKeep(row.PeriodEnd)
 		issuedAt := normalizeRFC3339OrKeep(row.IssuedAt)
@@ -165,6 +172,11 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 			Kind:           row.Kind,
 			Status:         row.Status,
 		})
+	}
+
+	// Update count to reflect filtered result size
+	if isMerchant {
+		count = len(result.Statements)
 	}
 
 	return result, count, warnings, nil

@@ -13,6 +13,7 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/storage/s3"
 )
 
 // ── mock ─────────────────────────────────────────────────────────────────────
@@ -38,6 +39,12 @@ func (m *mockStatementsTestService) ListByCustomer(_ context.Context, _ string, 
 	m.capturedCust = customerID
 	m.capturedRoles = roles
 	return m.listDetail, m.count, m.warnings, m.err
+}
+
+func (m *mockStatementsTestService) ExportStatements(
+	_ context.Context, _ string, _ []string, _, _ string, _ s3.S3Uploader,
+) (*service.ExportResult, error) {
+	return nil, nil
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

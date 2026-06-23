@@ -276,6 +276,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
+
+		// Statement S3 export — admin or owning merchant only
+		admin.POST("/statements/export", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewExportStatementsHandler(stmtSvc, nil))
 	}
 
 

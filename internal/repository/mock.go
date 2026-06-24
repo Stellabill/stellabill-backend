@@ -198,3 +198,19 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 	return filtered[start:end], total, nil
 }
 
+// UpdateArchivedData updates an archived statement with rehydrated data.
+func (m *MockStatementRepo) UpdateArchivedData(_ context.Context, id string, stmt *StatementRow) error {
+	row, ok := m.records[id]
+	if !ok {
+		return ErrNotFound
+	}
+	// Update the row with rehydrated data
+	row.PeriodStart = stmt.PeriodStart
+	row.PeriodEnd = stmt.PeriodEnd
+	row.IssuedAt = stmt.IssuedAt
+	row.TotalAmount = stmt.TotalAmount
+	row.Currency = stmt.Currency
+	row.Kind = stmt.Kind
+	row.Status = stmt.Status
+	return nil
+}

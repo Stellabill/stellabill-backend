@@ -230,6 +230,10 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		// Swap router (#88)
 		v1.POST("/swap/exact-in", swapHandler.SwapExactTokensForTokens)
 		v1.POST("/swap/exact-out", swapHandler.SwapTokensForExactTokens)
+
+		// Webhook attempt timeline (#362)
+		attemptRepo := outbox.NewMemAttemptRepository()
+		v1.GET("/webhooks/:id/attempts", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewWebhookAttemptsHandler(attemptRepo))
 	}
 
 	// Legacy /api routes - also protected

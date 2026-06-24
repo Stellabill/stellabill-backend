@@ -77,6 +77,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
+	// Enforce security headers on every request, including any HTML pages.
+	r.Use(middleware.SecurityHeaders(&cfg))
+
+	// CSP violation reports from browsers are collected here.
+	r.POST(cfg.SecurityCSPReportURI, middleware.CSPReportHandler())
+
 	// Open a real connection pool from cfg.DBConn, applying the DBPool* tuning
 	// fields. When DATABASE_URL is empty (local dev) NewPool returns (nil, nil)
 	// and we degrade gracefully to in-memory dependencies below.

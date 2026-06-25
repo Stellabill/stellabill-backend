@@ -28,10 +28,11 @@ func setupTestRouter() (*gin.Engine, string) {
 
 func createToken(secret string, sub string, roles []auth.Role, exp time.Time) (string, error) {
 	claims := jwt.MapClaims{
-		"sub":   sub,
-		"roles": roles,
-		"exp":   exp.Unix(),
-		"iat":   time.Now().Unix(),
+		"sub":       sub,
+		"roles":     roles,
+		"exp":       exp.Unix(),
+		"iat":       time.Now().Unix(),
+		"tenant_id": "tenant-1",
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
@@ -54,15 +55,15 @@ func TestAuthMiddleware_Integration(t *testing.T) {
 		expectedStatus int
 	}{
 		// Unauthenticated
-		{"Unauthenticated GET /api/v1/plans", http.MethodGet, "/api/v1/plans", "", nil, http.StatusUnauthorized},
+		{"Unauthenticated GET /api/v1/subscriptions", http.MethodGet, "/api/v1/subscriptions", "", nil, http.StatusUnauthorized},
 		{"Unauthenticated GET /api/v1/subscriptions/sub-123", http.MethodGet, "/api/v1/subscriptions/sub-123", "", nil, http.StatusUnauthorized},
 		{"Unauthenticated POST /api/admin/purge", http.MethodPost, "/api/admin/purge", "", nil, http.StatusUnauthorized},
 
 		// Invalid Token
-		{"Invalid Token GET /api/v1/plans", http.MethodGet, "/api/v1/plans", "invalid-token", nil, http.StatusUnauthorized},
+		{"Invalid Token GET /api/v1/subscriptions", http.MethodGet, "/api/v1/subscriptions", "invalid-token", nil, http.StatusUnauthorized},
 
 		// Expired Token
-		{"Expired Token GET /api/v1/plans", http.MethodGet, "/api/v1/plans", func() string {
+		{"Expired Token GET /api/v1/subscriptions", http.MethodGet, "/api/v1/subscriptions", func() string {
 			tok, _ := createToken(secret, "user-1", []auth.Role{auth.RoleUser}, time.Now().Add(-time.Hour))
 			return tok
 		}(), nil, http.StatusUnauthorized},
@@ -73,13 +74,13 @@ func TestAuthMiddleware_Integration(t *testing.T) {
 			return tok
 		}(), map[string]string{"Idempotency-Key": "test-key", "X-Admin-Token": "Another-Strong-Admin-Token-456!"}, http.StatusForbidden},
 
-		{"Forbidden GET /api/plans (Customer role)", http.MethodGet, "/api/plans", func() string {
+		{"Forbidden GET /api/subscriptions (Customer role)", http.MethodGet, "/api/subscriptions", func() string {
 			tok, _ := createToken(secret, "user-1", []auth.Role{auth.RoleCustomer}, time.Now().Add(time.Hour))
 			return tok
 		}(), nil, http.StatusForbidden},
 
 		// Permitted (Success)
-		{"Permitted GET /api/v1/plans (User role)", http.MethodGet, "/api/v1/plans", func() string {
+		{"Permitted GET /api/v1/subscriptions (User role)", http.MethodGet, "/api/v1/subscriptions", func() string {
 			tok, _ := createToken(secret, "user-1", []auth.Role{auth.RoleUser}, time.Now().Add(time.Hour))
 			return tok
 		}(), nil, http.StatusOK},

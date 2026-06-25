@@ -39,6 +39,7 @@ type TenantRateLimiter struct {
 	rps        int
 	burst      int
 	evictionCh chan struct{}
+	stopOnce   sync.Once
 }
 
 // NewTenantRateLimiter creates a new per-tenant rate limiter
@@ -145,7 +146,9 @@ func (trl *TenantRateLimiter) evictIdleLimiters() {
 
 // Stop stops the eviction goroutine
 func (trl *TenantRateLimiter) Stop() {
-	close(trl.evictionCh)
+	trl.stopOnce.Do(func() {
+		close(trl.evictionCh)
+	})
 }
 
 // Allow checks if a request from the given tenant is allowed

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
@@ -25,6 +26,11 @@ func (p Plan) GetID() string        { return p.ID }
 func (p Plan) GetSortValue() string { return p.Name }
 
 func (h *Handler) ListPlans(c *gin.Context) {
+	if h.Plans == nil {
+		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "plan service is unavailable")
+		return
+	}
+
 	baseCtx := context.Background()
 	if c.Request != nil {
 		baseCtx = c.Request.Context()
@@ -36,6 +42,15 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	}
 
 	limitStr := c.Query("limit")
+	if limitStr != "" {
+		if rawLimit, err := strconv.Atoi(limitStr); err == nil && rawLimit > 100 {
+			RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeValidationFailed, "Limit exceeds maximum of 100", map[string]interface{}{
+				"reason": "limit cannot be greater than 100",
+			})
+			return
+		}
+	}
+
 	limit, err := pagination.ParseLimit(limitStr, 10)
 	if err != nil {
 		RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeValidationFailed, "Invalid pagination limit", map[string]interface{}{
@@ -64,9 +79,11 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	page := pagination.PaginateSlice(plans, cursor, limit)
 
 	c.JSON(http.StatusOK, gin.H{
-		"plans":       page.Items,
-		"next_cursor": page.NextCursor,
-		"has_more":    page.HasMore,
+		"plans": page.Items,
+		"pagination": gin.H{
+			"next_cursor": page.NextCursor,
+			"has_more":    page.HasMore,
+		},
 	})
 }
 

@@ -4,22 +4,19 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
-	"strings"
-	"fmt"
-	"stellarbill-backend/internal/auth" // Adjust this import path to your module name
+	"stellarbill-backend/internal/auth"
 )
 
 var jwksCache *auth.JWKSCache
 
-// InitJWKSCache initializes the JWKS cache with the given URL and TTL
-// This should be called during application initialization
-func InitJWKSCache(jwksURL string, ttl int) {
+// InitJWKSCache initializes the JWKS cache with the given URL and TTL (seconds).
+func InitJWKSCache(jwksURL string, ttlSeconds int) {
 	if jwksURL != "" {
-		jwksCache = auth.NewJWKSCache(jwksURL, fmt.Sprintf("%ds", ttl))
+		jwksCache = auth.NewJWKSCache(jwksURL, time.Duration(ttlSeconds)*time.Second)
 	}
 }
 
@@ -32,6 +29,8 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 			InitJWKSCache(url, 300) // Default 5 minutes TTL
 		}
 	}
+
+	useJWKS := jwksURL != nil
 
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -54,15 +53,15 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 
 		// Parse and validate JWT token
 		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-			// Ensure the token is using RSA/ECDSA (standard for JWKS)
-			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-				if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			// If JWKS cache is available and requested, use it for validation
+			if useJWKS && jwksCache != nil {
+				// Ensure the token is using RSA/ECDSA (standard for JWKS)
+				if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+					if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
+						return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+					}
 				}
-			}
 
-			// If JWKS cache is available, use it for validation
-			if jwksCache != nil {
 				kid, ok := t.Header["kid"].(string)
 				if !ok {
 					return nil, fmt.Errorf("missing kid in token header")
@@ -81,9 +80,13 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 				return rawKey, nil
 			}
 
-			// Fallback: If no JWKS cache, accept the token for testing purposes
+			// Fallback: If no JWKS cache, accept the token for testing purposes using the provided secret
 			// In production, this should be removed or properly configured
-			return []byte("test-secret"), nil
+			secret := ttl
+			if secret == "" {
+				secret = "test-secret"
+			}
+			return []byte(secret), nil
 		})
 
 		if err != nil || !token.Valid {

@@ -11,6 +11,7 @@ This directory contains incident response runbooks for the Stellabill backend se
 | [auth-failure-runbook.md](./auth-failure-runbook.md) | JWT validation failures, tenant mismatches, admin token errors | 401 rate > 10 % in 5 min |
 | [db-outage-runbook.md](./db-outage-runbook.md) | PostgreSQL outages, connection pool exhaustion, replica lag, slow queries | Health check `"db": "down"` for > 2 min |
 | [elevated-errors-runbook.md](./elevated-errors-runbook.md) | 5xx spike, panics, worker failures, latency degradation | 5xx rate > 5 % in 5 min |
+| [../runbooks/capacity-planning.md](../runbooks/capacity-planning.md) | Capacity planning, tenant growth sizing, CPU/memory/IOPS estimates | Measured prod snapshots required |
 
 ---
 

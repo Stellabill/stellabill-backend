@@ -10,6 +10,7 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 - [What this backend provides (for the frontend)](#what-this-backend-provides-for-the-frontend)
 - [Background Worker](#background-worker)
 - [Local setup](#local-setup)
+- [Operational playbooks](#operational-playbooks)
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [API reference](#api-reference)
@@ -158,6 +159,15 @@ curl -X POST http://localhost:8080/api/outbox/test
 ```
 
 ---
+
+## Operational playbooks
+
+Keep the operational docs close to the code so the measurement workflow is easy to find during review and incident response:
+
+- [Capacity planning playbook](docs/runbooks/capacity-planning.md)
+- [Operational runbooks index](docs/ops/README.md)
+
+The capacity planning playbook includes the reproducible snapshot script, the sizing model, alert thresholds, and the edge-case checks for zero-traffic and burst-traffic tenant profiles.
 
 ## Configuration
 

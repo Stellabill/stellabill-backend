@@ -1,0 +1,60 @@
+{
+  "has_more": false,
+  "next_cursor": "",
+  "reports": [
+    {
+      "subscription_id": "sub_1",
+      "tenant_id": "tenant_1",
+      "matched": true,
+      "mismatches": null,
+      "backend": {
+        "subscription_id": "sub_1",
+        "status": "active",
+        "amount": 1000,
+        "currency": "USD",
+        "interval": "month",
+        "balances": null,
+        "updated_at": "<TIMESTAMP>"
+      },
+      "contract": {
+        "subscription_id": "sub_1",
+        "status": "active",
+        "amount": 1000,
+        "currency": "USD",
+        "interval": "month",
+        "balances": null,
+        "exported_at": "<TIMESTAMP>"
+      }
+    },
+    {
+      "subscription_id": "sub_2",
+      "tenant_id": "tenant_1",
+      "matched": false,
+      "mismatches": [
+        {
+          "field": "status",
+          "backend_value": "active",
+          "contract_value": "canceled"
+        }
+      ],
+      "backend": {
+        "subscription_id": "sub_2",
+        "status": "active",
+        "amount": 500,
+        "currency": "EUR",
+        "interval": "month",
+        "balances": null,
+        "updated_at": "<TIMESTAMP>"
+      },
+      "contract": {
+        "subscription_id": "sub_2",
+        "status": "canceled",
+        "amount": 500,
+        "currency": "EUR",
+        "interval": "month",
+        "balances": null,
+        "exported_at": "<TIMESTAMP>"
+      }
+    }
+  ]
+}

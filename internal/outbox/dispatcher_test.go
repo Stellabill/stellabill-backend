@@ -37,9 +37,9 @@ func (r *memRepo) GetPendingEvents(limit int) ([]*Event, error) {
 	return r.GetPendingEventsSince(nil, nil, limit)
 }
 
-func (r *memRepo) GetByID(id uuid.UUID) (*Event, error)                                 { return nil, nil }
+func (r *memRepo) GetByID(id uuid.UUID) (*Event, error)                                { return nil, nil }
 func (r *memRepo) UpdateStatus(id uuid.UUID, status Status, errorMessage *string) error { return nil }
-func (r *memRepo) MarkAsProcessing(id uuid.UUID) error                                  { return nil }
+func (r *memRepo) MarkAsProcessing(id uuid.UUID) error                                 { return nil }
 func (r *memRepo) IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time, errorMessage *string) error {
 	return nil
 }
@@ -101,6 +101,18 @@ func (p *succeedPublisher) Publish(ctx context.Context, event *Event) error { re
 type failPublisher struct{}
 
 func (p *failPublisher) Publish(ctx context.Context, event *Event) error { return assert.AnError }
+
+type slowFailPublisher struct{}
+
+func (p *slowFailPublisher) Publish(ctx context.Context, event *Event) error {
+	// simulate latency; dispatcher should time out upstream
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(5 * time.Second):
+		return assert.AnError
+	}
+}
 
 func TestPerPublisherDrain(t *testing.T) {
 	repo := newMemRepo()

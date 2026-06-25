@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"

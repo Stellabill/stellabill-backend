@@ -75,6 +75,8 @@ type Config struct {
 	TracingServiceName string
 	// CORS configuration
 	AllowedOrigins string
+	// SecurityFrameAncestors controls the CSP frame-ancestors directive (e.g. 'none', 'self', or origins)
+	SecurityFrameAncestors string
 	// DB connection pool tuning (seconds for the time-based fields)
 	DBPoolMaxConns          int
 	DBPoolMinConns          int
@@ -224,6 +226,7 @@ func Load(opts ...Option) (Config, error) {
 		TracingExporter:     getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName:  getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 		AllowedOrigins:      getEnv("ALLOWED_ORIGINS", ""),
+		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
 		// DB pool defaults; overridden by valid DB_POOL_* env vars in validateDBPool.
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,

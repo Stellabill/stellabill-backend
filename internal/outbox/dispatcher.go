@@ -47,6 +47,7 @@ type dispatcher struct {
 	wg      sync.WaitGroup
 	running bool
 	mu      sync.RWMutex
+
 	// per-publisher failure/backoff state
 	publisherFailCount   map[string]int
 	publisherNextAttempt map[string]time.Time
@@ -134,21 +135,14 @@ func (d *dispatcher) IsRunning() bool {
 	return d.running
 }
 
-// dispatchLoop is the main processing loop
+// dispatchLoop is intentionally disabled.
+// This dispatcher is designed to be fully per-publisher to ensure one
+// misbehaving publisher cannot stall others.
 func (d *dispatcher) dispatchLoop() {
+	// Disabled: dispatcher is per-publisher only.
+	// Keep this method for backward compatibility with any potential callers.
 	defer d.wg.Done()
-
-	ticker := time.NewTicker(d.config.PollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-d.ctx.Done():
-			return
-		case <-ticker.C:
-			d.processPendingEvents()
-		}
-	}
+	<-d.ctx.Done()
 }
 
 // cleanupLoop handles cleanup of completed events
@@ -218,11 +212,25 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 			cancel()
 			if err != nil {
 				log.Printf("Publisher %s failed for event %s: %v", name, event.ID, err)
-				// update failure/backoff
+
+				// update failure/backoff (per publisher)
 				d.mu.Lock()
 				d.publisherFailCount[name]++
 				failCount := d.publisherFailCount[name]
 				d.mu.Unlock()
+
+				// bounded retry per publisher failure streak
+				if failCount >= d.config.MaxRetries {
+					// Mark the event as failed to stop endless retry in pending drain.
+					errorMsg := err.Error()
+					_ = d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg)
+					// reset backoff state so we don't stall permanently
+					d.mu.Lock()
+					d.publisherFailCount[name] = 0
+					d.publisherNextAttempt[name] = time.Time{}
+					d.mu.Unlock()
+					continue
+				}
 
 				// exponential backoff based on failCount, capped
 				backoff := math.Pow(d.config.RetryBackoffFactor, float64(failCount))
@@ -237,7 +245,6 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 				d.publisherNextAttempt[name] = nextAttempt
 				d.mu.Unlock()
 
-				// Do not advance cursor; will retry after backoff
 				continue
 			}
 
@@ -254,8 +261,7 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 			}
 
 			// emit lag metric if available
-			if event.OccurredAt.IsZero() == false {
-				// set gauge: now - last processed (after update)
+			if !event.OccurredAt.IsZero() {
 				if OutboxPublisherLag != nil {
 					lag := time.Since(event.OccurredAt).Seconds()
 					OutboxPublisherLag.WithLabelValues(name).Set(lag)
@@ -277,7 +283,6 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 		case <-ctx.Done():
 			cancel()
 			log.Printf("Publisher %s processing timeout for event %s", name, event.ID)
-			// don't advance cursor
 		}
 	}
 }
@@ -292,11 +297,9 @@ func (d *dispatcher) allPublishersProcessed(event *Event) (bool, error) {
 		if since == nil {
 			return false, nil
 		}
-		// If last processed occurred_at < event.OccurredAt, not yet processed
 		if since.Before(event.OccurredAt) {
 			return false, nil
 		}
-		// If equal timestamps, ensure lastID > event.ID
 		if since.Equal(event.OccurredAt) {
 			if lastID == nil || lastID.String() < event.ID.String() {
 				return false, nil
@@ -307,6 +310,7 @@ func (d *dispatcher) allPublishersProcessed(event *Event) (bool, error) {
 }
 
 // processPendingEvents processes a batch of pending events
+// Disabled: dispatcher uses per-publisher drains.
 func (d *dispatcher) processPendingEvents() {
 	events, err := d.repository.GetPendingEvents(d.config.BatchSize)
 	if err != nil {
@@ -315,7 +319,7 @@ func (d *dispatcher) processPendingEvents() {
 	}
 
 	if len(events) == 0 {
-		return // No events to process
+		return
 	}
 
 	log.Printf("%s", security.MaskPII(fmt.Sprintf("Processing %d pending events", len(events))))
@@ -329,17 +333,14 @@ func (d *dispatcher) processPendingEvents() {
 
 // processEvent processes a single event
 func (d *dispatcher) processEvent(event *Event) error {
-	// Mark as processing to prevent other dispatchers from picking it up
 	if err := d.repository.MarkAsProcessing(event.ID); err != nil {
 		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as processing: %v", security.MaskPII(event.ID.String()), err)))
 		return err
 	}
 
-	// Create a timeout context for processing
 	ctx, cancel := context.WithTimeout(d.ctx, d.config.ProcessingTimeout)
 	defer cancel()
 
-	// Process in a goroutine to respect timeout
 	done := make(chan error, 1)
 	go func() {
 		done <- d.publisher.Publish(ctx, event)
@@ -351,7 +352,6 @@ func (d *dispatcher) processEvent(event *Event) error {
 			return d.handlePublishError(event, err)
 		}
 
-		// Mark as completed
 		if err := d.repository.UpdateStatus(event.ID, StatusCompleted, nil); err != nil {
 			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as completed: %v", security.MaskPII(event.ID.String()), err)))
 			return err
@@ -361,7 +361,6 @@ func (d *dispatcher) processEvent(event *Event) error {
 		return nil
 
 	case <-ctx.Done():
-		// Processing timeout
 		timeoutErr := "processing timeout"
 		return d.handlePublishError(event, &TimeoutError{msg: timeoutErr})
 	}
@@ -372,7 +371,6 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	event.RetryCount++
 
 	if event.RetryCount >= d.config.MaxRetries {
-		// Max retries reached, mark as failed
 		errorMsg := err.Error()
 		if updateErr := d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg); updateErr != nil {
 			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as failed: %v", security.MaskPII(event.ID.String()), updateErr)))
@@ -383,7 +381,6 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 		return err
 	}
 
-	// Calculate next retry time with exponential backoff
 	backoffSeconds := math.Pow(d.config.RetryBackoffFactor, float64(event.RetryCount))
 	nextRetryAt := time.Now().Add(time.Duration(backoffSeconds) * time.Second)
 

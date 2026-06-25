@@ -30,10 +30,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
-<<<<<<< Open-and-inject-a-real-database-connection-pool-at-startup
-
-=======
->>>>>>> main
 
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
@@ -83,16 +79,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	var dbPool *pgxpool.Pool
 	var planDB *sql.DB
 	if cfg.DBConn != "" {
-<<<<<<< Open-and-inject-a-real-database-connection-pool-at-startup
-		connectCtx, cancel := context.WithTimeout(
-			context.Background(),
-			time.Duration(cfg.DBPoolConnectTimeout)*time.Second,
-		)
-		dbPool, err = db.NewPool(connectCtx, cfg)
-		cancel()
-=======
 		poolConfig, err := pgxpool.ParseConfig(cfg.DBConn)
->>>>>>> main
 		if err != nil {
 			fmt.Printf("Failed to parse database pool config: %v\n", err)
 		} else {
@@ -293,12 +280,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		}
 
 		return nil
-	}
-}
-
-		// Feature flags endpoints
-		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
-		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
+	// Feature flags endpoints
+	admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
+	admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
 	}
 
 	return func(ctx context.Context) error {

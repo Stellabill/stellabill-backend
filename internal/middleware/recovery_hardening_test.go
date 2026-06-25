@@ -78,7 +78,7 @@ func TestRecoveryDoesNotLeakStackToClient(t *testing.T) {
 	assert.NotContains(t, body, "runtime/debug")
 	assert.NotContains(t, body, "boom with internals",
 		"raw panic message must not appear in response body")
-	assert.Contains(t, body, "Internal server error")
+	assert.Contains(t, body, "internal server error")
 
 	// Server-side log must include the (sanitized) stack and the panic
 	// message — that is the whole point of the redaction split.

@@ -76,7 +76,6 @@ func TestTenantIsolationFuzz(t *testing.T) {
 
     // HTTP handlers
     reconcileHandler := handlers.NewReconcileHandler(adapter, memStore)
-    listReportsHandler := handlers.NewListReportsHandler(memStore)
 
     // random probe loop
     iterations := 250

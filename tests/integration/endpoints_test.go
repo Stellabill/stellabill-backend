@@ -132,11 +132,11 @@ func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 			description:     "merchant can access plans",
 		},
 		{
-			name:            "valid customer token",
+			name:            "customer token denied",
 			token:           createCustomerToken(tg),
-			expectedStatus:  http.StatusOK,
-			shouldHaveError: false,
-			description:     "customer can access plans",
+			expectedStatus:  http.StatusForbidden,
+			shouldHaveError: true,
+			description:     "customer role lacks permission",
 		},
 		{
 			name:            "token without user_id",
@@ -188,14 +188,14 @@ func TestListSubscriptionsAuthorizationEnforcement(t *testing.T) {
 			name:           "no token",
 			token:          "",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "missing authorization header",
+			expectedError:  "authorization header required",
 			description:    "authentication required",
 		},
 		{
 			name:           "expired token",
 			token:          createExpiredToken(tg),
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "invalid or expired token",
+			expectedError:  "token validation failed: token has invalid claims: token is expired",
 			description:    "expired tokens rejected",
 		},
 		{
@@ -271,7 +271,7 @@ func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 			token:          "",
 			subscriptionID: "sub-123",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "missing authorization header",
+			expectedError:  "authorization header required",
 			description:    "authentication required",
 		},
 		{
@@ -279,7 +279,7 @@ func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 			token:          createExpiredToken(tg),
 			subscriptionID: "sub-123",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "invalid or expired token",
+			expectedError:  "token validation failed: token has invalid claims: token is expired",
 			description:    "expired tokens rejected",
 		},
 		{

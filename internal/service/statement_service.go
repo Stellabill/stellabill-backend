@@ -1,23 +1,50 @@
 package service
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
+	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/storage/s3"
 	"stellarbill-backend/internal/timeutil"
 )
+
+// ExportPresignTTL is the default presigned-URL lifetime.
+const ExportPresignTTL = 15 * time.Minute
+
+// ExportResult is returned by ExportStatements.
+type ExportResult struct {
+	// ObjectKey is the versioned S3 key used for the upload.
+	// Format: exports/{tenantID}/{customerID}/{uuid}.csv.gz
+	ObjectKey string
+	// URL is the presigned GET URL valid for ExportPresignTTL.
+	URL string
+	// ExpiresAt is the UTC timestamp when the presigned URL expires.
+	ExpiresAt time.Time
+}
 
 // StatementService defines the business logic interface for billing statements.
 type StatementService interface {
 	GetDetail(ctx context.Context, callerID string, roles []string, statementID string) (*StatementDetail, []string, error)
 	ListByCustomer(ctx context.Context, callerID string, roles []string, customerID string, q repository.StatementQuery) (*ListStatementsDetail, int, []string, error)
+	// ExportStatements renders all statements for customerID as gzipped CSV,
+	// uploads to S3 under a tenant-scoped versioned key, and returns a 15-min
+	// presigned URL. Only callers with role "admin" or a merchant whose tenant
+	// owns the customer may invoke this; subscribers may not.
+	ExportStatements(ctx context.Context, callerID string, roles []string, tenantID, customerID string, uploader s3.S3Uploader) (*ExportResult, error)
 }
 
 // statementService is the concrete implementation of StatementService.
 type statementService struct {
 	subRepo  repository.SubscriptionRepository
 	stmtRepo repository.StatementRepository
+	objStore cache.ObjectStore // nil-safe: rehydration is optional
 }
 
 // NewStatementService constructs a StatementService with the given repositories.
@@ -25,11 +52,20 @@ func NewStatementService(subRepo repository.SubscriptionRepository, stmtRepo rep
 	return &statementService{subRepo: subRepo, stmtRepo: stmtRepo}
 }
 
+// NewStatementServiceWithArchive constructs a StatementService with archival support.
+func NewStatementServiceWithArchive(subRepo repository.SubscriptionRepository, stmtRepo repository.StatementRepository, objStore cache.ObjectStore) StatementService {
+	return &statementService{subRepo: subRepo, stmtRepo: stmtRepo, objStore: objStore}
+}
+
 // GetDetail retrieves a full StatementDetail for the given statementID.
 // It enforces strict RBAC:
 // - Admin: always allowed
 // - Merchant: allowed if the statement belongs to their tenant (checked via subscription)
 // - Subscriber: allowed if they own the statement (callerID == row.CustomerID)
+//
+// If the statement is archived and object storage is configured, it transparently
+// rehydrates the full data from cold storage before returning (with a warning about
+// latency). If rehydration fails or is unavailable, it returns the archived stub.
 func (s *statementService) GetDetail(ctx context.Context, callerID string, roles []string, statementID string) (*StatementDetail, []string, error) {
 	var warnings []string
 
@@ -77,7 +113,20 @@ func (s *statementService) GetDetail(ctx context.Context, callerID string, roles
 		return nil, nil, ErrForbidden
 	}
 
-	// 4. Build StatementDetail.
+	// 4. Check if archived and rehydrate if needed
+	if row.ArchivedAt != nil && s.objStore != nil && row.ArchiveKey != "" {
+		// Rehydrate from cold storage
+		rehydratedRow, err := s.rehydrateFromArchive(ctx, row)
+		if err == nil {
+			row = rehydratedRow
+			warnings = append(warnings, "statement rehydrated from cold storage; latency may be higher than active statements")
+		} else {
+			// Warn but don't fail - return stub with warning
+			warnings = append(warnings, "failed to rehydrate from cold storage: "+err.Error())
+		}
+	}
+
+	// 5. Build StatementDetail.
 	periodStart := normalizeRFC3339OrKeep(row.PeriodStart)
 	periodEnd := normalizeRFC3339OrKeep(row.PeriodEnd)
 	issuedAt := normalizeRFC3339OrKeep(row.IssuedAt)
@@ -129,7 +178,7 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 		// BUT we should filter by tenant if possible.
 		// Since ListByCustomerID doesn't take tenantID, we might need to add it or trust the caller if it's a merchant.
 		// TODO: Hardening: Filter by tenant if merchant.
-		isAuthorized = true 
+		isAuthorized = true
 	} else if callerID == customerID {
 		isAuthorized = true
 	}
@@ -149,6 +198,13 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 		Statements: make([]*StatementDetail, 0, len(rows)),
 	}
 	for _, row := range rows {
+		if isMerchant {
+			sub, err := s.subRepo.FindByID(ctx, row.SubscriptionID)
+			if err != nil || sub.TenantID != callerID {
+				continue
+			}
+		}
+
 		periodStart := normalizeRFC3339OrKeep(row.PeriodStart)
 		periodEnd := normalizeRFC3339OrKeep(row.PeriodEnd)
 		issuedAt := normalizeRFC3339OrKeep(row.IssuedAt)
@@ -167,6 +223,11 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 		})
 	}
 
+	// Update count to reflect filtered result size
+	if isMerchant {
+		count = len(result.Statements)
+	}
+
 	return result, count, warnings, nil
 }
 
@@ -176,4 +237,47 @@ func normalizeRFC3339OrKeep(raw string) string {
 		return raw
 	}
 	return normalized
+}
+
+// rehydrateFromArchive retrieves a statement from cold storage and returns a hydrated StatementRow.
+// It includes both the stub metadata (ID, subscription, customer) and the archived payload data.
+func (s *statementService) rehydrateFromArchive(ctx context.Context, stub *repository.StatementRow) (*repository.StatementRow, error) {
+	if s.objStore == nil || stub.ArchiveKey == "" {
+		return stub, errors.New("object store not configured or no archive key")
+	}
+
+	// Retrieve JSON from object storage
+	data, err := s.objStore.Get(ctx, stub.ArchiveKey)
+	if err != nil {
+		return nil, errors.New("failed to retrieve archived statement from cold storage: " + err.Error())
+	}
+
+	// Unmarshal into payload
+	var payload cache.StatementArchivePayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, errors.New("failed to parse archived statement: " + err.Error())
+	}
+
+	// Reconstruct StatementRow with hydrated data
+	hydrated := &repository.StatementRow{
+		ID:             payload.ID,
+		SubscriptionID: payload.SubscriptionID,
+		CustomerID:     payload.CustomerID,
+		PeriodStart:    payload.PeriodStart,
+		PeriodEnd:      payload.PeriodEnd,
+		IssuedAt:       payload.IssuedAt,
+		TotalAmount:    payload.TotalAmount,
+		Currency:       payload.Currency,
+		Kind:           payload.Kind,
+		Status:         payload.Status,
+		ArchivedAt:     stub.ArchivedAt,
+		ArchiveKey:     stub.ArchiveKey,
+		DeletedAt:      stub.DeletedAt,
+	}
+
+	// Optionally update the database row with rehydrated data for future cache hits
+	// (failures are ignored; this is a best-effort optimization)
+	_ = s.stmtRepo.UpdateArchivedData(ctx, payload.ID, hydrated)
+
+	return hydrated, nil
 }

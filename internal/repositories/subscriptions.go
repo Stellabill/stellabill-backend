@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -34,15 +35,15 @@ type Subscription struct {
 // SubscriptionRepository interface for subscription operations
 type SubscriptionRepository interface {
 	Create(subscription *Subscription) error
-	GetByID(id string) (*Subscription, error)
-	GetByCustomerID(customerID string, limit, offset int) ([]*Subscription, error)
-	GetByMerchantID(merchantID string, limit, offset int) ([]*Subscription, error)
-	GetByPlanID(planID string, limit, offset int) ([]*Subscription, error)
+	GetByID(ctx context.Context, id string) (*Subscription, error)
+	GetByCustomerID(ctx context.Context, customerID string, limit, offset int) ([]*Subscription, error)
+	GetByMerchantID(ctx context.Context, merchantID string, limit, offset int) ([]*Subscription, error)
+	GetByPlanID(ctx context.Context, planID string, limit, offset int) ([]*Subscription, error)
 	Update(subscription *Subscription) error
 	UpdateStatus(id string, status string) error
 	Cancel(id string, cancelAtPeriodEnd bool) error
-	GetActiveSubscriptionsByMerchantID(merchantID string) ([]*Subscription, error)
-	GetSubscriptionsDueForBilling(limit int) ([]*Subscription, error)
+	GetActiveSubscriptionsByMerchantID(ctx context.Context, merchantID string) ([]*Subscription, error)
+	GetSubscriptionsDueForBilling(ctx context.Context, limit int) ([]*Subscription, error)
 	WithTx(tx db.DBTX) SubscriptionRepository
 }
 
@@ -107,7 +108,7 @@ func (r *postgresSubscriptionRepository) Create(subscription *Subscription) erro
 }
 
 // GetByID retrieves a subscription by ID
-func (r *postgresSubscriptionRepository) GetByID(id string) (*Subscription, error) {
+func (r *postgresSubscriptionRepository) GetByID(ctx context.Context, id string) (*Subscription, error) {
 	query := `
 		SELECT id, plan_id, customer_id, merchant_id, status, amount, currency, interval,
 			   current_period_start, current_period_end, cancel_at_period_end,
@@ -119,7 +120,7 @@ func (r *postgresSubscriptionRepository) GetByID(id string) (*Subscription, erro
 	var subscription Subscription
 	var canceledAt, endedAt, trialStart, trialEnd sql.NullTime
 	
-	err := r.db.QueryRow(query, id).Scan(
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&subscription.ID,
 		&subscription.PlanID,
 		&subscription.CustomerID,
@@ -166,7 +167,7 @@ func (r *postgresSubscriptionRepository) GetByID(id string) (*Subscription, erro
 }
 
 // GetByCustomerID retrieves subscriptions for a customer with pagination
-func (r *postgresSubscriptionRepository) GetByCustomerID(customerID string, limit, offset int) ([]*Subscription, error) {
+func (r *postgresSubscriptionRepository) GetByCustomerID(ctx context.Context, customerID string, limit, offset int) ([]*Subscription, error) {
 	query := `
 		SELECT id, plan_id, customer_id, merchant_id, status, amount, currency, interval,
 			   current_period_start, current_period_end, cancel_at_period_end,
@@ -177,7 +178,7 @@ func (r *postgresSubscriptionRepository) GetByCustomerID(customerID string, limi
 		LIMIT $2 OFFSET $3
 	`
 	
-	rows, err := r.db.Query(query, customerID, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, customerID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscriptions: %w", err)
 	}
@@ -200,7 +201,7 @@ func (r *postgresSubscriptionRepository) GetByCustomerID(customerID string, limi
 }
 
 // GetByMerchantID retrieves subscriptions for a merchant with pagination
-func (r *postgresSubscriptionRepository) GetByMerchantID(merchantID string, limit, offset int) ([]*Subscription, error) {
+func (r *postgresSubscriptionRepository) GetByMerchantID(ctx context.Context, merchantID string, limit, offset int) ([]*Subscription, error) {
 	query := `
 		SELECT id, plan_id, customer_id, merchant_id, status, amount, currency, interval,
 			   current_period_start, current_period_end, cancel_at_period_end,
@@ -211,7 +212,7 @@ func (r *postgresSubscriptionRepository) GetByMerchantID(merchantID string, limi
 		LIMIT $2 OFFSET $3
 	`
 	
-	rows, err := r.db.Query(query, merchantID, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, merchantID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscriptions: %w", err)
 	}
@@ -234,7 +235,7 @@ func (r *postgresSubscriptionRepository) GetByMerchantID(merchantID string, limi
 }
 
 // GetByPlanID retrieves subscriptions for a plan with pagination
-func (r *postgresSubscriptionRepository) GetByPlanID(planID string, limit, offset int) ([]*Subscription, error) {
+func (r *postgresSubscriptionRepository) GetByPlanID(ctx context.Context, planID string, limit, offset int) ([]*Subscription, error) {
 	query := `
 		SELECT id, plan_id, customer_id, merchant_id, status, amount, currency, interval,
 			   current_period_start, current_period_end, cancel_at_period_end,
@@ -245,7 +246,7 @@ func (r *postgresSubscriptionRepository) GetByPlanID(planID string, limit, offse
 		LIMIT $2 OFFSET $3
 	`
 	
-	rows, err := r.db.Query(query, planID, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, planID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscriptions: %w", err)
 	}
@@ -361,7 +362,7 @@ func (r *postgresSubscriptionRepository) Cancel(id string, cancelAtPeriodEnd boo
 }
 
 // GetActiveSubscriptionsByMerchantID retrieves active subscriptions for a merchant
-func (r *postgresSubscriptionRepository) GetActiveSubscriptionsByMerchantID(merchantID string) ([]*Subscription, error) {
+func (r *postgresSubscriptionRepository) GetActiveSubscriptionsByMerchantID(ctx context.Context, merchantID string) ([]*Subscription, error) {
 	query := `
 		SELECT id, plan_id, customer_id, merchant_id, status, amount, currency, interval,
 			   current_period_start, current_period_end, cancel_at_period_end,
@@ -371,7 +372,7 @@ func (r *postgresSubscriptionRepository) GetActiveSubscriptionsByMerchantID(merc
 		ORDER BY created_at DESC
 	`
 	
-	rows, err := r.db.Query(query, merchantID)
+	rows, err := r.db.QueryContext(ctx, query, merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active subscriptions: %w", err)
 	}
@@ -394,7 +395,7 @@ func (r *postgresSubscriptionRepository) GetActiveSubscriptionsByMerchantID(merc
 }
 
 // GetSubscriptionsDueForBilling retrieves subscriptions that need billing
-func (r *postgresSubscriptionRepository) GetSubscriptionsDueForBilling(limit int) ([]*Subscription, error) {
+func (r *postgresSubscriptionRepository) GetSubscriptionsDueForBilling(ctx context.Context, limit int) ([]*Subscription, error) {
 	query := `
 		SELECT id, plan_id, customer_id, merchant_id, status, amount, currency, interval,
 			   current_period_start, current_period_end, cancel_at_period_end,
@@ -407,7 +408,7 @@ func (r *postgresSubscriptionRepository) GetSubscriptionsDueForBilling(limit int
 		LIMIT $2
 	`
 	
-	rows, err := r.db.Query(query, time.Now(), limit)
+	rows, err := r.db.QueryContext(ctx, query, time.Now(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscriptions due for billing: %w", err)
 	}

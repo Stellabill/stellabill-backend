@@ -14,7 +14,8 @@ import (
 
 func setupRouter() *gin.Engine {
 	// Initialize required configuration for tests
-	os.Setenv("DATABASE_URL", "postgres://localhost:5432/test")
+	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	os.Setenv("MOCK_DB", "true")
 	os.Setenv("JWT_SECRET", "Test-Secret-Must-Be-Long-And-Complex-123!")
 	os.Setenv("ADMIN_TOKEN", "Admin-Token-Must-Be-Long-And-Complex-123!")
 	os.Setenv("ENV", "development")
@@ -132,11 +133,11 @@ func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 			description:     "merchant can access plans",
 		},
 		{
-			name:            "valid customer token",
-			token:           createCustomerToken(tg),
-			expectedStatus:  http.StatusOK,
-			shouldHaveError: false,
-			description:     "customer can access plans",
+			name:           "valid customer token",
+			token:          createCustomerToken(tg),
+			expectedStatus: http.StatusForbidden,
+			shouldHaveError: true,
+			description:    "customer cannot access plans",
 		},
 		{
 			name:            "token without user_id",

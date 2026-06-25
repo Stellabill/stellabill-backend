@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const testInternalErrorMessage = "Internal server error"
+const testInternalErrorMessage = "internal server error"
 
 type testRuntimeErr string
 

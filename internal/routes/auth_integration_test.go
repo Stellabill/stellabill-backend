@@ -16,7 +16,9 @@ func setupTestRouter() (*gin.Engine, string) {
 	gin.SetMode(gin.TestMode)
 
 	secret := "Test-Secret-123!"
+		os.Setenv("RATE_LIMIT_ENABLED", "false")
 	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	os.Setenv("MOCK_DB", "true")
 	os.Setenv("JWT_SECRET", secret)
 	os.Setenv("ADMIN_TOKEN", "Another-Strong-Admin-Token-456!")
 
@@ -28,10 +30,11 @@ func setupTestRouter() (*gin.Engine, string) {
 
 func createToken(secret string, sub string, roles []auth.Role, exp time.Time) (string, error) {
 	claims := jwt.MapClaims{
-		"sub":   sub,
-		"roles": roles,
-		"exp":   exp.Unix(),
-		"iat":   time.Now().Unix(),
+		"sub":    sub,
+		"roles":  roles,
+		"tenant": "tenant123",
+		"exp":    exp.Unix(),
+		"iat":    time.Now().Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
@@ -108,7 +111,7 @@ func TestAuthMiddleware_Integration(t *testing.T) {
 			r.ServeHTTP(rec, req)
 
 			if rec.Code != tt.expectedStatus {
-				t.Errorf("expected %d, got %d", tt.expectedStatus, rec.Code)
+				t.Errorf("expected %d, got %d. body: %s", tt.expectedStatus, rec.Code, rec.Body.String())
 			}
 		})
 	}

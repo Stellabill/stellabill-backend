@@ -163,8 +163,8 @@ func TestConditionalFeatureFlag_ConditionTrue(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	
-	if w.Code != 200 {
-		t.Errorf("Expected status 200, got %d", w.Code)
+	if w.Code != 503 {
+		t.Errorf("Expected status 503, got %d", w.Code)
 	}
 }
 

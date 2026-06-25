@@ -4,12 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
-	"strings"
-	"fmt"
 	"stellarbill-backend/internal/auth" // Adjust this import path to your module name
 )
 
@@ -19,13 +17,13 @@ var jwksCache *auth.JWKSCache
 // This should be called during application initialization
 func InitJWKSCache(jwksURL string, ttl int) {
 	if jwksURL != "" {
-		jwksCache = auth.NewJWKSCache(jwksURL, fmt.Sprintf("%ds", ttl))
+		jwksCache = auth.NewJWKSCache(jwksURL, time.Duration(ttl)*time.Second)
 	}
 }
 
 // AuthMiddleware returns a middleware that validates JWT tokens using JWKS
 // and projects verified claims (roles, callerID, tenantID) into the gin context
-func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
+func AuthMiddleware(jwksURL interface{}, secret string) gin.HandlerFunc {
 	// Initialize JWKS cache if not already done
 	if jwksCache == nil && jwksURL != nil {
 		if url, ok := jwksURL.(string); ok && url != "" {
@@ -37,7 +35,7 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "authorization header required",
+				"error": "missing authorization header",
 			})
 			return
 		}
@@ -54,15 +52,14 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 
 		// Parse and validate JWT token
 		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-			// Ensure the token is using RSA/ECDSA (standard for JWKS)
-			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-				if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-				}
-			}
-
 			// If JWKS cache is available, use it for validation
 			if jwksCache != nil {
+				// Ensure the token is using RSA/ECDSA (standard for JWKS)
+				if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+					if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
+						return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+					}
+				}
 				kid, ok := t.Header["kid"].(string)
 				if !ok {
 					return nil, fmt.Errorf("missing kid in token header")
@@ -81,14 +78,12 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 				return rawKey, nil
 			}
 
-			// Fallback: If no JWKS cache, accept the token for testing purposes
-			// In production, this should be removed or properly configured
-			return []byte("test-secret"), nil
+			return []byte(secret), nil
 		})
 
 		if err != nil || !token.Valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": fmt.Sprintf("token validation failed: %v", err),
+				"error": "invalid or expired token",
 			})
 			return
 		}

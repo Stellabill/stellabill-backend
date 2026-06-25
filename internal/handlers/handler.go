@@ -64,7 +64,7 @@ func NewHandlerWithDependencies(
 // ListDeadLetteredEvents handles GET /api/admin/outbox/dead-letter
 func (h *Handler) ListDeadLetteredEvents(c *gin.Context) {
 	if h.OutboxRepo == nil {
-		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeInternal, "outbox repository not available")
+		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeInternalError, "outbox repository not available")
 		return
 	}
 
@@ -77,7 +77,7 @@ func (h *Handler) ListDeadLetteredEvents(c *gin.Context) {
 
 	events, err := h.OutboxRepo.ListDeadLetteredEvents(limit)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, ErrorCodeInternal, "failed to list dead-lettered events")
+		RespondWithError(c, http.StatusInternalServerError, ErrorCodeInternalError, "failed to list dead-lettered events")
 		return
 	}
 
@@ -87,14 +87,14 @@ func (h *Handler) ListDeadLetteredEvents(c *gin.Context) {
 // RequeueOutboxEvent handles POST /api/admin/outbox/:id/requeue
 func (h *Handler) RequeueOutboxEvent(c *gin.Context) {
 	if h.OutboxRepo == nil {
-		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeInternal, "outbox repository not available")
+		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeInternalError, "outbox repository not available")
 		return
 	}
 
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		RespondWithError(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid event ID")
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, "invalid event ID")
 		return
 	}
 
@@ -104,7 +104,7 @@ func (h *Handler) RequeueOutboxEvent(c *gin.Context) {
 			RespondWithError(c, http.StatusNotFound, ErrorCodeNotFound, err.Error())
 			return
 		}
-		RespondWithError(c, http.StatusInternalServerError, ErrorCodeInternal, "failed to requeue event")
+		RespondWithError(c, http.StatusInternalServerError, ErrorCodeInternalError, "failed to requeue event")
 		return
 	}
 

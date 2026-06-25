@@ -52,7 +52,10 @@ func seedStatements() []*repository.StatementRow {
 }
 
 func newStatementService(rows ...*repository.StatementRow) service.StatementService {
-	subRepo := repository.NewMockSubscriptionRepo()
+	subRepo := repository.NewMockSubscriptionRepo(
+		&repository.SubscriptionRow{ID: "sub-1", TenantID: "merchant-1", CustomerID: "cust-1", Status: "active", PlanID: "plan-1"},
+		&repository.SubscriptionRow{ID: "sub-2", TenantID: "merchant-1", CustomerID: "cust-2", Status: "active", PlanID: "plan-1"},
+	)
 	stmtRepo := repository.NewMockStatementRepo(rows...)
 	return service.NewStatementService(subRepo, stmtRepo)
 }

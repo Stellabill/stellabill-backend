@@ -3,7 +3,6 @@ package outbox
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -210,4 +209,45 @@ func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 		event.ErrorMessage = &errorMessage.String
 	}
 	return &event, nil
+}
+
+// ListDeadLetteredEvents retrieves events that have permanently failed
+func (r *PostgresPgxRepository) ListDeadLetteredEvents(limit int) ([]*Event, error) {
+	ctx := context.Background()
+	query := `
+		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			   occurred_at, status, retry_count, max_retries, next_retry_at,
+			   error_message, created_at, updated_at, version, deduplication_id
+		FROM outbox_events
+		WHERE status = $1
+		ORDER BY occurred_at DESC
+		LIMIT $2`
+
+	rows, err := r.pool.Query(ctx, query, StatusFailed, limit) // Simplified: assuming StatusFailed acts as dead letter
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dead lettered events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*Event
+	for rows.Next() {
+		event, err := r.scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+// RequeueEvent resets an event's status to pending
+func (r *PostgresPgxRepository) RequeueEvent(id uuid.UUID) error {
+	ctx := context.Background()
+	query := `
+		UPDATE outbox_events
+		SET status = $1, retry_count = 0, error_message = NULL, updated_at = $2
+		WHERE id = $3`
+
+	_, err := r.pool.Exec(ctx, query, StatusPending, time.Now(), id)
+	return err
 }

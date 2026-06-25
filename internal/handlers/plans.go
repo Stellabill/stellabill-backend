@@ -35,6 +35,11 @@ func (h *Handler) ListPlans(c *gin.Context) {
 		c.Request = c.Request.WithContext(ctx)
 	}
 
+	if h.Plans == nil {
+		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "plan service is unavailable")
+		return
+	}
+
 	limitStr := c.Query("limit")
 	limit, err := pagination.ParseLimit(limitStr, 10)
 	if err != nil {
@@ -64,9 +69,11 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	page := pagination.PaginateSlice(plans, cursor, limit)
 
 	c.JSON(http.StatusOK, gin.H{
-		"plans":       page.Items,
-		"next_cursor": page.NextCursor,
-		"has_more":    page.HasMore,
+		"plans": page.Items,
+		"pagination": gin.H{
+			"next_cursor": page.NextCursor,
+			"has_more":    page.HasMore,
+		},
 	})
 }
 

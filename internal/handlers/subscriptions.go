@@ -42,6 +42,11 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 		c.Request = c.Request.WithContext(ctx)
 	}
 
+	if h.Subscriptions == nil {
+		RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service is unavailable")
+		return
+	}
+
 	limitStr := c.Query("limit")
 	limit, err := pagination.ParseLimit(limitStr, 10)
 	if err != nil {

@@ -297,7 +297,7 @@ func WebhookVerificationMiddleware(cfg *WebhookConfig) (gin.HandlerFunc, error) 
 		}
 
 		// Store provider info in context
-		c.Set("webhook_provider", cfg.Provider)
+		c.Set("webhook_provider", cfg.Provider.String())
 		c.Set("webhook_verified", true)
 
 		// Restore the body for downstream processing

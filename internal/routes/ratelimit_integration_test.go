@@ -1,17 +1,26 @@
 package routes
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
 	"time"
 
+	"stellarbill-backend/internal/auth"
+
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
 // helper to reset env between tests
+
+func getAuthToken() string {
+	token, _ := createToken("Test1!JwtSecret-MixedAlphaNumeric@123", "user123", []auth.Role{auth.RoleUser}, time.Now().Add(time.Hour))
+	return "Bearer " + token
+}
+
 func resetRateLimitEnv() {
 	os.Unsetenv("RATE_LIMIT_ENABLED")
 	os.Unsetenv("RATE_LIMIT_RPS")
@@ -20,8 +29,20 @@ func resetRateLimitEnv() {
 	os.Unsetenv("RATE_LIMIT_WHITELIST")
 }
 
+
+func newAuthRequest(method, path string) *http.Request {
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", getAuthToken())
+	return req
+}
+
 func setupRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
+
+	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	os.Setenv("MOCK_DB", "true")
+	os.Setenv("JWT_SECRET", "Test1!JwtSecret-MixedAlphaNumeric@123")
+	os.Setenv("ADMIN_TOKEN", "Admin1!Token-MixedAlphaNumeric@123")
 
 	r := gin.New()
 	Register(r)
@@ -62,7 +83,7 @@ func TestRouter_BurstLimit_IsHonored(t *testing.T) {
 
 	// first 2 requests should pass (burst = 2)
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest("GET", path, nil)
+		req := newAuthRequest("GET", path)
 		req.RemoteAddr = "1.1.1.1:1234"
 		w := httptest.NewRecorder()
 
@@ -71,7 +92,7 @@ func TestRouter_BurstLimit_IsHonored(t *testing.T) {
 	}
 
 	// 3rd request should be blocked
-	req := httptest.NewRequest("GET", path, nil)
+	req := newAuthRequest("GET", path)
 	req.RemoteAddr = "1.1.1.1:1234"
 	w := httptest.NewRecorder()
 
@@ -89,7 +110,7 @@ func TestRouter_RateLimit_Disabled(t *testing.T) {
 	r := setupRouter()
 
 	for i := 0; i < 30; i++ {
-		req := httptest.NewRequest("GET", "/api/v1/subscriptions", nil)
+		req := newAuthRequest("GET", "/api/v1/subscriptions")
 		req.RemoteAddr = "2.2.2.2:1234"
 		w := httptest.NewRecorder()
 
@@ -112,20 +133,20 @@ func TestRouter_RateLimit_Modes(t *testing.T) {
 		path := "/api/v1/subscriptions"
 
 		// IP1 exhausts
-		req1 := httptest.NewRequest("GET", path, nil)
+		req1 := newAuthRequest("GET", path)
 		req1.RemoteAddr = "10.0.0.1:1111"
 		w1 := httptest.NewRecorder()
 		r.ServeHTTP(w1, req1)
 		assert.Equal(t, 200, w1.Code)
 
-		req1b := httptest.NewRequest("GET", path, nil)
+		req1b := newAuthRequest("GET", path)
 		req1b.RemoteAddr = "10.0.0.1:1111"
 		w1b := httptest.NewRecorder()
 		r.ServeHTTP(w1b, req1b)
 		assert.Equal(t, 429, w1b.Code)
 
 		// different IP should still work
-		req2 := httptest.NewRequest("GET", path, nil)
+		req2 := newAuthRequest("GET", path)
 		req2.RemoteAddr = "10.0.0.2:1111"
 		w2 := httptest.NewRecorder()
 		r.ServeHTTP(w2, req2)
@@ -143,7 +164,7 @@ func TestRouter_RateLimit_Modes(t *testing.T) {
 		path := "/api/v1/subscriptions"
 
 		// user1
-		req := httptest.NewRequest("GET", path, nil)
+		req := newAuthRequest("GET", path)
 		req.RemoteAddr = "10.0.0.1:1111"
 		w := httptest.NewRecorder()
 
@@ -152,10 +173,11 @@ func TestRouter_RateLimit_Modes(t *testing.T) {
 
 		// user2 should not be affected
 		req2 := httptest.NewRequest("GET", path, nil)
-		req2.RemoteAddr = "10.0.0.1:1111"
+		token2, _ := createToken("Test1!JwtSecret-MixedAlphaNumeric@123", "user456", []auth.Role{auth.RoleUser}, time.Now().Add(time.Hour))
+		req2.Header.Set("Authorization", "Bearer " + token2)
+		req2.RemoteAddr = "10.0.0.2:1111"
 		w2 := httptest.NewRecorder()
 
-		req2.Header.Set("X-Caller-ID", "user2")
 		r.ServeHTTP(w2, req2)
 
 		assert.True(t, w2.Code == 200 || w2.Code == 401 || w2.Code == 403)
@@ -172,12 +194,12 @@ func TestRouter_RateLimit_Modes(t *testing.T) {
 		path := "/api/v1/subscriptions"
 
 		// same user different IP should be separate bucket
-		req1 := httptest.NewRequest("GET", path, nil)
+		req1 := newAuthRequest("GET", path)
 		req1.RemoteAddr = "10.0.0.1:1111"
 		w1 := httptest.NewRecorder()
 		r.ServeHTTP(w1, req1)
 
-		req2 := httptest.NewRequest("GET", path, nil)
+		req2 := newAuthRequest("GET", path)
 		req2.RemoteAddr = "10.0.0.2:1111"
 		w2 := httptest.NewRecorder()
 		r.ServeHTTP(w2, req2)
@@ -209,7 +231,7 @@ func TestRouter_SustainedLoad_Behavior(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 
-			req := httptest.NewRequest("GET", path, nil)
+			req := newAuthRequest("GET", path)
 			req.RemoteAddr = "9.9.9.9:1234"
 			w := httptest.NewRecorder()
 
@@ -222,6 +244,8 @@ func TestRouter_SustainedLoad_Behavior(t *testing.T) {
 				success++
 			} else if w.Code == 429 {
 				limited++
+			} else {
+				t.Logf("Unexpected status %d: %s", w.Code, w.Body.String())
 			}
 		}(i)
 	}

@@ -277,6 +277,8 @@ func TestWebhookVerificationMiddleware_ProviderSpecific(t *testing.T) {
 				r := httptest.NewRecorder()
 				req := httptest.NewRequest("POST", "/webhook", strings.NewReader(string(body)))
 				req.Header.Set(cfg.SignatureHeader, "t="+timestamp+",v1="+sig)
+				req.Header.Set(cfg.TimestampHeader, timestamp)
+				req.Header.Set(cfg.EventIDHeader, uuid.New().String())
 				
 				return r, req
 			},
@@ -589,13 +591,13 @@ func TestEventIDCache(t *testing.T) {
 		assert.ErrorIs(t, err, ErrEventIDAlreadySeen)
 	})
 
-		t.Run("Remove_event", func(t *testing.T) {
-		cache.Remove(ctx, eventID)
-		assert.False(t, cache.Has(ctx, eventID))
-	})
-
 	t.Run("Len", func(t *testing.T) {
 		assert.Equal(t, 1, cache.Len())
+	})
+
+	t.Run("Remove_event", func(t *testing.T) {
+		cache.Remove(ctx, eventID)
+		assert.False(t, cache.Has(ctx, eventID))
 	})
 
 	t.Run("Clear", func(t *testing.T) {

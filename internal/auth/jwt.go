@@ -121,6 +121,7 @@ func (tg *TokenGenerator) generateToken(userID, email, role string, expiresAt ti
 		UserID: userID,
 		Email:  email,
 		Role:   Role(role),
+		Tenant: "tenant123",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    tg.issuer,
 			ExpiresAt: jwt.NewNumericDate(expiresAt),

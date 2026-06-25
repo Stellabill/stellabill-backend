@@ -18,6 +18,8 @@ type IdempotencyStore interface {
 	GetOrInsert(ctx context.Context, scope, key, method, path, payloadHash string, ttl time.Duration) (statusCode int, responseBody []byte, isReplay bool, isInFlight bool, err error)
 	UpdateResponse(ctx context.Context, scope, key string, statusCode int, responseBody []byte) error
 	Delete(ctx context.Context, scope, key string) error
+	DeleteExpiredBatch(ctx context.Context, batchSize int) (int64, error)
+	CountExpiredPending(ctx context.Context) (int64, error)
 }
 
 // PostgresIdempotencyStore implements IdempotencyStore backed by PostgreSQL.
@@ -143,6 +145,44 @@ func (s *PostgresIdempotencyStore) Delete(ctx context.Context, scope, key string
 	return err
 }
 
+// DeleteExpiredBatch deletes expired keys in batches.
+func (s *PostgresIdempotencyStore) DeleteExpiredBatch(ctx context.Context, batchSize int) (int64, error) {
+	if s.pool == nil {
+		return 0, errors.New("postgres connection pool is nil")
+	}
+
+	qDelete := `
+		DELETE FROM idempotency_keys 
+		WHERE id IN (
+			SELECT id FROM idempotency_keys 
+			WHERE expires_at <= NOW() 
+			FOR UPDATE SKIP LOCKED 
+			LIMIT $1
+		)`
+
+	cmdTag, err := s.pool.Exec(ctx, qDelete, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	return cmdTag.RowsAffected(), nil
+}
+
+// CountExpiredPending counts how many keys are currently past their TTL.
+func (s *PostgresIdempotencyStore) CountExpiredPending(ctx context.Context) (int64, error) {
+	if s.pool == nil {
+		return 0, errors.New("postgres connection pool is nil")
+	}
+
+	qCount := `SELECT COUNT(*) FROM idempotency_keys WHERE expires_at <= NOW()`
+	
+	var count int64
+	err := s.pool.QueryRow(ctx, qCount).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // InMemoryIdempotencyEntry represents a single cached item.
 type InMemoryIdempotencyEntry struct {
 	method       string
@@ -224,3 +264,38 @@ func (s *InMemoryIdempotencyStore) Delete(ctx context.Context, scope, key string
 	delete(s.keys, mapKey)
 	return nil
 }
+
+// DeleteExpiredBatch deletes expired keys in memory up to batchSize.
+func (s *InMemoryIdempotencyStore) DeleteExpiredBatch(ctx context.Context, batchSize int) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var deleted int64
+	now := time.Now()
+	for k, entry := range s.keys {
+		if deleted >= int64(batchSize) {
+			break
+		}
+		if now.After(entry.expiresAt) {
+			delete(s.keys, k)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// CountExpiredPending counts expired keys in memory.
+func (s *InMemoryIdempotencyStore) CountExpiredPending(ctx context.Context) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count int64
+	now := time.Now()
+	for _, entry := range s.keys {
+		if now.After(entry.expiresAt) {
+			count++
+		}
+	}
+	return count, nil
+}
+

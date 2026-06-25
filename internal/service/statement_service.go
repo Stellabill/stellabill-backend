@@ -144,6 +144,18 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 		return nil, 0, nil, err
 	}
 
+	if isMerchant && !isAdmin {
+		var filteredRows []*repository.StatementRow
+		for _, row := range rows {
+			sub, err := s.subRepo.FindByID(ctx, row.SubscriptionID)
+			if err == nil && sub.TenantID == callerID {
+				filteredRows = append(filteredRows, row)
+			}
+		}
+		rows = filteredRows
+		count = len(rows)
+	}
+
 	// 3. Build StatementDetail slice.
 	result := &ListStatementsDetail{
 		Statements: make([]*StatementDetail, 0, len(rows)),

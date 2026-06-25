@@ -8,7 +8,8 @@ import (
 )
 
 func TestCoverage_Register(t *testing.T) {
-	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost/db")
+	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	os.Setenv("MOCK_DB", "true")
 	os.Setenv("JWT_SECRET", "Test1!JwtSecret-MixedAlphaNumeric@123")
 	os.Setenv("ADMIN_TOKEN", "Admin1!Token-MixedAlphaNumeric@123")
 	defer os.Unsetenv("DATABASE_URL")

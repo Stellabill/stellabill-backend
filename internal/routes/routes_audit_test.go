@@ -21,6 +21,7 @@ import (
 func TestAuditMiddlewareWiring(t *testing.T) {
 	// Set up environment for testing
 	os.Setenv("DATABASE_URL", "postgres://test:test@localhost:5432/test")
+	os.Setenv("MOCK_DB", "true")
 	os.Setenv("JWT_SECRET", "Test_Secret_123!")
 	os.Setenv("ADMIN_TOKEN", "Test_Admin_123!")
 	defer func() {

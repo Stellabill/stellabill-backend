@@ -105,6 +105,11 @@ func TestSpecCoverageMissingPathsDocumented(t *testing.T) {
 			continue
 		}
 
+		// Skip internal/admin routes that aren't documented in public spec
+		if strings.HasPrefix(r.Path, "/api/admin") || strings.HasPrefix(r.Path, "/api/metrics") {
+			continue
+		}
+
 		// Convert gin path to OpenAPI path format
 		openAPIPath := ginPathToOpenAPIPath(r.Path)
 

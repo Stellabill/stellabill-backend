@@ -39,7 +39,7 @@ func TestPostgresSubscriptionRepo_FindByID_HappyPath(t *testing.T) {
         deletedAt,
     )
 
-    query := `SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,\n               next_billing, deleted_at\n        FROM subscriptions\n        WHERE id = \$1\n    `
+    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1"
     mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id).WillReturnRows(rows)
 
     got, err := repo.FindByID(context.Background(), id)
@@ -88,7 +88,7 @@ func TestPostgresSubscriptionRepo_FindByIDAndTenant_HappyPath(t *testing.T) {
         nil,
     )
 
-    query := `SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,\n               next_billing, deleted_at\n        FROM subscriptions\n        WHERE id = \$1 AND tenant_id = \$2\n    `
+    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1 AND tenant_id = $2"
     mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id, tenantID).WillReturnRows(rows)
 
     got, err := repo.FindByIDAndTenant(context.Background(), id, tenantID)
@@ -122,7 +122,7 @@ func TestPostgresSubscriptionRepo_FindByIDAndTenant_CrossTenantReturnsNotFound(t
         "amount", "currency", "interval", "next_billing", "deleted_at",
     })
 
-    query := `SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,\n               next_billing, deleted_at\n        FROM subscriptions\n        WHERE id = \$1 AND tenant_id = \$2\n    `
+    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1 AND tenant_id = $2"
     mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id, tenantID).WillReturnRows(rows)
 
     _, err = repo.FindByIDAndTenant(context.Background(), id, tenantID)
@@ -160,7 +160,7 @@ func TestPostgresSubscriptionRepo_FindByID_NullNextBillingAndNoDeletedAt(t *test
         nil,
     )
 
-    query := `SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,\n               next_billing, deleted_at\n        FROM subscriptions\n        WHERE id = \$1\n    `
+    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1"
     mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id).WillReturnRows(rows)
 
     got, err := repo.FindByID(context.Background(), id)
@@ -193,7 +193,7 @@ func TestPostgresSubscriptionRepo_FindByID_NoRowsReturnsNotFound(t *testing.T) {
         "amount", "currency", "interval", "next_billing", "deleted_at",
     })
 
-    query := `SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,\n               next_billing, deleted_at\n        FROM subscriptions\n        WHERE id = \$1\n    `
+    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1"
     mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id).WillReturnRows(rows)
 
     _, err = repo.FindByID(context.Background(), id)

@@ -16,10 +16,8 @@ import (
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
-	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/secrets"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/tracing"
@@ -30,11 +28,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
-<<<<<<< Open-and-inject-a-real-database-connection-pool-at-startup
-
-=======
->>>>>>> main
-
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
 	_ = RegisterWithCleanup(r)
@@ -82,17 +75,8 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// and we degrade gracefully to in-memory dependencies below.
 	var dbPool *pgxpool.Pool
 	var planDB *sql.DB
-	if cfg.DBConn != "" {
-<<<<<<< Open-and-inject-a-real-database-connection-pool-at-startup
-		connectCtx, cancel := context.WithTimeout(
-			context.Background(),
-			time.Duration(cfg.DBPoolConnectTimeout)*time.Second,
-		)
-		dbPool, err = db.NewPool(connectCtx, cfg)
-		cancel()
-=======
+	if cfg.DBConn != "" && os.Getenv("MOCK_DB") != "true" {
 		poolConfig, err := pgxpool.ParseConfig(cfg.DBConn)
->>>>>>> main
 		if err != nil {
 			fmt.Printf("Failed to parse database pool config: %v\n", err)
 		} else {
@@ -157,9 +141,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		rawPlanRepo = repository.NewPostgresPlanRepo(planDB)
 	}
 	rawSubRepo := repository.NewMockSubscriptionRepo(
-		&repository.SubscriptionRow{ID: "sub-123", TenantID: "", CustomerID: "c1", Status: "active", PlanID: "p1"},
-		&repository.SubscriptionRow{ID: "sub-456", TenantID: "", CustomerID: "c2", Status: "active", PlanID: "p1"},
-		&repository.SubscriptionRow{ID: "test123", TenantID: "", CustomerID: "c3", Status: "active", PlanID: "p1"},
+		&repository.SubscriptionRow{ID: "sub-123", TenantID: "", CustomerID: "c1", Status: "active", PlanID: "p1", Amount: "10.00", Interval: "monthly"},
+		&repository.SubscriptionRow{ID: "sub-456", TenantID: "", CustomerID: "c2", Status: "active", PlanID: "p1", Amount: "20.50", Interval: "yearly"},
+		&repository.SubscriptionRow{ID: "test123", TenantID: "", CustomerID: "c3", Status: "active", PlanID: "p1", Amount: "15.00", Interval: "monthly"},
 	)
 
 	cachedPlanRepo := repository.NewCachedPlanRepo(rawPlanRepo, planCache, repoCacheTTL)
@@ -220,9 +204,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		v1.GET("/subscriptions", auth.RequirePermission(auth.PermReadSubscriptions), h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", auth.RequirePermission(auth.PermReadSubscriptions), h.GetSubscription)
 		v1.POST("/subscriptions/:id/status", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewChangeSubscriptionStatusHandler(svc))
-		v1.GET("/plans", h.ListPlans)
-		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
-		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
+		v1.GET("/plans", auth.RequirePermission(auth.PermReadPlans), h.ListPlans)
+		v1.GET("/statements/:id", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewGetStatementHandler(stmtSvc))
+		v1.GET("/statements", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewListStatementsHandler(stmtSvc))
 
 		// Fees module (#162)
 		v1.GET("/fees/history", feesHandler.GetFeeHistory)
@@ -259,8 +243,8 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 			handlers.NewChangeSubscriptionStatusHandler(svc),
 		)
 
-		apiProtected.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
-		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
+		apiProtected.GET("/statements/:id", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewGetStatementHandler(stmtSvc))
+		apiProtected.GET("/statements", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewListStatementsHandler(stmtSvc))
 	}
 
 	admin := api.Group("/admin")
@@ -276,25 +260,6 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		reconStore := reconciliation.NewMemoryStore()
 		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
-	}
-
-
-	return func(ctx context.Context) error {
-		if dbPool != nil {
-			log.Printf("closing database pool")
-			dbPool.Close()
-		}
-
-		if tracerShutdown != nil {
-			log.Printf("flushing tracer")
-			if err := tracerShutdown(ctx); err != nil {
-				return fmt.Errorf("shutdown tracer: %w", err)
-			}
-		}
-
-		return nil
-	}
-}
 
 		// Feature flags endpoints
 		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)

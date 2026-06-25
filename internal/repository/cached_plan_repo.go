@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type cacheEnvelope struct {
@@ -113,6 +115,17 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 	if err != nil {
 		return nil, err
 	}
+	
+	if cpr.cache != nil {
+		outBytes, marshalErr := json.Marshal(pr)
+		if marshalErr == nil {
+			env := cacheEnvelope{Data: outBytes, StoredAt: time.Now()}
+			if envBytes, marshalErr := json.Marshal(env); marshalErr == nil {
+				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
+			}
+		}
+	}
+	
 	return pr, nil
 }
 
@@ -142,12 +155,8 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 					atomic.AddUint64(&cpr.hits, 1)
 					return out, nil
 				} else {
-					// Corrupted envelope JSON
-					return nil, fmt.Errorf("corrupted cache envelope: %w", err)
+					return nil, fmt.Errorf("corrupted cache data: %w", unmarshalErr)
 				}
-					return nil, fmt.Errorf("corrupted cache envelope: %w", err)
-				}
-				return nil, fmt.Errorf("corrupted cache data: %w", err)
 			}
 		}
 	}
@@ -177,8 +186,6 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	out, err := cpr.backend.List(ctx)
 	load.row = out
 	load.err = err
-		return out, nil
-	})
 	
 	if err != nil {
 		return nil, err

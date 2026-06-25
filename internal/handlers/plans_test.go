@@ -89,11 +89,12 @@ func TestListPlans(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
 		assert.Empty(t, response["plans"])
-		assert.Equal(t, false, response["has_more"])
+		pag := response["pagination"].(map[string]interface{})
+		assert.Equal(t, false, pag["has_more"])
 	})
 
 	t.Run("invalid limits", func(t *testing.T) {
-		invalidInputs := []string{"abc", "1abc", " ", "  "}
+		invalidInputs := []string{"abc", "1abc", " ", "  ", "101", "100000"}
 		for _, input := range invalidInputs {
 			t.Run(input, func(t *testing.T) {
 				mockSvc := new(MockPlanService)
@@ -123,8 +124,6 @@ func TestListPlans(t *testing.T) {
 			{"1", 1},
 			{"20", 20},
 			{"100", 100},
-			{"101", 100},
-			{"100000", 100},
 			{"0", 10},
 			{"-10", 10},
 			{"", 10},

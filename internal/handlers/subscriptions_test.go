@@ -137,7 +137,7 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 	})
 
 	t.Run("invalid limits", func(t *testing.T) {
-		invalidInputs := []string{"abc", "1abc", " ", "  "}
+		invalidInputs := []string{"abc", "1abc", " ", "  ", "101", "100000"}
 		for _, input := range invalidInputs {
 			t.Run(input, func(t *testing.T) {
 				mockSvc := new(MockSubscriptionService)
@@ -167,8 +167,6 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 			{"1", 1},
 			{"20", 20},
 			{"100", 100},
-			{"101", 100},
-			{"100000", 100},
 			{"0", 10},
 			{"-10", 10},
 			{"", 10},

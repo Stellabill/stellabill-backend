@@ -11,3 +11,8 @@ loadtest-smoke:
 	LOADTEST_TARGET=${LOADTEST_TARGET:-http://127.0.0.1:8080} JWT_SECRET=${JWT_SECRET:-dev-secret} k6 run --summary-export=./scripts/loadtest/plans-summary.json ./scripts/loadtest/plans.js; \
 	LOADTEST_TARGET=${LOADTEST_TARGET:-http://127.0.0.1:8080} JWT_SECRET=${JWT_SECRET:-dev-secret} k6 run --summary-export=./scripts/loadtest/subscriptions-summary.json ./scripts/loadtest/subscriptions.js; \
 	LOADTEST_TARGET=${LOADTEST_TARGET:-http://127.0.0.1:8080} JWT_SECRET=${JWT_SECRET:-dev-secret} k6 run --summary-export=./scripts/loadtest/statements-summary.json ./scripts/loadtest/statements.js
+
+# Updates the golden snapshot files for JSON regression testing
+.PHONY: update-golden
+update-golden:
+	go test ./internal/handlers/... -update

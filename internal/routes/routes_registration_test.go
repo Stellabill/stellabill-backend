@@ -76,8 +76,8 @@ func TestRegister_StatementAliasesRequirePermission(t *testing.T) {
 	token := makeRouteTestJWT(t, "caller-1", "tenant-1", []string{"customer"})
 
 	for _, path := range []string{
-		"/api/v1/statements?customer_id=caller-1",
-		"/api/statements?customer_id=caller-1",
+		"/api/v1/statements?customer_id=caller-2",
+		"/api/statements?customer_id=caller-2",
 	} {
 		res := performAuthorizedRequest(t, router, http.MethodGet, path, token)
 		if res.Code != http.StatusForbidden {

@@ -280,3 +280,59 @@ func TestEnvExampleValuesPassValidation(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadReplicaConfig(t *testing.T) {
+	t.Run("replica url configured and valid", func(t *testing.T) {
+		provider := &stubProvider{
+			values: map[string]string{
+				"DATABASE_URL":          validDBURL,
+				"DATABASE_REPLICA_URL":  "postgres://replica-user:replica-pass@localhost:5432/replica_db",
+				"JWT_SECRET":            validJWTSecret,
+				"ADMIN_TOKEN":           validAdminToken,
+			},
+		}
+		cfg, err := Load(WithSecretsProvider(provider))
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if cfg.DBReplicaConn != "postgres://replica-user:replica-pass@localhost:5432/replica_db" {
+			t.Fatalf("expected replica DSN, got %s", cfg.DBReplicaConn)
+		}
+	})
+
+	t.Run("replica url missing fallback to primary", func(t *testing.T) {
+		provider := &stubProvider{
+			values: map[string]string{
+				"DATABASE_URL":          validDBURL,
+				"JWT_SECRET":            validJWTSecret,
+				"ADMIN_TOKEN":           validAdminToken,
+			},
+		}
+		cfg, err := Load(WithSecretsProvider(provider))
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if cfg.DBReplicaConn != validDBURL {
+			t.Fatalf("expected fallback to primary DSN, got %s", cfg.DBReplicaConn)
+		}
+	})
+
+	t.Run("replica url invalid format", func(t *testing.T) {
+		provider := &stubProvider{
+			values: map[string]string{
+				"DATABASE_URL":          validDBURL,
+				"DATABASE_REPLICA_URL":  "://invalid-dsn",
+				"JWT_SECRET":            validJWTSecret,
+				"ADMIN_TOKEN":           validAdminToken,
+			},
+		}
+		_, err := Load(WithSecretsProvider(provider))
+		if err == nil {
+			t.Fatal("expected error for invalid replica url")
+		}
+		if !strings.Contains(err.Error(), "DATABASE_REPLICA_URL") {
+			t.Fatalf("expected error message to mention DATABASE_REPLICA_URL, got %v", err)
+		}
+	})
+}
+

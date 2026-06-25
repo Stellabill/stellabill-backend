@@ -1,19 +1,43 @@
 package service
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/storage/s3"
 	"stellarbill-backend/internal/timeutil"
 )
+
+// ExportPresignTTL is the default presigned-URL lifetime.
+const ExportPresignTTL = 15 * time.Minute
+
+// ExportResult is returned by ExportStatements.
+type ExportResult struct {
+	// ObjectKey is the versioned S3 key used for the upload.
+	// Format: exports/{tenantID}/{customerID}/{uuid}.csv.gz
+	ObjectKey string
+	// URL is the presigned GET URL valid for ExportPresignTTL.
+	URL string
+	// ExpiresAt is the UTC timestamp when the presigned URL expires.
+	ExpiresAt time.Time
+}
 
 // StatementService defines the business logic interface for billing statements.
 type StatementService interface {
 	GetDetail(ctx context.Context, callerID string, roles []string, statementID string) (*StatementDetail, []string, error)
 	ListByCustomer(ctx context.Context, callerID string, roles []string, customerID string, q repository.StatementQuery) (*ListStatementsDetail, int, []string, error)
+	// ExportStatements renders all statements for customerID as gzipped CSV,
+	// uploads to S3 under a tenant-scoped versioned key, and returns a 15-min
+	// presigned URL. Only callers with role "admin" or a merchant whose tenant
+	// owns the customer may invoke this; subscribers may not.
+	ExportStatements(ctx context.Context, callerID string, roles []string, tenantID, customerID string, uploader s3.S3Uploader) (*ExportResult, error)
 }
 
 // statementService is the concrete implementation of StatementService.
@@ -174,6 +198,13 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 		Statements: make([]*StatementDetail, 0, len(rows)),
 	}
 	for _, row := range rows {
+		if isMerchant {
+			sub, err := s.subRepo.FindByID(ctx, row.SubscriptionID)
+			if err != nil || sub.TenantID != callerID {
+				continue
+			}
+		}
+
 		periodStart := normalizeRFC3339OrKeep(row.PeriodStart)
 		periodEnd := normalizeRFC3339OrKeep(row.PeriodEnd)
 		issuedAt := normalizeRFC3339OrKeep(row.IssuedAt)
@@ -190,6 +221,11 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 			Kind:           row.Kind,
 			Status:         row.Status,
 		})
+	}
+
+	// Update count to reflect filtered result size
+	if isMerchant {
+		count = len(result.Statements)
 	}
 
 	return result, count, warnings, nil

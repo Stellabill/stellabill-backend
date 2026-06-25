@@ -116,11 +116,12 @@ func NewTokenGenerator(secret string) *TokenGenerator {
 }
 
 // generateToken creates a token with given claims.
-func (tg *TokenGenerator) generateToken(userID, email, role string, expiresAt time.Time) (string, error) {
+func (tg *TokenGenerator) generateToken(userID, email, role, tenantID string, expiresAt time.Time) (string, error) {
 	claims := Claims{
-		UserID: userID,
-		Email:  email,
-		Role:   Role(role),
+		UserID:   userID,
+		Email:    email,
+		Role:     Role(role),
+		TenantID: tenantID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    tg.issuer,
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
@@ -134,35 +135,35 @@ func (tg *TokenGenerator) generateToken(userID, email, role string, expiresAt ti
 
 // GenerateAdminToken creates an admin token valid for 24h.
 func (tg *TokenGenerator) GenerateAdminToken(userID, email string) (string, error) {
-	return tg.generateToken(userID, email, string(RoleAdmin), time.Now().Add(24*time.Hour))
+	return tg.generateToken(userID, email, string(RoleAdmin), "tenant-1", time.Now().Add(24*time.Hour))
 }
 
 // GenerateMerchantToken creates a merchant token.
 func (tg *TokenGenerator) GenerateMerchantToken(userID, email, merchantID string) (string, error) {
-	_ = merchantID // could embed as custom claim if needed
-	return tg.generateToken(userID, email, string(RoleMerchant), time.Now().Add(24*time.Hour))
+	return tg.generateToken(userID, email, string(RoleMerchant), merchantID, time.Now().Add(24*time.Hour))
 }
 
 // GenerateCustomerToken creates a customer token.
 func (tg *TokenGenerator) GenerateCustomerToken(userID, email string) (string, error) {
-	return tg.generateToken(userID, email, string(RoleCustomer), time.Now().Add(24*time.Hour))
+	return tg.generateToken(userID, email, string(RoleCustomer), "tenant-1", time.Now().Add(24*time.Hour))
 }
 
 // GenerateExpiredToken creates a token that is already expired.
 func (tg *TokenGenerator) GenerateExpiredToken(userID, email string, role Role) (string, error) {
-	return tg.generateToken(userID, email, string(role), time.Now().Add(-1*time.Hour))
+	return tg.generateToken(userID, email, string(role), "tenant-1", time.Now().Add(-1*time.Hour))
 }
 
 // GenerateTokenWithoutRoles creates a token with no roles assigned.
 func (tg *TokenGenerator) GenerateTokenWithoutRoles(userID, email string) (string, error) {
-	return tg.generateToken(userID, email, "", time.Now().Add(24*time.Hour))
+	return tg.generateToken(userID, email, "", "tenant-1", time.Now().Add(24*time.Hour))
 }
 
 // GenerateTokenWithoutUserID creates a token missing the user_id/subject claim.
 func (tg *TokenGenerator) GenerateTokenWithoutUserID(email, role string) (string, error) {
 	claims := Claims{
-		Email: email,
-		Role:  Role(role),
+		Email:    email,
+		Role:     Role(role),
+		TenantID: "tenant-1",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    tg.issuer,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),

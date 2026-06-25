@@ -137,6 +137,9 @@ func TestTenantRateLimiter_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 
+	// Wait for the rate limiter to refill at least one token
+	time.Sleep(150 * time.Millisecond)
+
 	// Verify the limiter still works after concurrent access
 	allowed := limiter.Allow(tenantID)
 	if !allowed {

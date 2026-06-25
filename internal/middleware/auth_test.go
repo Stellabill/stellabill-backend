@@ -436,9 +436,12 @@ func TestAuthMiddleware_ClaimsProjectionVerification(t *testing.T) {
 			t.Error("expected roles to be set in context")
 		}
 		capturedRoles = rolesValue.([]auth.Role)
-		
-		capturedCallerID, _ = c.Get("callerID")
-		capturedTenantID, _ = c.Get("tenantID")
+		if val, exists := c.Get("callerID"); exists {
+			capturedCallerID = val.(string)
+		}
+		if val, exists := c.Get("tenantID"); exists {
+			capturedTenantID = val.(string)
+		}
 		
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})

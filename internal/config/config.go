@@ -50,9 +50,11 @@ func (e *ConfigError) Error() string {
 type Config struct {
 	Env       string
 	Port      int
-	DBConn    string
-	JWTSecret string
-	JWKSURL   string
+	DBConn        string
+	DBReplicaConn string
+	JWTSecret     string
+	JWKSURL                string
+	SecurityFrameAncestors string
 	// Add additional secure defaults for optional configs
 	MaxHeaderBytes      int
 	MaxRequestSize      int64
@@ -195,6 +197,7 @@ var secretKeys = []string{
 	"DATABASE_URL",
 	"JWT_SECRET",
 	"ADMIN_TOKEN",
+	"DATABASE_REPLICA_URL",
 }
 
 // Load loads configuration from environment variables with validation.
@@ -212,6 +215,7 @@ func Load(opts ...Option) (Config, error) {
 		Env:                 getEnv("ENV", "development"),
 		Port:                DefaultPort,
 		DBConn:              "",
+		DBReplicaConn:       "",
 		JWTSecret:           "",
 		JWKSURL:             getEnv("JWKS_URL", ""),
 		MaxHeaderBytes:      MaxHeaderBytes,
@@ -221,9 +225,10 @@ func Load(opts ...Option) (Config, error) {
 		ReadTimeout:         DefaultReadTimeout,
 		WriteTimeout:        DefaultWriteTimeout,
 		IdleTimeout:         DefaultIdleTimeout,
-		TracingExporter:     getEnv("TRACING_EXPORTER", "stdout"),
-		TracingServiceName:  getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
-		AllowedOrigins:      getEnv("ALLOWED_ORIGINS", ""),
+		TracingExporter:        getEnv("TRACING_EXPORTER", "stdout"),
+		TracingServiceName:     getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		AllowedOrigins:         getEnv("ALLOWED_ORIGINS", ""),
+		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
 		// DB pool defaults; overridden by valid DB_POOL_* env vars in validateDBPool.
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
@@ -281,6 +286,9 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	// Validate required secrets are present via the provider
 	for _, key := range secretKeys {
 		if err, failed := secretErrs[key]; failed {
+			if key == "DATABASE_REPLICA_URL" && errors.Is(err, secrets.ErrSecretNotFound) {
+				continue // optional
+			}
 			if errors.Is(err, secrets.ErrSecretNotFound) {
 				result.Errors = append(result.Errors, ConfigError{
 					Type:    ErrMissingEnvVar,
@@ -332,6 +340,24 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.DBConn = dbURL
+		}
+	}
+
+	// Validate DATABASE_REPLICA_URL format if present, else fallback to DATABASE_URL
+	replicaURL, ok := resolvedSecrets["DATABASE_REPLICA_URL"]
+	if !ok || replicaURL == "" {
+		replicaURL = c.DBConn
+	}
+	if replicaURL != "" {
+		if !isValidDatabaseURL(replicaURL) {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "DATABASE_REPLICA_URL",
+				Message: "must be a valid database connection string",
+				Value:   maskPassword(replicaURL),
+			})
+		} else {
+			c.DBReplicaConn = replicaURL
 		}
 	}
 

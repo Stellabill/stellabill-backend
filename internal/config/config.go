@@ -77,6 +77,9 @@ type Config struct {
 	TracingServiceName string
 	// CORS configuration
 	AllowedOrigins string
+	// Content security policy configuration
+	SecurityFrameAncestors string
+	SecurityCSPReportURI   string
 	// DB connection pool tuning (seconds for the time-based fields)
 	DBPoolMaxConns          int
 	DBPoolMinConns          int
@@ -120,6 +123,8 @@ const (
 	DefaultReadTimeout  = 30      // seconds
 	DefaultWriteTimeout = 30      // seconds
 	DefaultIdleTimeout  = 120     // seconds
+	DefaultSecurityFrameAncestors = "'none'"
+	DefaultSecurityCSPReportURI = "/csp-report"
 
 	// DB pool defaults — chosen to be safe for a typical single-instance
 	// Postgres with max_connections=100.  Tune upward for larger deployments.
@@ -225,10 +230,11 @@ func Load(opts ...Option) (Config, error) {
 		ReadTimeout:         DefaultReadTimeout,
 		WriteTimeout:        DefaultWriteTimeout,
 		IdleTimeout:         DefaultIdleTimeout,
-		TracingExporter:        getEnv("TRACING_EXPORTER", "stdout"),
-		TracingServiceName:     getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
-		AllowedOrigins:         getEnv("ALLOWED_ORIGINS", ""),
-		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		TracingExporter:     getEnv("TRACING_EXPORTER", "stdout"),
+		TracingServiceName:  getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		AllowedOrigins:      getEnv("ALLOWED_ORIGINS", ""),
+		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", DefaultSecurityFrameAncestors),
+		SecurityCSPReportURI:   getEnv("SECURITY_CSP_REPORT_URI", DefaultSecurityCSPReportURI),
 		// DB pool defaults; overridden by valid DB_POOL_* env vars in validateDBPool.
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
@@ -596,6 +602,37 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			Key:     "ALLOWED_ORIGINS",
 			Message: err.Error(),
 			Value:   allowedOrigins,
+		})
+	}
+
+	// Validate optional security settings
+	if sf := os.Getenv("SECURITY_FRAME_ANCESTORS"); sf != "" {
+		c.SecurityFrameAncestors = sf
+	}
+	if c.SecurityFrameAncestors == "" {
+		c.SecurityFrameAncestors = DefaultSecurityFrameAncestors
+	}
+	if strings.ContainsAny(c.SecurityFrameAncestors, ";\n\r") {
+		result.Errors = append(result.Errors, ConfigError{
+			Type:    ErrInvalidValue,
+			Key:     "SECURITY_FRAME_ANCESTORS",
+			Message: "must not contain control characters or semicolons",
+			Value:   c.SecurityFrameAncestors,
+		})
+	}
+
+	if uri := os.Getenv("SECURITY_CSP_REPORT_URI"); uri != "" {
+		c.SecurityCSPReportURI = uri
+	}
+	if c.SecurityCSPReportURI == "" {
+		c.SecurityCSPReportURI = DefaultSecurityCSPReportURI
+	}
+	if !strings.HasPrefix(c.SecurityCSPReportURI, "/") {
+		result.Errors = append(result.Errors, ConfigError{
+			Type:    ErrInvalidValue,
+			Key:     "SECURITY_CSP_REPORT_URI",
+			Message: "must be an absolute path starting with '/'",
+			Value:   c.SecurityCSPReportURI,
 		})
 	}
 

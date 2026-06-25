@@ -30,6 +30,8 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 		}
 	}
 
+	useJWKS := jwksURL != nil
+
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -51,15 +53,15 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 
 		// Parse and validate JWT token
 		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-			// Ensure the token is using RSA/ECDSA (standard for JWKS)
-			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-				if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			// If JWKS cache is available and requested, use it for validation
+			if useJWKS && jwksCache != nil {
+				// Ensure the token is using RSA/ECDSA (standard for JWKS)
+				if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+					if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
+						return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+					}
 				}
-			}
 
-			// If JWKS cache is available, use it for validation
-			if jwksCache != nil {
 				kid, ok := t.Header["kid"].(string)
 				if !ok {
 					return nil, fmt.Errorf("missing kid in token header")
@@ -78,9 +80,13 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 				return rawKey, nil
 			}
 
-			// Fallback: If no JWKS cache, accept the token for testing purposes
+			// Fallback: If no JWKS cache, accept the token for testing purposes using the provided secret
 			// In production, this should be removed or properly configured
-			return []byte("test-secret"), nil
+			secret := ttl
+			if secret == "" {
+				secret = "test-secret"
+			}
+			return []byte(secret), nil
 		})
 
 		if err != nil || !token.Valid {

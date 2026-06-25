@@ -33,7 +33,6 @@ type CachedPlanRepo struct {
 	stales        uint64
 	invalidatedAt sync.Map
 	inflight      sync.Map // map[string]*inflightLoad
-	sf            singleflight.Group
 }
 
 // NewCachedPlanRepo constructs a CachedPlanRepo.
@@ -113,6 +112,15 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 	load.err = err
 	if err != nil {
 		return nil, err
+	}
+	if cpr.cache != nil {
+		prBytes, marshalErr := json.Marshal(pr)
+		if marshalErr == nil {
+			env := cacheEnvelope{Data: prBytes, StoredAt: time.Now()}
+			if envBytes, marshalErr := json.Marshal(env); marshalErr == nil {
+				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
+			}
+		}
 	}
 	return pr, nil
 }

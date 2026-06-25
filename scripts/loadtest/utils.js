@@ -10,13 +10,26 @@ export function loadtestTarget() {
   return __ENV.LOADTEST_TARGET || DEFAULT_HOST;
 }
 
+export function loadtestCustomerID() {
+  return __ENV.LOADTEST_SUBJECT || DEFAULT_SUBJECT;
+}
+
 export function authHeaders() {
+  if (__ENV.LOADTEST_JWT) {
+    return {
+      Authorization: `Bearer ${__ENV.LOADTEST_JWT}`,
+      'Content-Type': 'application/json',
+      'X-Tenant-ID': __ENV.LOADTEST_TENANT || 'loadtest-tenant',
+    };
+  }
+
   const secret = __ENV.JWT_SECRET || DEFAULT_SECRET;
   const token = createJwtToken(secret, __ENV.LOADTEST_ROLE || DEFAULT_ROLE, __ENV.LOADTEST_SUBJECT || DEFAULT_SUBJECT);
 
   return {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
+    'X-Tenant-ID': __ENV.LOADTEST_TENANT || 'loadtest-tenant',
   };
 }
 
@@ -26,6 +39,8 @@ function createJwtToken(secret, role, subject) {
   const payload = {
     sub: subject,
     role,
+    roles: [role],
+    tenant: __ENV.LOADTEST_TENANT || 'loadtest-tenant',
     iat: timestamp,
     exp: timestamp + 3600,
   };
@@ -33,7 +48,11 @@ function createJwtToken(secret, role, subject) {
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
-  const signature = base64UrlEncode(hmacSha256(secret, signingInput));
+  const signature = crypto
+    .hmac('sha256', signingInput, secret, 'base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 
   return `${signingInput}.${signature}`;
 }
@@ -41,8 +60,4 @@ function createJwtToken(secret, role, subject) {
 function base64UrlEncode(value) {
   const encoded = encoding.b64encode(value);
   return encoded.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function hmacSha256(secret, message) {
-  return crypto.hmac('sha256', message, secret, 'raw');
 }

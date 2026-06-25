@@ -89,8 +89,8 @@ func TestListPlans(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
 		assert.Empty(t, response["plans"])
-		pag := response["pagination"].(map[string]interface{})
-		assert.Equal(t, false, pag["has_more"])
+		pagination := response["pagination"].(map[string]interface{})
+		assert.Equal(t, false, pagination["has_more"])
 	})
 
 	t.Run("invalid limits", func(t *testing.T) {
@@ -112,6 +112,29 @@ func TestListPlans(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, "VALIDATION_FAILED", response.Code)
 				assert.Contains(t, response.Message, "Invalid pagination limit")
+			})
+		}
+	})
+
+	t.Run("limits exceeding maximum", func(t *testing.T) {
+		exceedingInputs := []string{"101", "100000"}
+		for _, input := range exceedingInputs {
+			t.Run(input, func(t *testing.T) {
+				mockSvc := new(MockPlanService)
+				h := &Handler{Plans: mockSvc}
+
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest("GET", "/plans?limit="+url.QueryEscape(input), nil)
+
+				h.ListPlans(c)
+
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				var response ErrorEnvelope
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Equal(t, "VALIDATION_FAILED", response.Code)
+				assert.Contains(t, response.Message, "Limit exceeds maximum of $*.**")
 			})
 		}
 	})

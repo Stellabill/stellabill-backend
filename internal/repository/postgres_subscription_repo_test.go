@@ -2,7 +2,6 @@ package repository
 
 import (
     "context"
-    "regexp"
     "testing"
     "time"
 
@@ -39,8 +38,7 @@ func TestPostgresSubscriptionRepo_FindByID_HappyPath(t *testing.T) {
         deletedAt,
     )
 
-    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1"
-    mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id).WillReturnRows(rows)
+    mock.ExpectQuery(`SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,.*FROM subscriptions.*WHERE id = \$1`).WithArgs(id).WillReturnRows(rows)
 
     got, err := repo.FindByID(context.Background(), id)
     if err != nil {
@@ -88,8 +86,7 @@ func TestPostgresSubscriptionRepo_FindByIDAndTenant_HappyPath(t *testing.T) {
         nil,
     )
 
-    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1 AND tenant_id = $2"
-    mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id, tenantID).WillReturnRows(rows)
+    mock.ExpectQuery(`SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,.*FROM subscriptions.*WHERE id = \$1 AND tenant_id = \$2`).WithArgs(id, tenantID).WillReturnRows(rows)
 
     got, err := repo.FindByIDAndTenant(context.Background(), id, tenantID)
     if err != nil {
@@ -122,8 +119,7 @@ func TestPostgresSubscriptionRepo_FindByIDAndTenant_CrossTenantReturnsNotFound(t
         "amount", "currency", "interval", "next_billing", "deleted_at",
     })
 
-    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1 AND tenant_id = $2"
-    mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id, tenantID).WillReturnRows(rows)
+    mock.ExpectQuery(`SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,.*FROM subscriptions.*WHERE id = \$1 AND tenant_id = \$2`).WithArgs(id, tenantID).WillReturnRows(rows)
 
     _, err = repo.FindByIDAndTenant(context.Background(), id, tenantID)
     if err != ErrNotFound {
@@ -160,8 +156,7 @@ func TestPostgresSubscriptionRepo_FindByID_NullNextBillingAndNoDeletedAt(t *test
         nil,
     )
 
-    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1"
-    mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id).WillReturnRows(rows)
+    mock.ExpectQuery(`SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,.*FROM subscriptions.*WHERE id = \$1`).WithArgs(id).WillReturnRows(rows)
 
     got, err := repo.FindByID(context.Background(), id)
     if err != nil {
@@ -193,8 +188,7 @@ func TestPostgresSubscriptionRepo_FindByID_NoRowsReturnsNotFound(t *testing.T) {
         "amount", "currency", "interval", "next_billing", "deleted_at",
     })
 
-    query := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at FROM subscriptions WHERE id = $1"
-    mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(id).WillReturnRows(rows)
+    mock.ExpectQuery(`SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,.*FROM subscriptions.*WHERE id = \$1`).WithArgs(id).WillReturnRows(rows)
 
     _, err = repo.FindByID(context.Background(), id)
     if err != ErrNotFound {
@@ -217,10 +211,7 @@ func TestPostgresSubscriptionRepo_UpdateStatus_HappyPath(t *testing.T) {
     tenantID := "tenant-6"
     status := "active"
 
-    mock.ExpectExec(regexp.QuoteMeta(`UPDATE subscriptions
-        SET status = $1
-        WHERE id = $2 AND tenant_id = $3
-    `)).WithArgs(status, id, tenantID).WillReturnResult(sqlmock.NewResult(0, 1))
+    mock.ExpectExec(`UPDATE subscriptions.*SET status = \$1.*WHERE id = \$2 AND tenant_id = \$3`).WithArgs(status, id, tenantID).WillReturnResult(sqlmock.NewResult(0, 1))
 
     err = repo.UpdateStatus(context.Background(), id, tenantID, status)
     if err != nil {
@@ -243,10 +234,7 @@ func TestPostgresSubscriptionRepo_UpdateStatus_NotFound(t *testing.T) {
     tenantID := "tenant-7"
     status := "inactive"
 
-    mock.ExpectExec(regexp.QuoteMeta(`UPDATE subscriptions
-        SET status = $1
-        WHERE id = $2 AND tenant_id = $3
-    `)).WithArgs(status, id, tenantID).WillReturnResult(sqlmock.NewResult(0, 0))
+    mock.ExpectExec(`UPDATE subscriptions.*SET status = \$1.*WHERE id = \$2 AND tenant_id = \$3`).WithArgs(status, id, tenantID).WillReturnResult(sqlmock.NewResult(0, 0))
 
     err = repo.UpdateStatus(context.Background(), id, tenantID, status)
     if err != ErrNotFound {

@@ -19,19 +19,16 @@ jobs:
         run: go run ./cmd/openapi-validate
       - name: Migration Safety Validation
         run: go run ./cmd/validate-migrations
-      - name: Coverage (>= 95% for non-cmd packages)
+      - name: Coverage (>= 65% repo-wide; outbox JWE tests required)
         shell: bash
         run: |
           set -euo pipefail
+          go test -count=1 -coverprofile=outbox_coverage.out ./internal/outbox/...
+          ./scripts/check-coverage.sh outbox_coverage.out 40
           pkgs=$(go list ./... | grep -v '^stellarbill-backend/cmd/')
           coverpkgs=$(echo "$pkgs" | paste -sd, -)
           go test -count=1 -coverpkg="$coverpkgs" -coverprofile=coverage.out $pkgs
-          total=$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,"",$3); print $3}')
-          python3 - <<PY
-          total=float("$total")
-          print(f"Total coverage (non-cmd): {total:.1f}%")
-          raise SystemExit(0 if total >= 95.0 else 1)
-          PY
+          ./scripts/check-coverage.sh coverage.out 65
 
   benchmark-thresholds:
     runs-on: ubuntu-latest

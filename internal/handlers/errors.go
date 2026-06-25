@@ -31,6 +31,10 @@ const (
 	// Server errors
 	ErrorCodeInternalError      ErrorCode = "INTERNAL_ERROR"
 	ErrorCodeServiceUnavailable ErrorCode = "SERVICE_UNAVAILABLE"
+
+	// Aliases used in handler.go
+	ErrorCodeInternal       = ErrorCodeInternalError
+	ErrorCodeInvalidRequest = ErrorCodeBadRequest
 )
 
 // ErrorEnvelope represents a standardized error response

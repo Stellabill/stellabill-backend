@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"stellarbill-backend/internal/auth"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"stellarbill-backend/internal/auth"
 )
 
 func TestAuthMiddleware_MissingAuthorizationHeader(t *testing.T) {
@@ -190,11 +191,11 @@ func TestAuthMiddleware_SuccessWithRolesArray(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
 	var capturedCallerID string
 	var capturedTenantID string
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedRoles = auth.ExtractRoles(c)
 		capturedCallerID = c.GetString("callerID")
@@ -240,11 +241,11 @@ func TestAuthMiddleware_SuccessWithSingleRole(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
 	var capturedCallerID string
 	var capturedTenantID string
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedRoles = auth.ExtractRoles(c)
 		capturedCallerID = c.GetString("callerID")
@@ -294,11 +295,11 @@ func TestAuthMiddleware_SuccessWithEmptyRoles(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
 	var capturedCallerID string
 	var capturedTenantID string
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedRoles = auth.ExtractRoles(c)
 		capturedCallerID = c.GetString("callerID")
@@ -343,9 +344,9 @@ func TestAuthMiddleware_SuccessWithMultipleRoles(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedRoles = auth.ExtractRoles(c)
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
@@ -381,9 +382,9 @@ func TestAuthMiddleware_UnknownRoleString(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedRoles = auth.ExtractRoles(c)
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
@@ -424,11 +425,11 @@ func TestAuthMiddleware_ClaimsProjectionVerification(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
 	var capturedCallerID string
 	var capturedTenantID string
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		// Verify all context keys are set
 		rolesValue, exists := c.Get(auth.RolesContextKey)
@@ -481,9 +482,9 @@ func TestAuthMiddleware_TenantIDFromClaimOnly(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedTenantID string
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedTenantID = c.GetString("tenantID")
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
@@ -519,9 +520,9 @@ func TestAuthMiddleware_TenantIDFromHeaderOnly(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedTenantID string
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedTenantID = c.GetString("tenantID")
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
@@ -557,9 +558,9 @@ func TestAuthMiddleware_RolesDeduplication(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedRoles = auth.ExtractRoles(c)
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
@@ -596,9 +597,9 @@ func TestAuthMiddleware_RoleWhitespaceTrimming(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedRoles = auth.ExtractRoles(c)
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
@@ -685,7 +686,7 @@ func TestInitJWKSCache(t *testing.T) {
 	if jwksCache == nil {
 		t.Error("expected jwksCache to be initialized")
 	}
-	
+
 	// Reset for other tests
 	jwksCache = nil
 }
@@ -696,9 +697,9 @@ func TestAuthMiddleware_UUIDCallerID(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedCallerID string
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedCallerID = c.GetString("callerID")
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
@@ -735,9 +736,9 @@ func TestAuthMiddleware_TenantClaimFallback(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedTenantID string
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedTenantID = c.GetString("tenantID")
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
@@ -773,9 +774,9 @@ func TestAuthMiddleware_RolesWithEmptyStrings(t *testing.T) {
 	middleware := AuthMiddleware(nil, "test-secret")
 	router := gin.New()
 	router.Use(middleware)
-	
+
 	var capturedRoles []auth.Role
-	
+
 	router.GET("/test", func(c *gin.Context) {
 		capturedRoles = auth.ExtractRoles(c)
 		c.JSON(http.StatusOK, gin.H{"message": "success"})

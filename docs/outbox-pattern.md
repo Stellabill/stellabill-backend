@@ -207,7 +207,7 @@ go test -cover ./internal/outbox/...
 ### Data Protection
 
 1. **Sensitive Data**: Avoid storing sensitive information in event payloads
-2. **Encryption**: Use encryption for sensitive event data if necessary
+2. **Encryption**: Sensitive event types are encrypted with subscriber JWKs — see [outbox-jwe.md](./outbox-jwe.md)
 3. **Access Control**: Limit database access to outbox table
 
 ### Network Security

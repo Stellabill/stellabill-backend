@@ -15,10 +15,10 @@ import (
 // why they are intentionally excluded from the public OpenAPI specification.
 var exemptedRoutes = map[string]map[string]string{
 	"GET": {
-		"/api/liveness":           "Internal Kubernetes liveness check, not part of public API client spec",
-		"/api/readiness":          "Internal Kubernetes readiness check, not part of public API client spec",
-		"/api/v1/health":          "Internal health endpoint registered under v1, not part of public API",
-		"/api/v1/subscriptions":   "Legacy/alias endpoint mapping, primary documented path is /api/subscriptions",
+		"/api/liveness":              "Internal Kubernetes liveness check, not part of public API client spec",
+		"/api/readiness":             "Internal Kubernetes readiness check, not part of public API client spec",
+		"/api/v1/health":             "Internal health endpoint registered under v1, not part of public API",
+		"/api/v1/subscriptions":      "Legacy/alias endpoint mapping, primary documented path is /api/subscriptions",
 		"/api/v1/subscriptions/{id}": "Legacy/alias endpoint mapping, primary documented path is /api/subscriptions/{id}",
 		"/api/plans":              "Legacy/alias endpoint mapping, primary documented path is /api/v1/plans",
 		"/api/statements":         "Legacy/alias endpoint mapping, not yet exposed in public client spec",

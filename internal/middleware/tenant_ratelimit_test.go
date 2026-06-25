@@ -137,6 +137,8 @@ func TestTenantRateLimiter_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 
+	time.Sleep(100 * time.Millisecond)
+
 	// Verify the limiter still works after concurrent access
 	allowed := limiter.Allow(tenantID)
 	if !allowed {

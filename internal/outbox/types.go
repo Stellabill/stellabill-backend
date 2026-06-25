@@ -39,10 +39,14 @@ const (
 
 // EventData represents the structure of event data
 type EventData struct {
-	Type      string      `json:"type"`
-	Data      interface{} `json:"data"`
-	Timestamp time.Time   `json:"timestamp"`
-	ID        string      `json:"id"`
+	Type         string      `json:"type"`
+	Data         interface{} `json:"data,omitempty"`
+	Timestamp    time.Time   `json:"timestamp"`
+	ID           string      `json:"id"`
+	Encrypted    bool        `json:"encrypted,omitempty"`
+	JWE          string      `json:"jwe,omitempty"`
+	KeyID        string      `json:"key_id,omitempty"`
+	SubscriberID string      `json:"subscriber_id,omitempty"`
 }
 
 // Publisher interface for event publishing
@@ -61,6 +65,12 @@ type Repository interface {
 	DeleteCompletedEvents(olderThan time.Time) (int64, error)
 	ListDeadLetteredEvents(limit int) ([]*Event, error)
 	RequeueEvent(id uuid.UUID) error
+	// Publisher progress tracking (per-publisher cursors)
+	EnsurePublisherProgressTable() error
+	GetPublisherProgress(publisher string) (*time.Time, *uuid.UUID, error)
+	UpdatePublisherProgress(publisher string, lastProcessedAt time.Time, lastProcessedID uuid.UUID) error
+	// Get pending events since a given time (and last id) used by per-publisher drains
+	GetPendingEventsSince(since *time.Time, lastID *uuid.UUID, limit int) ([]*Event, error)
 }
 
 // Dispatcher handles the outbox event dispatching

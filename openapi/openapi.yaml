@@ -484,6 +484,232 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/admin/feature-flags:
+    get:
+      tags: [Admin]
+      summary: List feature flags
+      operationId: listFeatureFlags
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Feature flags
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      tags: [Admin]
+      summary: Toggle a feature flag
+      operationId: toggleFeatureFlag
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: Updated flag
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/subscriber-keys:
+    post:
+      tags: [Admin]
+      summary: Register subscriber JWK for outbox encryption
+      operationId: registerSubscriberKey
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subscriber_id, key_id, jwk]
+              properties:
+                subscriber_id:
+                  type: string
+                key_id:
+                  type: string
+                jwk:
+                  type: object
+      responses:
+        "201":
+          description: Key registered
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/subscriber-keys/{subscriber_id}:
+    get:
+      tags: [Admin]
+      summary: List subscriber encryption keys
+      operationId: listSubscriberKeys
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: subscriber_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Subscriber keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/subscriber-keys/id/{id}:
+    get:
+      tags: [Admin]
+      summary: Get subscriber encryption key by ID
+      operationId: getSubscriberKey
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Subscriber key
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Admin]
+      summary: Update subscriber key status
+      operationId: updateSubscriberKey
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [active, revoked, expired]
+      responses:
+        "204":
+          description: Updated
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/outbox/dead-letter:
+    get:
+      tags: [Admin]
+      summary: List dead-lettered outbox events
+      operationId: listDeadLetteredOutboxEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Dead-lettered events (redacted payloads)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/outbox/{id}/requeue:
+    post:
+      tags: [Admin]
+      summary: Requeue a dead-lettered outbox event
+      operationId: requeueOutboxEvent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Requeued
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/metrics:
+    get:
+      tags: [Admin]
+      summary: Prometheus metrics
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Prometheus metrics payload
+          content:
+            text/plain:
+              schema:
+                type: string
+
   /api/v1/fees/history:
     get:
       tags: [Fees]

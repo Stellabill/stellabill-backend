@@ -31,20 +31,29 @@ func NewWebhookHandler(outboxRepo outbox.Repository) gin.HandlerFunc {
 		}
 
 		// Create outbox event data
+		subscriberID := c.GetHeader("X-Subscriber-ID")
 		eventData := struct {
-			Provider   string          `json:"provider"`
-			RawPayload json.RawMessage `json:"raw_payload"`
+			Provider      string          `json:"provider"`
+			SubscriberID  string          `json:"subscriber_id"`
+			RawPayload    json.RawMessage `json:"raw_payload"`
 		}{
-			Provider:   providerStr,
-			RawPayload: bodyBytes,
+			Provider:     providerStr,
+			SubscriberID: subscriberID,
+			RawPayload:   bodyBytes,
+		}
+
+		aggregateType := "subscriber"
+		var aggregateID *string
+		if subscriberID != "" {
+			aggregateID = &subscriberID
 		}
 
 		// Create and store outbox event
 		outboxEvent, err := outbox.NewEventWithDeduplication(
 			"webhook.received",
 			eventData,
-			nil,
-			nil,
+			aggregateID,
+			&aggregateType,
 			&eventIDStr,
 		)
 		if err != nil {

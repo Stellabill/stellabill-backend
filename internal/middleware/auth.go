@@ -8,27 +8,30 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"stellarbill-backend/internal/auth" // Adjust this import path to your module name
+	"stellarbill-backend/internal/auth"
 )
 
 var jwksCache *auth.JWKSCache
 
-// InitJWKSCache initializes the JWKS cache with the given URL and TTL
-// This should be called during application initialization
-func InitJWKSCache(jwksURL string, ttl int) {
+// InitJWKSCache initializes the JWKS cache with the given URL and TTL.
+func InitJWKSCache(jwksURL string, ttlSeconds int) {
 	if jwksURL != "" {
-		jwksCache = auth.NewJWKSCache(jwksURL, time.Duration(ttl)*time.Second)
+		jwksCache = auth.NewJWKSCache(jwksURL, time.Duration(ttlSeconds)*time.Second)
 	}
 }
 
-// AuthMiddleware returns a middleware that validates JWT tokens using JWKS
-// and projects verified claims (roles, callerID, tenantID) into the gin context
-func AuthMiddleware(jwksURL interface{}, secret string) gin.HandlerFunc {
-	// Initialize JWKS cache if not already done
+// AuthMiddleware validates JWT bearer tokens using JWKS when configured, otherwise
+// HS256 with jwtSecret. Projects roles, callerID, and tenantID into the context.
+func AuthMiddleware(jwksURL interface{}, jwtSecret string) gin.HandlerFunc {
 	if jwksCache == nil && jwksURL != nil {
 		if url, ok := jwksURL.(string); ok && url != "" {
-			InitJWKSCache(url, 300) // Default 5 minutes TTL
+			InitJWKSCache(url, 300)
 		}
+	}
+
+	secret := jwtSecret
+	if secret == "" {
+		secret = "test-secret"
 	}
 
 	return func(c *gin.Context) {
@@ -50,34 +53,43 @@ func AuthMiddleware(jwksURL interface{}, secret string) gin.HandlerFunc {
 
 		tokenStr := parts[1]
 
-		// Parse and validate JWT token
 		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-			// If JWKS cache is available, use it for validation
 			if jwksCache != nil {
-				// Ensure the token is using RSA/ECDSA (standard for JWKS)
-				if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-					if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
-						return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+				if _, ok := t.Method.(*jwt.SigningMethodRSA); ok {
+					kid, ok := t.Header["kid"].(string)
+					if !ok {
+						return nil, fmt.Errorf("missing kid in token header")
 					}
+					key, err := jwksCache.GetKey(c.Request.Context(), kid)
+					if err != nil {
+						return nil, fmt.Errorf("failed to retrieve public key: %w", err)
+					}
+					var rawKey interface{}
+					if err := key.Raw(&rawKey); err != nil {
+						return nil, fmt.Errorf("failed to get raw key: %w", err)
+					}
+					return rawKey, nil
 				}
-				kid, ok := t.Header["kid"].(string)
-				if !ok {
-					return nil, fmt.Errorf("missing kid in token header")
+				if _, ok := t.Method.(*jwt.SigningMethodECDSA); ok {
+					kid, ok := t.Header["kid"].(string)
+					if !ok {
+						return nil, fmt.Errorf("missing kid in token header")
+					}
+					key, err := jwksCache.GetKey(c.Request.Context(), kid)
+					if err != nil {
+						return nil, fmt.Errorf("failed to retrieve public key: %w", err)
+					}
+					var rawKey interface{}
+					if err := key.Raw(&rawKey); err != nil {
+						return nil, fmt.Errorf("failed to get raw key: %w", err)
+					}
+					return rawKey, nil
 				}
-
-				key, err := jwksCache.GetKey(c.Request.Context(), kid)
-				if err != nil {
-					return nil, fmt.Errorf("failed to retrieve public key: %w", err)
-				}
-
-				var rawKey interface{}
-				if err := key.Raw(&rawKey); err != nil {
-					return nil, fmt.Errorf("failed to get raw key: %w", err)
-				}
-
-				return rawKey, nil
 			}
 
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			}
 			return []byte(secret), nil
 		})
 
@@ -88,7 +100,6 @@ func AuthMiddleware(jwksURL interface{}, secret string) gin.HandlerFunc {
 			return
 		}
 
-		// Extract Claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -105,10 +116,8 @@ func AuthMiddleware(jwksURL interface{}, secret string) gin.HandlerFunc {
 			return
 		}
 
-		// Extract and normalize roles from JWT claims
 		roles := extractRolesFromClaims(claims)
 
-		// Tenant ID enforcement
 		tenantHeader := strings.TrimSpace(c.GetHeader("X-Tenant-ID"))
 		tenantClaim := ""
 		if v, ok := claims["tenant_id"]; ok {
@@ -141,21 +150,17 @@ func AuthMiddleware(jwksURL interface{}, secret string) gin.HandlerFunc {
 			return
 		}
 
-		// Project claims into gin context for downstream handlers
 		c.Set(auth.RolesContextKey, roles)
 		c.Set("callerID", sub)
 		c.Set("tenantID", tenantID)
-		
+
 		c.Next()
 	}
 }
 
-// extractRolesFromClaims extracts and normalizes roles from JWT claims
-// Handles both single role (string) and multiple roles ([]string or []interface{})
 func extractRolesFromClaims(claims jwt.MapClaims) []auth.Role {
 	var roles []auth.Role
 
-	// Try to extract "roles" claim (array)
 	if v, ok := claims["roles"]; ok {
 		switch typed := v.(type) {
 		case []string:
@@ -177,7 +182,6 @@ func extractRolesFromClaims(claims jwt.MapClaims) []auth.Role {
 		}
 	}
 
-	// If no roles found, try "role" claim (single string)
 	if len(roles) == 0 {
 		if v, ok := claims["role"]; ok {
 			switch typed := v.(type) {
@@ -193,8 +197,6 @@ func extractRolesFromClaims(claims jwt.MapClaims) []auth.Role {
 		}
 	}
 
-	// Normalize roles using the existing auth.ExtractRoles logic
-	// Create a temporary gin context to use the existing normalization function
 	tempCtx := &gin.Context{}
 	tempCtx.Set(auth.RolesContextKey, roles)
 	return auth.ExtractRoles(tempCtx)

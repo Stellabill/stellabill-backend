@@ -61,6 +61,12 @@ type Repository interface {
 	DeleteCompletedEvents(olderThan time.Time) (int64, error)
 	ListDeadLetteredEvents(limit int) ([]*Event, error)
 	RequeueEvent(id uuid.UUID) error
+	// Publisher progress tracking (per-publisher cursors)
+	EnsurePublisherProgressTable() error
+	GetPublisherProgress(publisher string) (*time.Time, *uuid.UUID, error)
+	UpdatePublisherProgress(publisher string, lastProcessedAt time.Time, lastProcessedID uuid.UUID) error
+	// Get pending events since a given time (and last id) used by per-publisher drains
+	GetPendingEventsSince(since *time.Time, lastID *uuid.UUID, limit int) ([]*Event, error)
 }
 
 // Dispatcher handles the outbox event dispatching

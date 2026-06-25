@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"errors"
 )
 
 func TestVaultProvider_GetSecret(t *testing.T) {

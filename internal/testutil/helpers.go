@@ -71,8 +71,10 @@ func (tr *TestRequest) sendRequest(req *http.Request) *TestResponse {
 	w := httptest.NewRecorder()
 	tr.Router.ServeHTTP(w, req)
 
+	res := w.Result()
+	res.Request = req
 	return &TestResponse{
-		Response: w.Result(),
+		Response: res,
 		Body:     w.Body.String(),
 	}
 }

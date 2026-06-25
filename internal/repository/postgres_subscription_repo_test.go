@@ -217,7 +217,8 @@ func TestPostgresSubscriptionRepo_UpdateStatus_HappyPath(t *testing.T) {
     tenantID := "tenant-6"
     status := "active"
 
-    mock.ExpectExec(regexp.QuoteMeta(`UPDATE subscriptions
+    mock.ExpectExec(regexp.QuoteMeta(`
+        UPDATE subscriptions
         SET status = $1
         WHERE id = $2 AND tenant_id = $3
     `)).WithArgs(status, id, tenantID).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -243,7 +244,8 @@ func TestPostgresSubscriptionRepo_UpdateStatus_NotFound(t *testing.T) {
     tenantID := "tenant-7"
     status := "inactive"
 
-    mock.ExpectExec(regexp.QuoteMeta(`UPDATE subscriptions
+    mock.ExpectExec(regexp.QuoteMeta(`
+        UPDATE subscriptions
         SET status = $1
         WHERE id = $2 AND tenant_id = $3
     `)).WithArgs(status, id, tenantID).WillReturnResult(sqlmock.NewResult(0, 0))

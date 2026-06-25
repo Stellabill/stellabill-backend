@@ -70,6 +70,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
+	// Enforce security headers on every request, including any HTML pages.
+	r.Use(middleware.SecurityHeaders(&cfg))
+
+	// CSP violation reports from browsers are collected here.
+	r.POST(cfg.SecurityCSPReportURI, middleware.CSPReportHandler())
+
 	// Open a real connection pool from cfg.DBConn, applying the DBPool* tuning
 	// fields. When DATABASE_URL is empty (local dev) NewPool returns (nil, nil)
 	// and we degrade gracefully to in-memory dependencies below.
@@ -92,6 +98,21 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 			fmt.Printf("Failed to initialize plan database handle: %v\n", err)
 		} else {
 			repository.ApplySQLDBPoolConfig(planDB, cfg)
+		}
+
+		if cfg.DBReplicaConn != "" {
+			replicaDB, err = sql.Open("postgres", cfg.DBReplicaConn)
+			if err != nil {
+				fmt.Printf("Failed to initialize replica database handle: %v\n", err)
+			} else {
+				repository.ApplySQLDBPoolConfig(replicaDB, cfg)
+			}
+		}
+
+		if replicaDB != nil {
+			routerDB = db.NewReadRouter(planDB, replicaDB)
+		} else {
+			routerDB = planDB
 		}
 	}
 
@@ -137,8 +158,19 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	const repoCacheTTL = 5 * time.Minute
 
 	var rawPlanRepo repository.PlanRepository = repository.NewMockPlanRepo()
-	if planDB != nil {
-		rawPlanRepo = repository.NewPostgresPlanRepo(planDB)
+	if routerDB != nil {
+		pingCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		var pingErr error
+		if planDB != nil {
+			pingErr = planDB.PingContext(pingCtx)
+		}
+		cancel()
+
+		if pingErr == nil {
+			rawPlanRepo = repository.NewPostgresPlanRepo(routerDB)
+		} else {
+			fmt.Printf("Database connection failed (ping error: %v). Falling back to mock plan repository.\n", pingErr)
+		}
 	}
 	rawSubRepo := repository.NewMockSubscriptionRepo(
 		&repository.SubscriptionRow{ID: "sub-123", TenantID: "", CustomerID: "c1", Status: "active", PlanID: "p1", Amount: "10.00", Interval: "monthly"},
@@ -214,6 +246,10 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		// Swap router (#88)
 		v1.POST("/swap/exact-in", swapHandler.SwapExactTokensForTokens)
 		v1.POST("/swap/exact-out", swapHandler.SwapTokensForExactTokens)
+
+		// Webhook attempt timeline (#362)
+		attemptRepo := outbox.NewMemAttemptRepository()
+		v1.GET("/webhooks/:id/attempts", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewWebhookAttemptsHandler(attemptRepo))
 	}
 
 	// Legacy /api routes - also protected
@@ -278,6 +314,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 			log.Printf("closing plan database handle")
 			if err := planDB.Close(); err != nil {
 				return fmt.Errorf("close plan database handle: %w", err)
+			}
+		}
+		if replicaDB != nil {
+			log.Printf("closing replica database handle")
+			if err := replicaDB.Close(); err != nil {
+				return fmt.Errorf("close replica database handle: %w", err)
 			}
 		}
 		if tracerShutdown != nil {

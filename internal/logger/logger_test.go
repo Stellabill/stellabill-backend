@@ -1,4 +1,4 @@
-package logger
+package logger_test
 
 import (
 	"bytes"
@@ -11,10 +11,10 @@ import (
 func TestLoggerOutputsJSON(t *testing.T) {
 
 	var buf bytes.Buffer
-	Log.SetOutput(&buf)
-	Log.SetFormatter(&logrus.JSONFormatter{})
+	loggerpkg.Log.SetOutput(&buf)
+	loggerpkg.Log.SetFormatter(&logrus.JSONFormatter{})
 
-	Log.Info("test message")
+	loggerpkg.Log.Info("test message")
 
 	var result map[string]interface{}
 	err := json.Unmarshal(buf.Bytes(), &result)

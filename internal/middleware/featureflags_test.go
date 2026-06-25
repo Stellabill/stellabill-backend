@@ -148,7 +148,7 @@ func TestFeatureFlag_CustomResponse(t *testing.T) {
 func TestConditionalFeatureFlag_ConditionTrue(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.GetInstance().SetFlag("test_conditional", false, "")
+	featureflags.GetInstance().SetFlag("test_conditional", true, "")
 	
 	condition := func(c *gin.Context) bool {
 		return c.GetHeader("X-Test-Condition") == "true"

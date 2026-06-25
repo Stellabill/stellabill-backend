@@ -21,7 +21,7 @@ func (m *MockSubscriptionRepository) Create(s *Subscription) error {
 	return nil
 }
 
-func (m *MockSubscriptionRepository) GetByID(id string) (*Subscription, error) {
+func (m *MockSubscriptionRepository) GetByID(ctx context.Context, id string) (*Subscription, error) {
 	s, ok := m.Subscriptions[id]
 	if !ok {
 		return nil, fmt.Errorf("subscription not found")
@@ -29,15 +29,15 @@ func (m *MockSubscriptionRepository) GetByID(id string) (*Subscription, error) {
 	return s, nil
 }
 
-func (m *MockSubscriptionRepository) GetByCustomerID(customerID string, limit, offset int) ([]*Subscription, error) {
+func (m *MockSubscriptionRepository) GetByCustomerID(ctx context.Context, customerID string, limit, offset int) ([]*Subscription, error) {
 	return nil, nil
 }
 
-func (m *MockSubscriptionRepository) GetByMerchantID(merchantID string, limit, offset int) ([]*Subscription, error) {
+func (m *MockSubscriptionRepository) GetByMerchantID(ctx context.Context, merchantID string, limit, offset int) ([]*Subscription, error) {
 	return nil, nil
 }
 
-func (m *MockSubscriptionRepository) GetByPlanID(planID string, limit, offset int) ([]*Subscription, error) {
+func (m *MockSubscriptionRepository) GetByPlanID(ctx context.Context, planID string, limit, offset int) ([]*Subscription, error) {
 	return nil, nil
 }
 
@@ -58,11 +58,11 @@ func (m *MockSubscriptionRepository) Cancel(id string, cancelAtPeriodEnd bool) e
 	return nil
 }
 
-func (m *MockSubscriptionRepository) GetActiveSubscriptionsByMerchantID(merchantID string) ([]*Subscription, error) {
+func (m *MockSubscriptionRepository) GetActiveSubscriptionsByMerchantID(ctx context.Context, merchantID string) ([]*Subscription, error) {
 	return nil, nil
 }
 
-func (m *MockSubscriptionRepository) GetSubscriptionsDueForBilling(limit int) ([]*Subscription, error) {
+func (m *MockSubscriptionRepository) GetSubscriptionsDueForBilling(ctx context.Context, limit int) ([]*Subscription, error) {
 	return nil, nil
 }
 
@@ -85,7 +85,7 @@ func (m *MockPlanRepository) Create(p *Plan) error {
 	return nil
 }
 
-func (m *MockPlanRepository) GetByID(id string) (*Plan, error) {
+func (m *MockPlanRepository) GetByID(ctx context.Context, id string) (*Plan, error) {
 	p, ok := m.Plans[id]
 	if !ok {
 		return nil, fmt.Errorf("plan not found")
@@ -93,7 +93,7 @@ func (m *MockPlanRepository) GetByID(id string) (*Plan, error) {
 	return p, nil
 }
 
-func (m *MockPlanRepository) GetByMerchantID(merchantID string, limit, offset int) ([]*Plan, error) {
+func (m *MockPlanRepository) GetByMerchantID(ctx context.Context, merchantID string, limit, offset int) ([]*Plan, error) {
 	return nil, nil
 }
 
@@ -107,7 +107,7 @@ func (m *MockPlanRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockPlanRepository) GetActivePlansByMerchantID(merchantID string) ([]*Plan, error) {
+func (m *MockPlanRepository) GetActivePlansByMerchantID(ctx context.Context, merchantID string) ([]*Plan, error) {
 	return nil, nil
 }
 

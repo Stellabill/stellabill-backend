@@ -150,9 +150,9 @@ func ProviderConfig(provider WebhookProvider) *WebhookConfig {
 	switch provider {
 	case ProviderStripe:
 		cfg.SignatureHeader = StripeSignatureHeader
-		// Stripe uses a separate timestamp header; avoid overwriting the signature header
-		cfg.TimestampHeader = "Stripe-Timestamp"
-		cfg.EventIDHeader = "Stripe-Event-Id"
+		// Stripe embeds timestamp in the Stripe-Signature header; no separate header is used
+		cfg.TimestampHeader = ""
+		cfg.EventIDHeader = ""
 		cfg.SignatureVersion = "v1"
 		cfg.Algorithm = HMACSHA256
 		cfg.Tolerance = DefaultWebhookTolerance

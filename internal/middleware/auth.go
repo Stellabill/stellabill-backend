@@ -13,9 +13,8 @@ import (
 
 var jwksCache *auth.JWKSCache
 
-// InitJWKSCache initializes the JWKS cache with the given URL and TTL
-// This should be called during application initialization
-func InitJWKSCache(jwksURL string, ttl int) {
+// InitJWKSCache initializes the JWKS cache with the given URL and TTL (seconds).
+func InitJWKSCache(jwksURL string, ttlSeconds int) {
 	if jwksURL != "" {
 		jwksCache = auth.NewJWKSCache(jwksURL, time.Duration(ttl)*time.Second)
 	}
@@ -30,6 +29,8 @@ func AuthMiddleware(jwksURL interface{}, secret string) gin.HandlerFunc {
 			InitJWKSCache(url, 300) // Default 5 minutes TTL
 		}
 	}
+
+	useJWKS := jwksURL != nil
 
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -145,7 +146,7 @@ func AuthMiddleware(jwksURL interface{}, secret string) gin.HandlerFunc {
 		c.Set(auth.RolesContextKey, roles)
 		c.Set("callerID", sub)
 		c.Set("tenantID", tenantID)
-		
+
 		c.Next()
 	}
 }

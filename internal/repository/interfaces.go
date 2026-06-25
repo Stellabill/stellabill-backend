@@ -41,4 +41,8 @@ type StatementQuery struct {
 type StatementRepository interface {
 	FindByID(ctx context.Context, id string) (*StatementRow, error)
 	ListByCustomerID(ctx context.Context, customerID string, q StatementQuery) ([]*StatementRow, int, error)
+
+	// UpdateArchivedData updates an archived statement with rehydrated data after retrieval from cold storage.
+	// Returns ErrNotFound if statement doesn't exist.
+	UpdateArchivedData(ctx context.Context, id string, stmt *StatementRow) error
 }

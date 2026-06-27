@@ -37,6 +37,17 @@ The outbox table (`outbox_events`) contains:
 - `timestamps`: Creation and update timestamps
 - `version`: Event version for concurrency control
 
+Publisher delivery progress is stored separately in `outbox_publisher_progress`:
+
+- `publisher`: Stable dispatcher publisher name
+- `last_event_id`: Highest event ID acknowledged by that publisher
+- `updated_at`: Last progress update timestamp
+
+Dispatcher scans join this progress row and only return events with IDs above
+the recorded high-water mark. A successful publish acknowledgement updates the
+progress row in the same transaction that may mark the event `completed` after
+all configured publishers have reached it.
+
 ## Configuration
 
 The outbox system is configured via environment variables:
@@ -169,6 +180,13 @@ The system automatically recovers from crashes:
 2. **Processing events**: Events stuck in `processing` status timeout and are retried
 3. **Failed events**: Events that haven't reached max retries are retried
 4. **Completed events**: Old completed events are automatically cleaned up
+5. **Publisher progress**: Events at or below each publisher's persisted
+   high-water mark are skipped after restart, preventing replay of events that
+   were delivered and acknowledged before the process stopped.
+
+If the process crashes after a publisher receives an event but before the
+database acknowledgement transaction commits, the event can still be delivered
+again. Publishers must remain idempotent for this at-least-once edge case.
 
 ### Idempotency and Deduplication
  
@@ -223,6 +241,7 @@ go test -cover ./internal/outbox/...
  3. **Idempotency**: By using a deterministic `deduplication_id`, the system prevents duplicate events from being published if a transaction is retried at the application/handler level due to a timeout or network failure.
  4. **No Side Effects in TX**: Business logic inside the transaction should be restricted to database operations. External side effects (like sending emails) must be handled via outbox events to maintain atomicity.
  5. **Crash Resilience**: If the system crashes after a transaction is committed but before the dispatcher processes the event, the event remains in the `pending` state and will be picked up by another dispatcher instance once it times out.
+ 6. **Publisher High-Water Marks**: The dispatcher advances `outbox_publisher_progress.last_event_id` atomically with its success acknowledgement. Progress only moves forward so reordered acknowledgements cannot lower the stored high-water mark.
 
 ### Operational Security
 

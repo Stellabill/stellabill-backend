@@ -233,31 +233,31 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	admin.Use(authMiddleware)
 	admin.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 	{
-		admin.POST("/purge", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, adminHandler.PurgeCache)
+		admin.POST("/purge", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
-		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
+		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageAdmin), diagHandler.Handle)
 
 		// Reconciliation — scoped by RBAC and tenant
 		adapter := reconciliation.NewMemoryAdapter()
 		reconStore := reconciliation.NewMemoryStore()
-		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
+		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageReconciliation), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
 
-		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
-		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
+		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageAdmin), featureFlagsHandler.GetFeatureFlags)
+		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
 
 		if planDB != nil {
 			outboxRepo := outbox.NewPostgresRepository(planDB)
 			h.OutboxRepo = outboxRepo
 			subscriberKeyRepo := outbox.NewPostgresSubscriberKeyRepository(planDB)
 			subscriberKeysHandler := handlers.NewSubscriberKeysHandler(subscriberKeyRepo)
-			admin.POST("/subscriber-keys", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, subscriberKeysHandler.RegisterSubscriberKey)
-			admin.GET("/subscriber-keys/:subscriber_id", auth.RequirePermission(auth.PermManageSubscriptions), subscriberKeysHandler.ListSubscriberKeys)
-			admin.GET("/subscriber-keys/id/:id", auth.RequirePermission(auth.PermManageSubscriptions), subscriberKeysHandler.GetSubscriberKey)
-			admin.PATCH("/subscriber-keys/id/:id", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, subscriberKeysHandler.UpdateSubscriberKey)
-			admin.GET("/outbox/dead-letter", auth.RequirePermission(auth.PermManageSubscriptions), h.ListDeadLetteredEvents)
-			admin.POST("/outbox/:id/requeue", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, h.RequeueOutboxEvent)
+			admin.POST("/subscriber-keys", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, subscriberKeysHandler.RegisterSubscriberKey)
+			admin.GET("/subscriber-keys/:subscriber_id", auth.RequirePermission(auth.PermManageAdmin), subscriberKeysHandler.ListSubscriberKeys)
+			admin.GET("/subscriber-keys/id/:id", auth.RequirePermission(auth.PermManageAdmin), subscriberKeysHandler.GetSubscriberKey)
+			admin.PATCH("/subscriber-keys/id/:id", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, subscriberKeysHandler.UpdateSubscriberKey)
+			admin.GET("/outbox/dead-letter", auth.RequirePermission(auth.PermManageAdmin), h.ListDeadLetteredEvents)
+			admin.POST("/outbox/:id/requeue", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, h.RequeueOutboxEvent)
 		}
 	}
 

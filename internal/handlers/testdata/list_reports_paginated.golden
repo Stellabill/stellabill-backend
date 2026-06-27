@@ -1,0 +1,30 @@
+{
+  "has_more": true,
+  "next_cursor": "eyJpZCI6InN1Yl8zIiwic29ydF92YWx1ZSI6InN1Yl8zIiwidGVuYW50X2lkIjoidGVuYW50XzEiLCJzaWciOiI4YjRlOGZlOWY1NTdmZGM2MWNlMzZlNzNjNmZjOGRlMThjYzM5NmJjOTlhZmFhNjg5Njk3YWRhY2QyNzUzZWIyIn0=",
+  "reports": [
+    {
+      "subscription_id": "sub_3",
+      "tenant_id": "tenant_1",
+      "matched": true,
+      "mismatches": null,
+      "backend": {
+        "subscription_id": "sub_3",
+        "status": "active",
+        "amount": 0,
+        "currency": "",
+        "interval": "",
+        "balances": null,
+        "updated_at": "<TIMESTAMP>"
+      },
+      "contract": {
+        "subscription_id": "sub_3",
+        "status": "active",
+        "amount": 0,
+        "currency": "",
+        "interval": "",
+        "balances": null,
+        "exported_at": "<TIMESTAMP>"
+      }
+    }
+  ]
+}

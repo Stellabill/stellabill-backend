@@ -605,6 +605,11 @@ func TestEventIDCache(t *testing.T) {
 		assert.Equal(t, 1, cache.Len())
 	})
 
+	t.Run("Remove_event", func(t *testing.T) {
+		cache.Remove(ctx, eventID)
+		assert.False(t, cache.Has(ctx, eventID))
+	})
+
 	t.Run("Clear", func(t *testing.T) {
 		cache.Clear()
 		assert.Equal(t, 0, cache.Len())

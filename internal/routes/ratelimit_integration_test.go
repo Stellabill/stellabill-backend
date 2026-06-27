@@ -52,6 +52,11 @@ func setupRouter() *gin.Engine {
 	os.Setenv("JWT_SECRET", "Test1!JwtSecret-MixedAlphaNumeric@123")
 	os.Setenv("ADMIN_TOKEN", "Admin1!Token-MixedAlphaNumeric@123")
 
+	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	os.Setenv("MOCK_DB", "true")
+	os.Setenv("JWT_SECRET", "Test1!JwtSecret-MixedAlphaNumeric@123")
+	os.Setenv("ADMIN_TOKEN", "Admin1!Token-MixedAlphaNumeric@123")
+
 	r := gin.New()
 
 	// Pre-populate callerID in the Gin context for rate limiting tests

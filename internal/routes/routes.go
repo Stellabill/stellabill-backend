@@ -2,7 +2,7 @@ package routes
 
 import (
 	"fmt"
-
+	
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
@@ -91,6 +91,9 @@ func Register(r *gin.Engine) {
 		v1.GET("/plans", h.ListPlans)
 		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
+
+		// NEW: SSE stream for live subscription status updates
+		v1.GET("/subscriptions/events", h.GetSubscriptionEvents)
 	}
 
 	// Legacy /api routes - also protected
@@ -126,7 +129,7 @@ func Register(r *gin.Engine) {
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
-
+		
 		// Reconciliation — scoped by RBAC and tenant
 		adapter := reconciliation.NewMemoryAdapter()
 		reconStore := reconciliation.NewMemoryStore()

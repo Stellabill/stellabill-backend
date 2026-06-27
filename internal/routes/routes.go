@@ -180,7 +180,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	api.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	v1 := api.Group("/v1")
 
-	dep := middleware.DeprecationHeaders()
+	dep := middleware.DeprecatedHandler()
 
 	// Public health check
 	api.GET("/health", dep, h.LivenessProbe)
@@ -202,28 +202,25 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
+	apiProtected.Use(dep)
 	apiProtected.Use(authMiddleware)
 	apiProtected.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 	{
 		apiProtected.GET("/plans",
-			dep,
 			auth.RequirePermission(auth.PermReadPlans),
 			h.ListPlans,
 		)
 
 		apiProtected.GET("/subscriptions",
-			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			h.ListSubscriptions,
 		)
 
 		apiProtected.GET("/subscriptions/:id",
-			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			h.GetSubscription,
 		)
 		apiProtected.POST("/subscriptions/:id/status",
-			dep,
 			auth.RequirePermission(auth.PermManageSubscriptions),
 			handlers.NewChangeSubscriptionStatusHandler(svc),
 		)

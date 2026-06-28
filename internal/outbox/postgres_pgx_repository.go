@@ -259,43 +259,87 @@ func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 	return &event, nil
 }
 
-// ListDeadLetteredEvents retrieves events that have permanently failed
-func (r *PostgresPgxRepository) ListDeadLetteredEvents(limit int) ([]*Event, error) {
+// EnsurePublisherProgressTable creates the publisher_progress table if it does not exist.
+func (r *PostgresPgxRepository) EnsurePublisherProgressTable() error {
 	ctx := context.Background()
-	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
-			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
-		FROM outbox_events
-		WHERE status = $1
-		ORDER BY occurred_at DESC
-		LIMIT $2`
+	_, err := r.pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS publisher_progress (
+			publisher   TEXT PRIMARY KEY,
+			last_processed_at TIMESTAMPTZ NOT NULL,
+			last_processed_id UUID NOT NULL
+		)`)
+	return err
+}
 
-	rows, err := r.pool.Query(ctx, query, StatusFailed, limit) // Simplified: assuming StatusFailed acts as dead letter
+// GetPublisherProgress returns the last processed cursor for a publisher.
+func (r *PostgresPgxRepository) GetPublisherProgress(publisher string) (*time.Time, *uuid.UUID, error) {
+	ctx := context.Background()
+	row := r.pool.QueryRow(ctx,
+		`SELECT last_processed_at, last_processed_id FROM publisher_progress WHERE publisher = $1`,
+		publisher)
+	var t time.Time
+	var id uuid.UUID
+	if err := row.Scan(&t, &id); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	return &t, &id, nil
+}
+
+// UpdatePublisherProgress upserts the publisher cursor.
+func (r *PostgresPgxRepository) UpdatePublisherProgress(publisher string, lastProcessedAt time.Time, lastProcessedID uuid.UUID) error {
+	ctx := context.Background()
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO publisher_progress (publisher, last_processed_at, last_processed_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (publisher) DO UPDATE
+		SET last_processed_at = EXCLUDED.last_processed_at,
+		    last_processed_id  = EXCLUDED.last_processed_id`,
+		publisher, lastProcessedAt, lastProcessedID)
+	return err
+}
+
+// GetPendingEventsSince returns pending events after the given cursor.
+func (r *PostgresPgxRepository) GetPendingEventsSince(since *time.Time, lastID *uuid.UUID, limit int) ([]*Event, error) {
+	ctx := context.Background()
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if since == nil {
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			       occurred_at, status, retry_count, max_retries, next_retry_at,
+			       error_message, created_at, updated_at, version, deduplication_id
+			FROM outbox_events
+			WHERE status = $1
+			ORDER BY occurred_at ASC, id ASC
+			LIMIT $2`, StatusPending, limit)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			       occurred_at, status, retry_count, max_retries, next_retry_at,
+			       error_message, created_at, updated_at, version, deduplication_id
+			FROM outbox_events
+			WHERE status = $1
+			  AND (occurred_at > $2 OR (occurred_at = $2 AND id > $3))
+			ORDER BY occurred_at ASC, id ASC
+			LIMIT $4`, StatusPending, *since, lastID, limit)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dead lettered events: %w", err)
+		return nil, fmt.Errorf("failed to get pending events since: %w", err)
 	}
 	defer rows.Close()
 
 	var events []*Event
 	for rows.Next() {
-		event, err := r.scanEvent(rows)
+		ev, err := r.scanEvent(rows)
 		if err != nil {
 			return nil, err
 		}
-		events = append(events, event)
+		events = append(events, ev)
 	}
 	return events, rows.Err()
-}
-
-// RequeueEvent resets an event's status to pending
-func (r *PostgresPgxRepository) RequeueEvent(id uuid.UUID) error {
-	ctx := context.Background()
-	query := `
-		UPDATE outbox_events
-		SET status = $1, retry_count = 0, error_message = NULL, updated_at = $2
-		WHERE id = $3`
-
-	_, err := r.pool.Exec(ctx, query, StatusPending, time.Now(), id)
-	return err
 }

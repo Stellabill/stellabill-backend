@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"errors"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -193,6 +196,20 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 			}
 			code, errCode, msg := MapServiceErrorToResponse(err)
 			RespondWithError(c, code, errCode, msg)
+			return
+		}
+
+		tenantID := c.GetString("tenantID")
+		versionBytes, _ := json.Marshal(stmt)
+		version := fmt.Sprintf("%x", sha256.Sum256(versionBytes))
+		eTagHash := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s", tenantID, stmt.ID, version)))
+		eTag := fmt.Sprintf(`"%x"`, eTagHash)
+
+		c.Header("ETag", eTag)
+		c.Header("Cache-Control", "private, max-age=0, must-revalidate")
+
+		if match := c.GetHeader("If-None-Match"); match == eTag {
+			c.Status(http.StatusNotModified)
 			return
 		}
 

@@ -1,0 +1,7 @@
+GetByTenant()
+
+Create()
+
+Update()
+
+Upsert()

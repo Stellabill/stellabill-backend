@@ -28,9 +28,9 @@ func (m *MemoryObjectStore) Put(ctx context.Context, key string, data []byte) (s
 	defer m.mu.Unlock()
 
 	// Copy the data to avoid mutations from caller
-	copy := make([]byte, len(data))
-	copy(copy, data)
-	m.objects[key] = copy
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	m.objects[key] = buf
 
 	return key, nil
 }

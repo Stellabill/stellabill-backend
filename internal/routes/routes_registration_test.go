@@ -69,6 +69,31 @@ func TestRegister_SubscriptionDetailAliasesEnforceRBAC(t *testing.T) {
 	}
 }
 
+func TestRegister_LegacyProtectedRoutesEmitDeprecationOnUnauthorized(t *testing.T) {
+	withRouteTestEnv(t)
+
+	router := newRegisteredTestRouter(t)
+	res := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-123", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.Code)
+	}
+	if got := res.Header().Get("Deprecation"); got != "true" {
+		t.Fatalf("expected Deprecation=true on legacy 401, got %q", got)
+	}
+	if got, want := res.Header().Get("Sunset"), "Thu, 31 Dec 2026 23:59:59 GMT"; got != want {
+		t.Fatalf("expected Sunset %q on legacy 401, got %q", want, got)
+	}
+	if got, want := res.Header().Get("Link"), `</api/v1/subscriptions/sub-123>; rel="successor-version"`; got != want {
+		t.Fatalf("expected Link %q on legacy 401, got %q", want, got)
+	}
+}
+
 func TestRegister_StatementAliasesRequirePermission(t *testing.T) {
 	withRouteTestEnv(t)
 
@@ -82,6 +107,17 @@ func TestRegister_StatementAliasesRequirePermission(t *testing.T) {
 		res := performAuthorizedRequest(t, router, http.MethodGet, path, token)
 		if res.Code != http.StatusForbidden {
 			t.Fatalf("%s: expected 403 for customer role, got %d", path, res.Code)
+		}
+		if path == "/api/statements?customer_id=caller-2" {
+			if got := res.Header().Get("Deprecation"); got != "true" {
+				t.Fatalf("%s: expected Deprecation=true on legacy 403, got %q", path, got)
+			}
+			if got, want := res.Header().Get("Sunset"), "Thu, 31 Dec 2026 23:59:59 GMT"; got != want {
+				t.Fatalf("%s: expected Sunset %q on legacy 403, got %q", path, want, got)
+			}
+			if got, want := res.Header().Get("Link"), `</api/v1/statements>; rel="successor-version"`; got != want {
+				t.Fatalf("%s: expected Link %q on legacy 403, got %q", path, want, got)
+			}
 		}
 	}
 }
@@ -104,6 +140,7 @@ func withRouteTestEnv(t *testing.T) {
 	t.Setenv("JWT_SECRET", routeTestJWTSecret)
 	t.Setenv("ADMIN_TOKEN", routeTestAdminToken)
 	t.Setenv("TRACING_EXPORTER", "none")
+	t.Setenv("LEGACY_API_SUNSET", "Thu, 31 Dec 2026 23:59:59 GMT")
 }
 
 func newRegisteredTestRouter(t *testing.T) *gin.Engine {

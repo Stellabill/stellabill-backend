@@ -1,0 +1,1 @@
+type EmailNotifier struct{}

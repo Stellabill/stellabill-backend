@@ -1,0 +1,582 @@
+Folder PATH listing
+Volume serial number is 2AC7-2304
+C:.
+|   .env.example
+|   .gitignore
+|   AUDIT_IMPLEMENTATION_SUMMARY.md
+|   AUDIT_MIDDLEWARE_IMPLEMENTATION.md
+|   AUDIT_QUICK_REFERENCE.md
+|   AUDIT_VERIFICATION.md
+|   authDoc.md
+|   BENCHMARK_GUIDE.md
+|   BENCHMARK_IMPLEMENTATION.md
+|   BENCHMARK_RESULTS.md
+|   COMMIT_MESSAGE.md
+|   commit_msg.txt
+|   CORS_COMMIT_MESSAGE.txt
+|   CORS_HARDENING_SUMMARY.md
+|   CORS_IMPLEMENTATION_CHECKLIST.md
+|   coverage
+|   cov_reconcile
+|   DELIVERABLES_CHECKLIST.md
+|   DELIVERABLES_OPENAPI_TEST.md
+|   FEATURE_README.md
+|   FILES_CREATED.md
+|   fix_ratelimit.py
+|   fix_ratelimit2.py
+|   GIT_COMMIT_GUIDE.md
+|   GIT_COMMIT_OPENAPI_TEST.md
+|   go.mod
+|   go.sum
+|   GRACEFUL_SHUTDOWN.md
+|   HEALTH_CHECKS_QUICK_REFERENCE.md
+|   HEALTH_IMPLEMENTATION_EXECUTIVE_SUMMARY.md
+|   HEALTH_IMPLEMENTATION_SUMMARY.md
+|   HTTP_CLIENT_IMPLEMENTATION.md
+|   IMPLEMENTATION_COMPLETE.md
+|   IMPLEMENTATION_COMPLETE_CHECKLIST.md
+|   IMPLEMENTATION_OVERVIEW.md
+|   IMPLEMENTATION_SUMMARY.md
+|   JWT_HARDENING_IMPLEMENTATION.md
+|   Makefile
+|   NEXT_STEPS.md
+|   openapi.md
+|   OPENAPI_TEST_IMPLEMENTATION.md
+|   PR_DESCRIPTION.md
+|   PULL_REQUEST.md
+|   QUICK_START.md
+|   README.md
+|   README_REPOSITORY_TESTS.md
+|   repo-tree.txt
+|   STATEMENT_ARCHIVAL_IMPLEMENTATION.md
+|   stellarbill-backend
+|   task140.md
+|   test-health.bat
+|   test-health.sh
+|   test-outbox.bat
+|   test-outbox.sh
+|   test-panic-recovery.bat
+|   test-panic-recovery.sh
+|   TEST_EXECUTION.md
+|   TEST_EXECUTION_HEALTH.md
+|   TODO.md
+|   TRACING_IMPLEMENTATION.md
+|   VERIFICATION_CHECKLIST.md
+|   WORKER_IMPLEMENTATION.md
+|   
++---.github
+|   |   dependency-review-config.yml
+|   |   pr_body.txt
+|   |   
+|   \---workflows
+|           benchmarks.yml
+|           ci.yml
+|           dependency-scanning.yml
+|           k6-soak-test.yml
+|           reconciliation-ci.yml
+|           test-jwt-hardening.yml
+|           
++---cmd
+|   +---openapi-validate
+|   |       main.go
+|   |       
+|   +---server
+|   |       main.go
+|   |       main_test.go
+|   |       
+|   \---validate-migrations
+|           main.go
+|           
++---docs
+|   |   admin-signing.md
+|   |   API_SECURITY_HEADERS.md
+|   |   ARCHIVE_TEST_GUIDE.md
+|   |   CACHING.md
+|   |   contract-event-decoder-fixtures.md
+|   |   db-indexing.md
+|   |   dependency-scanning-policy.md
+|   |   DEPENDENCY_SECURITY.md
+|   |   dev-test-guide.md
+|   |   ERROR_ENVELOPE.md
+|   |   HEALTH_CHECKS.md
+|   |   HEALTH_INTEGRATION_EXAMPLE.md
+|   |   idempotency.md
+|   |   JWT_HARDENING.md
+|   |   LogSchema.json
+|   |   middleware-request-size-gzip.md
+|   |   migrations.md
+|   |   openapi.md
+|   |   OPENAPI_CONFORMANCE_QUICK_REFERENCE.md
+|   |   OPENAPI_CONFORMANCE_TEST.md
+|   |   OPENAPI_GUIDE.md
+|   |   OPENAPI_TEST_EXAMPLES.md
+|   |   outbox-jwe.md
+|   |   outbox-pattern.md
+|   |   panic-recovery.md
+|   |   PLAN_CACHING.md
+|   |   RATE_LIMITING.md
+|   |   RATE_LIMITING_SECURITY.md
+|   |   reconciliation.md
+|   |   s3-export.md
+|   |   security-analysis.md
+|   |   security-notes
+|   |   security-notes.md
+|   |   security-request-size-gzip.md
+|   |   SECURITY.md
+|   |   SECURITY_DEPENDENCY_SCANNING.md
+|   |   SECURITY_SCANNING.md
+|   |   SOROBAN_FIXTURES.md
+|   |   STATEMENT_COLD_ARCHIVE.md
+|   |   strict-json-decoding.md
+|   |   subscription-status-transitions.md
+|   |   WEBHOOK_IDEMPOTENCY.md
+|   |   WEBHOOK_INTEGRATION.md
+|   |   webhook_security.md
+|   |   
+|   +---fixtures
+|   |       subscription_charged.json
+|   |       subscription_created.json
+|   |       subscription_refunded.json
+|   |       
+|   +---ops
+|   |       auth-failure-runbook.md
+|   |       db-outage-runbook.md
+|   |       db-pool-tuning.md
+|   |       elevated-errors-runbook.md
+|   |       README.md
+|   |       
+|   +---runbooks
+|   |       capacity-planning.md
+|   |       
+|   \---specs
+|       \---subscription-detail-expansion
+|               .config.kiro
+|               design.md
+|               requirements.md
+|               tasks.md
+|               
++---internal
+|   +---audit
+|   |       coverage_test.go
+|   |       logger.go
+|   |       logger_test.go
+|   |       middleware.go
+|   |       middleware_test.go
+|   |       sink.go
+|   |       types.go
+|   |       
+|   +---auth
+|   |       claims.go
+|   |       coverage_test.go
+|   |       jwks_cache.go
+|   |       jwks_cache_test.go
+|   |       jwt.go
+|   |       middleware.go
+|   |       roles.go
+|   |       
+|   +---cache
+|   |       cache.go
+|   |       cache_test.go
+|   |       memory_object_store.go
+|   |       memory_object_store_test.go
+|   |       object_store.go
+|   |       purgeable.go
+|   |       
+|   +---config
+|   |       config.go
+|   |       config_test.go
+|   |       coverage_test.go
+|   |       pool_config_test.go
+|   |       
+|   +---correlation
+|   |       correlation.go
+|   |       correlation_test.go
+|   |       
+|   +---db
+|   |       breaker.go
+|   |       dbtx.go
+|   |       pool.go
+|   |       POOL_NOTES.md
+|   |       pool_test.go
+|   |       router.go
+|   |       router_test.go
+|   |       
+|   +---docs
+|   |       PII_POLICY.md
+|   |       
+|   +---edgecases
+|   |       featureflags_test.go
+|   |       
+|   +---featureflags
+|   |       featureflags.go
+|   |       featureflags_test.go
+|   |       
+|   +---handlers
+|   |   |   admin.go
+|   |   |   admin_test.go
+|   |   |   BENCHMARKS.md
+|   |   |   benchmark_thresholds.go
+|   |   |   benchmark_threshold_test.go
+|   |   |   coverage_test.go
+|   |   |   errors.go
+|   |   |   errors_test.go
+|   |   |   export.go
+|   |   |   export_test.go
+|   |   |   feature_flags.go
+|   |   |   feature_flags_test.go
+|   |   |   fees.go
+|   |   |   fees_test.go
+|   |   |   handler.go
+|   |   |   handlers_test.go
+|   |   |   handler_test.go
+|   |   |   health.go
+|   |   |   health_test.go
+|   |   |   mock_test.go
+|   |   |   otel_spans_test.go
+|   |   |   panic_test.go
+|   |   |   plans.go
+|   |   |   plans_benchmark_test.go
+|   |   |   plans_benchmark_threshold_test.go
+|   |   |   plans_golden_test.go
+|   |   |   plans_standalone_test.go
+|   |   |   plans_test.go
+|   |   |   reconciliation.go
+|   |   |   reconciliation_coverage_test.go
+|   |   |   reconciliation_golden_test.go
+|   |   |   reconciliation_test.go
+|   |   |   statements.go
+|   |   |   statements_golden_test.go
+|   |   |   statements_test.go
+|   |   |   statement_test.go
+|   |   |   subscriber_keys.go
+|   |   |   subscriptions.go
+|   |   |   subscriptions_benchmark_test.go
+|   |   |   subscriptions_golden_test.go
+|   |   |   subscriptions_integration_test.go
+|   |   |   subscriptions_standalone_test.go
+|   |   |   subscriptions_test.go
+|   |   |   subscription_status_test.go
+|   |   |   swap.go
+|   |   |   swap_test.go
+|   |   |   webhooks.go
+|   |   |   webhooks_test.go
+|   |   |   webhook_attempts.go
+|   |   |   webhook_attempts_test.go
+|   |   |   
+|   |   \---testdata
+|   |           list_plans_empty.golden
+|   |           list_plans_paginated.golden
+|   |           list_plans_standard.golden
+|   |           list_reports_empty.golden
+|   |           list_reports_paginated.golden
+|   |           list_reports_standard.golden
+|   |           list_statements_empty.golden
+|   |           list_statements_paginated.golden
+|   |           list_statements_standard.golden
+|   |           list_subscriptions_empty.golden
+|   |           list_subscriptions_paginated.golden
+|   |           list_subscriptions_standard.golden
+|   |           
+|   +---logger
+|   |       logger.go
+|   |       logger_test.go
+|   |       
+|   +---metrics
+|   |       metrics.go
+|   |       metrics_test.go
+|   |       
+|   +---middleware
+|   |       audit.go
+|   |       audit_test.go
+|   |       auth.go
+|   |       auth_test.go
+|   |       correlation.go
+|   |       cors.go
+|   |       cors_test.go
+|   |       coverage_test.go
+|   |       fault_injection.go
+|   |       fault_injection_test.go
+|   |       featureflags.go
+|   |       featureflags_test.go
+|   |       gzip_policy.go
+|   |       gzip_policy_test.go
+|   |       idempotency.go
+|   |       idempotency_integration_test.go
+|   |       idempotency_store.go
+|   |       idempotency_test.go
+|   |       ip_restriction.go
+|   |       logger.go
+|   |       logger_test.go
+|   |       metrics.go
+|   |       middleware.go
+|   |       middleware_test.go
+|   |       ratelimit.go
+|   |       ratelimit_edge_test.go
+|   |       ratelimit_test.go
+|   |       recovery.go
+|   |       recovery_hardening_test.go
+|   |       recovery_test.go
+|   |       requestid.go
+|   |       request_signing.go
+|   |       request_signing_test.go
+|   |       request_size.go
+|   |       request_size_test.go
+|   |       security.go
+|   |       security_test.go
+|   |       tenant_ratelimit.go
+|   |       tenant_ratelimit_test.go
+|   |       traceid.go
+|   |       traceid_test.go
+|   |       validation.go
+|   |       validation_test.go
+|   |       webhook_event_cache.go
+|   |       webhook_verification.go
+|   |       webhook_verification_test.go
+|   |       
+|   +---migrations
+|   |       coverage_test.go
+|   |       migrations.go
+|   |       migrations_test.go
+|   |       more_test.go
+|   |       runner.go
+|   |       runner_test.go
+|   |       util.go
+|   |       util_test.go
+|   |       
+|   +---outbox
+|   |       attempts.go
+|   |       attempts_test.go
+|   |       dispatcher.go
+|   |       dispatcher_test.go
+|   |       dispatcher_unit_test.go
+|   |       integration_test.go
+|   |       jwe.go
+|   |       jwe_helpers.go
+|   |       jwe_publisher.go
+|   |       jwe_test.go
+|   |       manager.go
+|   |       metrics.go
+|   |       outbox_test.go
+|   |       postgres_pgx_repository.go
+|   |       publisher.go
+|   |       publisher_test.go
+|   |       repository.go
+|   |       repository_test.go
+|   |       sensitive.go
+|   |       service.go
+|   |       subscriber_key.go
+|   |       subscriber_key_test.go
+|   |       types.go
+|   |       
+|   +---pagination
+|   |       coverage_test.go
+|   |       cursor.go
+|   |       cursor_test.go
+|   |       limit.go
+|   |       limit_test.go
+|   |       offset.go
+|   |       offset_test.go
+|   |       scoped_cursor.go
+|   |       scoped_cursor_test.go
+|   |       
+|   +---reconciliation
+|   |   |   adapter_http.go
+|   |   |   adapter_memory.go
+|   |   |   coverage_test.go
+|   |   |   event_decoder.go
+|   |   |   event_decoder_test.go
+|   |   |   metrics.go
+|   |   |   reconciliation.go
+|   |   |   reconciliation_test.go
+|   |   |   service.go
+|   |   |   store_memory.go
+|   |   |   
+|   |   \---fixtures
+|   |           soroban_events.json
+|   |           
+|   +---repositories
+|   |       mock.go
+|   |       plans.go
+|   |       plans_test.go
+|   |       subscriptions.go
+|   |       subscriptions_test.go
+|   |       
+|   +---repository
+|   |   |   cached_plan_repo.go
+|   |   |   cached_plan_repo_test.go
+|   |   |   cached_subscription_repo.go
+|   |   |   cached_subscription_repo_test.go
+|   |   |   interfaces.go
+|   |   |   mock.go
+|   |   |   mock_test.go
+|   |   |   models.go
+|   |   |   postgres_plan_repo.go
+|   |   |   postgres_plan_repo_test.go
+|   |   |   postgres_subscription_repo.go
+|   |   |   postgres_subscription_repo_test.go
+|   |   |   
+|   |   \---postgres
+|   |           otel.go
+|   |           plan_repo.go
+|   |           subscription_repo.go
+|   |           
+|   +---requestparams
+|   |       requestparams.go
+|   |       requestparams_test.go
+|   |       
+|   +---routes
+|   |       auth_integration_test.go
+|   |       coverage_test.go
+|   |       parity_test.go
+|   |       ratelimit_integration_test.go
+|   |       routes.go
+|   |       routes_audit_test.go
+|   |       routes_registration_test.go
+|   |       
+|   +---secrets
+|   |       chain_provider.go
+|   |       coverage_test.go
+|   |       env_provider.go
+|   |       provider.go
+|   |       provider_test.go
+|   |       safe_value.go
+|   |       vault_provider.go
+|   |       vault_provider_test.go
+|   |       
+|   +---security
+|   |       redactor.go
+|   |       redactor_test.go
+|   |       zapredactor.go
+|   |       
+|   +---service
+|   |       coverage_test.go
+|   |       errors.go
+|   |       fees_service.go
+|   |       fees_service_test.go
+|   |       statement_archive_test.go
+|   |       statement_service.go
+|   |       statement_service_test.go
+|   |       subscription_service.go
+|   |       subscription_service_test.go
+|   |       subscription_status_change_test.go
+|   |       swap_service.go
+|   |       swap_service_test.go
+|   |       types.go
+|   |       
+|   +---startup
+|   |       checks.go
+|   |       checks_test.go
+|   |       coverage_test.go
+|   |       handler.go
+|   |       
+|   +---storage
+|   |   \---s3
+|   |           client.go
+|   |           client_test.go
+|   |           
+|   +---subscriptions
+|   |       state_machine.go
+|   |       state_machine_test.go
+|   |       
+|   +---tests
+|   |       tenant_isolation_fuzz_test.go
+|   |       
+|   +---testutil
+|   |   |   db.go
+|   |   |   helpers.go
+|   |   |   
+|   |   \---golden
+|   |           golden.go
+|   |           
+|   +---timeutil
+|   |       coverage_test.go
+|   |       timeutil.go
+|   |       timeutil_test.go
+|   |       
+|   +---tracing
+|   |       tracing.go
+|   |       tracing_test.go
+|   |       
+|   +---validation
+|   |       validation.go
+|   |       validation_test.go
+|   |       
+|   +---validator
+|   |       validator.go
+|   |       
+|   \---worker
+|           example_test.go
+|           executor.go
+|           job.go
+|           outbox_worker.go
+|           outbox_worker_test.go
+|           scheduler.go
+|           scheduler_test.go
+|           statement_archive_job.go
+|           statement_archive_job_test.go
+|           store_memory.go
+|           worker.go
+|           
++---migrations
+|       0001_init.down.sql
+|       0001_init.up.sql
+|       0002_create_outbox.down.sql
+|       0002_create_outbox.up.sql
+|       0003_create_contract_events.down.sql
+|       0003_create_contract_events.up.sql
+|       0004_add_indexes.down.sql
+|       0004_add_indexes.up.sql
+|       0005_create_idempotency_keys.down.sql
+|       0005_create_idempotency_keys.up.sql
+|       0006_create_statements.down.sql
+|       0006_create_statements.up.sql
+|       0007_outbox_dead_letter_view.down.sql
+|       0007_outbox_dead_letter_view.up.sql
+|       0008_create_outbox_attempts.down.sql
+|       0008_create_outbox_attempts.up.sql
+|       0008_create_subscriber_keys.down.sql
+|       0008_create_subscriber_keys.up.sql
+|       0009_add_outbox_deduplication.down.sql
+|       0009_add_outbox_deduplication.up.sql
+|       0010_add_statement_archival.down.sql
+|       0010_add_statement_archival.up.sql
+|       migrations.go
+|       
++---openapi
+|       openapi.yaml
+|       spec.go
+|       spec_test.go
+|       
++---scripts
+|   |   analyze_benchmarks.sh
+|   |   capacity-collect.sh
+|   |   check-coverage.sh
+|   |   install_go_and_run_tests.ps1
+|   |   run_benchmarks.sh
+|   |   test-panic-recovery.sh
+|   |   
+|   \---loadtest
+|       |   plans.js
+|       |   statements.js
+|       |   subscriptions.js
+|       |   utils.js
+|       |   
+|       \---gentoken
+|               main.go
+|               
++---tests
+|   +---integration
+|   |       endpoints_test.go
+|   |       openapi_conformance_test.go
+|   |       
+|   \---k6
+|           README_SOAK.md
+|           statements_soak.js
+|           
+\---tools
+    \---capacity
+            main.go
+            main_test.go
+            planner.go
+            snapshot.go
+            

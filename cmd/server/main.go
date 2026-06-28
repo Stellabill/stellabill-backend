@@ -16,8 +16,10 @@ import (
 	_ "github.com/lib/pq"
 
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/integrations/pagerduty"
 	"stellarbill-backend/internal/migrations"
 	"stellarbill-backend/internal/routes"
+	"stellarbill-backend/internal/worker"
 )
 
 var listenAndServe = func(srv *http.Server) error {
@@ -52,6 +54,32 @@ func run() error {
 
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// Start dead-letter watcher if a database is available.
+	// PAGERDUTY_ROUTING_KEY is optional — watcher runs but skips alerts when absent.
+	watcherCtx, cancelWatcher := context.WithCancel(context.Background())
+	defer cancelWatcher()
+	if cfg.DBConn != "" {
+		db, err := sql.Open("postgres", cfg.DBConn)
+		if err != nil {
+			log.Printf("dead-letter watcher: db open error: %v (skipping watcher)", err)
+		} else {
+			var pdClient worker.AlertClient
+			if cfg.PagerDutyRoutingKey != "" {
+				pdClient = pagerduty.New(cfg.PagerDutyRoutingKey)
+			}
+			watchCfg := worker.DeadLetterWatcherConfig{
+				Threshold:    cfg.DeadLetterThreshold,
+				Window:       time.Duration(cfg.DeadLetterWindowSecs) * time.Second,
+				PollInterval: time.Duration(cfg.DeadLetterWindowSecs) * time.Second,
+			}
+			w := worker.NewDeadLetterWatcher(db, pdClient, watchCfg)
+			go func() {
+				defer db.Close()
+				w.Start(watcherCtx)
+			}()
+		}
 	}
 
 	router := gin.New()

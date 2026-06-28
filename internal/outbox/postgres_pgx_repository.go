@@ -214,8 +214,94 @@ func (r *PostgresPgxRepository) RequeueEvent(id uuid.UUID) error {
 	return nil
 }
 
-// scanEvent scans a pgx row into an Event struct
-func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
+// EnsurePublisherProgressTable is a no-op for pgx; the table is created by migrations.
+func (r *PostgresPgxRepository) EnsurePublisherProgressTable() error { return nil }
+
+// GetPublisherProgress returns the last processed time and ID for the given publisher.
+func (r *PostgresPgxRepository) GetPublisherProgress(publisher string) (*time.Time, *uuid.UUID, error) {
+	ctx := context.Background()
+	var lastAt *time.Time
+	var lastID *uuid.UUID
+	row := r.pool.QueryRow(ctx,
+		`SELECT last_processed_at, last_processed_id FROM outbox_publisher_progress WHERE publisher = $1`,
+		publisher)
+	var at sql.NullTime
+	var id uuid.NullUUID
+	if err := row.Scan(&at, &id); err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("get publisher progress: %w", err)
+	}
+	if at.Valid {
+		lastAt = &at.Time
+	}
+	if id.Valid {
+		lastID = &id.UUID
+	}
+	return lastAt, lastID, nil
+}
+
+// UpdatePublisherProgress upserts the publisher progress record.
+func (r *PostgresPgxRepository) UpdatePublisherProgress(publisher string, lastAt time.Time, lastID uuid.UUID) error {
+	ctx := context.Background()
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO outbox_publisher_progress (publisher, last_processed_at, last_processed_id, updated_at)
+		 VALUES ($1, $2, $3, NOW())
+		 ON CONFLICT (publisher) DO UPDATE SET last_processed_at=$2, last_processed_id=$3, updated_at=NOW()`,
+		publisher, lastAt, lastID)
+	return err
+}
+
+// GetPendingEventsSince retrieves pending events created/updated after the given time and ID.
+func (r *PostgresPgxRepository) GetPendingEventsSince(since *time.Time, lastID *uuid.UUID, limit int) ([]*Event, error) {
+	ctx := context.Background()
+	var (
+		rows pgx.Rows
+		err  error
+	)
+
+	if since != nil {
+		rows, err = r.pool.Query(ctx,
+			`SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			        occurred_at, status, retry_count, max_retries, next_retry_at,
+			        error_message, created_at, updated_at, version, deduplication_id
+			 FROM outbox_events
+			 WHERE (status = $1 OR (status = $2 AND next_retry_at <= $3))
+			   AND occurred_at >= $4
+			 ORDER BY occurred_at ASC LIMIT $5`,
+			StatusPending, StatusFailed, time.Now(), *since, limit)
+	} else {
+		rows, err = r.pool.Query(ctx,
+			`SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			        occurred_at, status, retry_count, max_retries, next_retry_at,
+			        error_message, created_at, updated_at, version, deduplication_id
+			 FROM outbox_events
+			 WHERE status = $1 OR (status = $2 AND next_retry_at <= $3)
+			 ORDER BY occurred_at ASC LIMIT $4`,
+			StatusPending, StatusFailed, time.Now(), limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("GetPendingEventsSince: %w", err)
+	}
+	defer rows.Close()
+	var events []*Event
+	for rows.Next() {
+		event, err := r.scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+// scanEvent scans a pgx row into an Event struct (kept for backward compat; delegates to scanRow).
+func (r *PostgresPgxRepository) scanEvent(row interface{ Scan(...any) error }) (*Event, error) {
+	return r.scanRow(row)
+}
+
+func (r *PostgresPgxRepository) scanRow(row interface{ Scan(...any) error }) (*Event, error) {
 	var event Event
 	var aggregateID, aggregateType, errorMessage, deduplicationID sql.NullString
 	var nextRetryAt sql.NullTime
@@ -240,10 +326,6 @@ func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan event: %w", err)
 	}
-
-	if deduplicationID.Valid {
-		event.DeduplicationID = &deduplicationID.String
-	}
 	if aggregateID.Valid {
 		event.AggregateID = &aggregateID.String
 	}
@@ -256,46 +338,9 @@ func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 	if errorMessage.Valid {
 		event.ErrorMessage = &errorMessage.String
 	}
+	if deduplicationID.Valid {
+		event.DeduplicationID = &deduplicationID.String
+	}
 	return &event, nil
 }
 
-// ListDeadLetteredEvents retrieves events that have permanently failed
-func (r *PostgresPgxRepository) ListDeadLetteredEvents(limit int) ([]*Event, error) {
-	ctx := context.Background()
-	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
-			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
-		FROM outbox_events
-		WHERE status = $1
-		ORDER BY occurred_at DESC
-		LIMIT $2`
-
-	rows, err := r.pool.Query(ctx, query, StatusFailed, limit) // Simplified: assuming StatusFailed acts as dead letter
-	if err != nil {
-		return nil, fmt.Errorf("failed to get dead lettered events: %w", err)
-	}
-	defer rows.Close()
-
-	var events []*Event
-	for rows.Next() {
-		event, err := r.scanEvent(rows)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, rows.Err()
-}
-
-// RequeueEvent resets an event's status to pending
-func (r *PostgresPgxRepository) RequeueEvent(id uuid.UUID) error {
-	ctx := context.Background()
-	query := `
-		UPDATE outbox_events
-		SET status = $1, retry_count = 0, error_message = NULL, updated_at = $2
-		WHERE id = $3`
-
-	_, err := r.pool.Exec(ctx, query, StatusPending, time.Now(), id)
-	return err
-}

@@ -54,7 +54,6 @@ type Config struct {
 	DBReplicaConn string
 	JWTSecret     string
 	JWKSURL                string
-	SecurityFrameAncestors string
 	// Add additional secure defaults for optional configs
 	MaxHeaderBytes      int
 	MaxRequestSize      int64
@@ -79,6 +78,7 @@ type Config struct {
 	AllowedOrigins string
 	// Security headers
 	SecurityFrameAncestors string
+	SecurityCSPReportURI   string
 	// Outbox JWE configuration
 	OutboxJWEEnabled             bool
 	OutboxJWESensitiveEventTypes []string
@@ -90,6 +90,11 @@ type Config struct {
 	DBPoolConnectTimeout    int
 	DBPoolHealthCheckPeriod int
 	DBPoolMetricsInterval   int
+
+	// PagerDuty dead-letter alerting
+	PagerDutyRoutingKey    string // PAGERDUTY_ROUTING_KEY; empty disables alerting
+	DeadLetterThreshold    int    // DEADLETTER_THRESHOLD; default 5
+	DeadLetterWindowSecs   int    // DEADLETTER_WINDOW (seconds); default 60
 }
 
 // ValidationResult holds the result of configuration validation
@@ -247,6 +252,10 @@ func Load(opts ...Option) (Config, error) {
 		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
 		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
 		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
+		// PagerDuty dead-letter alerting defaults
+		PagerDutyRoutingKey:  getEnv("PAGERDUTY_ROUTING_KEY", ""),
+		DeadLetterThreshold:  getEnvInt("DEADLETTER_THRESHOLD", 5),
+		DeadLetterWindowSecs: getEnvInt("DEADLETTER_WINDOW", 60),
 	}
 
 	// Resolve secrets through the provider
@@ -643,6 +652,32 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	// Validate DB pool configuration
 	validateDBPool(c, result)
 
+	// PagerDuty dead-letter alerting (all optional)
+	if val := os.Getenv("DEADLETTER_THRESHOLD"); val != "" {
+		if n, err := strconv.Atoi(val); err != nil || n < 1 {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "DEADLETTER_THRESHOLD",
+				Message: "must be a positive integer",
+				Value:   val,
+			})
+		} else {
+			c.DeadLetterThreshold = n
+		}
+	}
+	if val := os.Getenv("DEADLETTER_WINDOW"); val != "" {
+		if n, err := strconv.Atoi(val); err != nil || n < 1 {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "DEADLETTER_WINDOW",
+				Message: "must be a positive integer (seconds)",
+				Value:   val,
+			})
+		} else {
+			c.DeadLetterWindowSecs = n
+		}
+	}
+
 	// Set optional env values
 	c.Env = getEnv("ENV", "development")
 
@@ -772,6 +807,16 @@ func maskSecret(secret string) string {
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+// getEnvInt retrieves an environment variable as int with a fallback value.
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
 	}
 	return fallback
 }

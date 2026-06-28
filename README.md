@@ -133,6 +133,7 @@ IDLE_TIMEOUT=120
 MAX_HEADER_BYTES=1048576
 AUDIT_HMAC_SECRET=stellarbill-dev-audit
 AUDIT_LOG_PATH=audit.log
+LEGACY_API_SUNSET="Thu, 31 Dec 2026 23:59:59 GMT"
 ```
 
 Or export them in your shell. The app now fails fast when required values are missing or insecure.
@@ -192,6 +193,7 @@ The capacity planning playbook includes the reproducible snapshot script, the si
 | `WRITE_TIMEOUT` | `30` | Timeout in seconds, range `1` to `3600` |
 | `IDLE_TIMEOUT` | `120` | Timeout in seconds, range `1` to `3600` |
 | `MAX_HEADER_BYTES` | `1048576` | Header size in bytes, range `1024` to `16777216` |
+| `LEGACY_API_SUNSET` | `""` | Optional HTTP-date or RFC3339 timestamp emitted as `Sunset` on legacy `/api/*` aliases |
 | `FF_DEFAULT_ENABLED` | `false`                                | Default state for unknown flags |
 | `FF_LOG_DISABLED` | `true`                                  | Log when flags block requests  |
 | `FF_CONFIG_FILE` | `""`                                    | Path to feature flags config file |

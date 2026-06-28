@@ -62,7 +62,13 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.TraceIDMiddleware())
 	r.Use(metrics.MetricsMiddleware())
 
+	// Dev-only: validate incoming JSON request bodies against embedded OpenAPI spec.
+	if cfg.Env != "production" {
+		r.Use(middleware.OpenAPIRequestBodyValidation())
+	}
+
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
+
 
 	rateLimitConfig := middleware.RateLimiterConfig{
 		Enabled:        cfg.RateLimitEnabled,

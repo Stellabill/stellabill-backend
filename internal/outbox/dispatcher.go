@@ -207,6 +207,13 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 			if err != nil {
 				log.Printf("Publisher %s failed for event %s: %v", name, event.ID, err)
 
+				// Permanent errors go straight to dead-letter; no retry, no backoff.
+				if IsPermanentPublishError(err) {
+					errorMsg := err.Error()
+					_ = d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg)
+					continue
+				}
+
 				// update failure/backoff (per publisher)
 				d.mu.Lock()
 				d.publisherFailCount[name]++

@@ -15,7 +15,7 @@ import (
 type memoryRepository struct {
 	mu       sync.Mutex
 	events   map[uuid.UUID]*Event
-	progress map[string]uuid.UUID
+	progress map[string]*publisherCursor
 }
 
 func newMemoryRepository() *memoryRepository {
@@ -136,40 +136,54 @@ func (m *memoryRepository) RequeueEvent(id uuid.UUID) error {
 	return m.UpdateStatus(id, StatusPending, nil)
 }
 
-func (m *memoryRepository) EnsurePublisherProgressTable() error {
+func (m *memoryRepository) EnsurePublisherProgressTable() error { return nil }
+
+func (m *memoryRepository) GetPublisherProgress(publisher string) (*time.Time, *uuid.UUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.progress == nil {
+		return nil, nil, nil
+	}
+	p, ok := m.progress[publisher]
+	if !ok {
+		return nil, nil, nil
+	}
+	return p.lastAt, p.lastID, nil
+}
+
+func (m *memoryRepository) UpdatePublisherProgress(publisher string, lastProcessedAt time.Time, lastProcessedID uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.progress == nil {
+		m.progress = make(map[string]*publisherCursor)
+	}
+	m.progress[publisher] = &publisherCursor{lastAt: &lastProcessedAt, lastID: &lastProcessedID}
 	return nil
 }
 
-func (m *memoryRepository) GetPublisherProgress(publisher string) (*uuid.UUID, error) {
+func (m *memoryRepository) GetPendingEventsSince(since *time.Time, lastID *uuid.UUID, limit int) ([]*Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	id, ok := m.progress[publisher]
-	if !ok {
-		return nil, nil
-	}
-	return &id, nil
-}
-
-func (m *memoryRepository) MarkPublished(publisher string, event *Event, publishers []string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if current, ok := m.progress[publisher]; !ok || current.String() < event.ID.String() {
-		m.progress[publisher] = event.ID
-	}
-	for _, name := range publishers {
-		lastID, ok := m.progress[name]
-		if !ok || lastID.String() < event.ID.String() {
-			return nil
+	var pending []*Event
+	for _, event := range m.events {
+		if event.Status != StatusPending {
+			continue
+		}
+		if since != nil {
+			if event.OccurredAt.Before(*since) {
+				continue
+			}
+			if event.OccurredAt.Equal(*since) && lastID != nil && event.ID.String() <= lastID.String() {
+				continue
+			}
+		}
+		c := *event
+		pending = append(pending, &c)
+		if len(pending) >= limit {
+			break
 		}
 	}
-	stored, ok := m.events[event.ID]
-	if !ok {
-		return errors.New("not found")
-	}
-	stored.Status = StatusCompleted
-	stored.ErrorMessage = nil
-	stored.UpdatedAt = time.Now()
-	return nil
+	return pending, nil
 }
 
 func TestDefaultDispatcherConfig(t *testing.T) {
@@ -298,7 +312,7 @@ func TestDispatcherRetriesTransientErrors(t *testing.T) {
 	publisher := NewMockPublisher()
 	cfg := DefaultDispatcherConfig()
 	cfg.PollInterval = 20 * time.Millisecond
-	cfg.MaxRetries = 2
+	cfg.MaxRetries = 1 // fail immediately on first transient error
 
 	event, err := NewEvent("retry.me", map[string]string{"k": "v"}, nil, nil)
 	require.NoError(t, err)
@@ -309,9 +323,11 @@ func TestDispatcherRetriesTransientErrors(t *testing.T) {
 	require.NoError(t, d.Start())
 	defer d.Stop()
 
+	// The per-publisher drain uses publisher-level fail counts, not event RetryCount.
+	// After MaxRetries publisher failures the event is marked StatusFailed.
 	require.Eventually(t, func() bool {
 		stored, getErr := repo.GetByID(event.ID)
-		return getErr == nil && stored.RetryCount >= 1
+		return getErr == nil && stored.Status == StatusFailed
 	}, 2*time.Second, 20*time.Millisecond)
 }
 

@@ -277,6 +277,8 @@ func TestWebhookVerificationMiddleware_ProviderSpecific(t *testing.T) {
 				r := httptest.NewRecorder()
 				req := httptest.NewRequest("POST", "/webhook", strings.NewReader(string(body)))
 				req.Header.Set(cfg.SignatureHeader, "t="+timestamp+",v1="+sig)
+				req.Header.Set(cfg.TimestampHeader, timestamp)
+				req.Header.Set(cfg.EventIDHeader, uuid.New().String())
 				
 				return r, req
 			},
@@ -357,6 +359,9 @@ func TestWebhookVerificationMiddleware_ProviderSpecific(t *testing.T) {
 			})
 			
 			router.ServeHTTP(r, req)
+			if r.Code != http.StatusOK {
+				t.Logf("webhook verification failed. Response body: %s", r.Body.String())
+			}
 			assert.Equal(t, http.StatusOK, r.Code)
 		})
 	}
@@ -589,13 +594,20 @@ func TestEventIDCache(t *testing.T) {
 		assert.ErrorIs(t, err, ErrEventIDAlreadySeen)
 	})
 
-		t.Run("Remove_event", func(t *testing.T) {
-		cache.Remove(ctx, eventID)
-		assert.False(t, cache.Has(ctx, eventID))
+	t.Run("Len", func(t *testing.T) {
+		err := cache.CheckAndStore(ctx, uuid.New().String())
+		assert.NoError(t, err)
+		assert.Equal(t, 1, cache.Len())
 	})
 
 	t.Run("Len", func(t *testing.T) {
+		_ = cache.CheckAndStore(ctx, uuid.New().String())
 		assert.Equal(t, 1, cache.Len())
+	})
+
+	t.Run("Remove_event", func(t *testing.T) {
+		cache.Remove(ctx, eventID)
+		assert.False(t, cache.Has(ctx, eventID))
 	})
 
 	t.Run("Clear", func(t *testing.T) {

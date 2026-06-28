@@ -99,8 +99,45 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 		assert.Contains(t, response.Message, "Failed to retrieve subscription")
 	})
 
+	t.Run("nil dependency returns 503 instead of panicking", func(t *testing.T) {
+		h := &Handler{} // Subscriptions deliberately left nil
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/subscriptions", nil)
+
+		assert.NotPanics(t, func() { h.ListSubscriptions(c) })
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		var response ErrorEnvelope
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, "SERVICE_UNAVAILABLE", response.Code)
+		assert.Contains(t, response.Message, "subscription service is unavailable")
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		mockSvc := new(MockSubscriptionService)
+		h := &Handler{Subscriptions: mockSvc}
+
+		mockSvc.On("ListSubscriptions", mock.Anything).Return([]Subscription{}, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/subscriptions", nil)
+
+		h.ListSubscriptions(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Empty(t, response["subscriptions"])
+		assert.Equal(t, false, response["has_more"])
+	})
+
 	t.Run("invalid limits", func(t *testing.T) {
-		invalidInputs := []string{"abc", "1abc", " ", "  "}
+		invalidInputs := []string{"abc", "1abc", " ", "  ", "101", "100000"}
 		for _, input := range invalidInputs {
 			t.Run(input, func(t *testing.T) {
 				mockSvc := new(MockSubscriptionService)
@@ -122,6 +159,29 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 		}
 	})
 
+	t.Run("limits exceeding maximum", func(t *testing.T) {
+		exceedingInputs := []string{"101", "100000"}
+		for _, input := range exceedingInputs {
+			t.Run(input, func(t *testing.T) {
+				mockSvc := new(MockSubscriptionService)
+				h := &Handler{Subscriptions: mockSvc}
+
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest("GET", "/subscriptions?limit="+url.QueryEscape(input), nil)
+
+				h.ListSubscriptions(c)
+
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				var response ErrorEnvelope
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Equal(t, "VALIDATION_FAILED", response.Code)
+				assert.Contains(t, response.Message, "Limit exceeds maximum of $*.**")
+			})
+		}
+	})
+
 	t.Run("clamped and valid limits", func(t *testing.T) {
 		validInputs := []struct {
 			limitStr      string
@@ -130,8 +190,6 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 			{"1", 1},
 			{"20", 20},
 			{"100", 100},
-			{"101", 100},
-			{"100000", 100},
 			{"0", 10},
 			{"-10", 10},
 			{"", 10},

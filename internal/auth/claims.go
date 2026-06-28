@@ -11,6 +11,7 @@ type Claims struct {
 	Role       Role     `json:"role"`
 	Roles      []Role   `json:"roles,omitempty"`
 	MerchantID string   `json:"merchant_id,omitempty"`
+	TenantID   string   `json:"tenant_id,omitempty"`
 	jwt.RegisteredClaims
 }
 

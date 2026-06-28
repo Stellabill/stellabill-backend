@@ -1,0 +1,37 @@
+name: Pact Provider Verification
+
+on:
+  push:
+    branches: [ main, test/webhook-pact-provider ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  pact-provider:
+    name: Verify Webhook Pact
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run Pact provider verification
+        env:
+          WEBHOOK_SECRET: test-webhook-secret-for-pact
+          GIN_MODE: test
+        run: go test ./tests/pact/... -v -timeout 120s
+
+      - name: Run full test suite
+        env:
+          WEBHOOK_SECRET: test-webhook-secret-for-pact
+          GIN_MODE: test
+        run: go test ./... -timeout 120s

@@ -97,6 +97,17 @@ func (p *HTTPPublisher) Publish(ctx context.Context, event *Event) error {
 		return fmt.Errorf("failed to unmarshal event data: %w", err)
 	}
 
+	if eventData.Encrypted && eventData.JWE != "" {
+		statusCode, err := p.client.Post(ctx, p.endpoint, "application/jose+json", []byte(eventData.JWE))
+		if err != nil {
+			return fmt.Errorf("HTTP request failed: %w", err)
+		}
+		if statusCode >= 400 {
+			return fmt.Errorf("HTTP request failed with status code: %d", statusCode)
+		}
+		return nil
+	}
+
 	payload := map[string]interface{}{
 		"id":             event.ID,
 		"type":           event.EventType,

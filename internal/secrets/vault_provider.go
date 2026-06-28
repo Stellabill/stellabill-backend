@@ -23,19 +23,17 @@ type cacheEntry struct {
 	expiresAt time.Time
 }
 
-// VaultProvider implements the Provider interface for HashiCorp Vault.
 type VaultProvider struct {
 	address    string
 	token      string
 	pathPrefix string
 	client     *http.Client
-	
+
 	cache map[string]*cacheEntry
 	mu    sync.RWMutex
 	ttl   time.Duration
 }
 
-// NewVaultProvider creates a new Vault provider.
 func NewVaultProvider(address, token, pathPrefix string) *VaultProvider {
 	if !strings.HasSuffix(pathPrefix, "/") && pathPrefix != "" {
 		pathPrefix += "/"
@@ -50,20 +48,17 @@ func NewVaultProvider(address, token, pathPrefix string) *VaultProvider {
 	}
 }
 
-// GetSecret retrieves a secret from Vault KV v2.
 func (p *VaultProvider) GetSecret(ctx context.Context, key string) (string, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return "", fmt.Errorf("empty key: %w", ErrSecretNotFound)
 	}
 
-	// Check cache
 	p.mu.RLock()
 	entry, ok := p.cache[key]
 	p.mu.RUnlock()
 
 	if ok && time.Now().Before(entry.expiresAt) {
-		// Proactive background refresh if nearing expiry (last 20% of TTL)
 		if time.Until(entry.expiresAt) < p.ttl/5 {
 			go p.refreshSecret(key)
 		}
@@ -110,14 +105,11 @@ func (p *VaultProvider) fetchFromVault(ctx context.Context, key string) (string,
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusForbidden {
-		// Vault 403 falls through to next provider
 		return "", fmt.Errorf("vault access forbidden: %w", ErrSecretNotFound)
 	}
-
 	if resp.StatusCode == http.StatusNotFound {
 		return "", fmt.Errorf("vault path not found: %w", ErrSecretNotFound)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("vault returned status %d", resp.StatusCode)
 	}
@@ -132,7 +124,6 @@ func (p *VaultProvider) fetchFromVault(ctx context.Context, key string) (string,
 		return "", fmt.Errorf("failed to decode vault response: %w", err)
 	}
 
-	// KV v2 unwrapping: data.data[key] or data.data["value"]
 	data := vResp.Data.Data
 	if val, ok := data[key]; ok {
 		return fmt.Sprint(val), nil
@@ -144,8 +135,74 @@ func (p *VaultProvider) fetchFromVault(ctx context.Context, key string) (string,
 	return "", fmt.Errorf("key %q not found in vault data: %w", key, ErrSecretNotFound)
 }
 
+func (p *VaultProvider) Metadata(ctx context.Context, key string) (SecretMetadata, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return SecretMetadata{}, ErrMetadataNotFound
+	}
+
+	url := fmt.Sprintf("%s/v1/%s%s", p.address, p.pathPrefix, key)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return SecretMetadata{}, fmt.Errorf("failed to create metadata request: %w", err)
+	}
+
+	if p.token != "" {
+		req.Header.Set("X-Vault-Token", p.token)
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return SecretMetadata{}, fmt.Errorf("vault metadata request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return SecretMetadata{}, ErrMetadataNotFound
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return SecretMetadata{}, fmt.Errorf("failed to read metadata response body: %w", err)
+	}
+
+	var vResp vaultResponse
+	if err := json.Unmarshal(body, &vResp); err != nil {
+		return SecretMetadata{}, fmt.Errorf("failed to decode vault metadata response: %w", err)
+	}
+
+	data := vResp.Data.Data
+	md := SecretMetadata{
+		Name:     key,
+		Source:   p.Name(),
+		Owner:    fmt.Sprint(data["owner"]),
+		Required: true,
+	}
+
+	if v, ok := data["rotation_cadence"].(string); ok {
+		md.RotationCadence = v
+		if d, err := ParseDurationLikeRotation(v); err == nil {
+			md.RotationInterval = d
+		}
+	}
+	if v, ok := data["last_rotated_at"].(string); ok && v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			md.LastRotatedAt = t
+		}
+	}
+	if !md.LastRotatedAt.IsZero() && md.RotationInterval > 0 {
+		md.NextRotationDueAt = md.LastRotatedAt.Add(md.RotationInterval)
+	}
+	if steps, ok := data["verification_steps"].([]interface{}); ok {
+		for _, s := range steps {
+			md.VerificationSteps = append(md.VerificationSteps, fmt.Sprint(s))
+		}
+	}
+
+	return md, nil
+}
+
 func (p *VaultProvider) refreshSecret(key string) {
-	// Use a background context with a reasonable timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, _ = p.fetchAndCache(ctx, key)
@@ -155,7 +212,6 @@ func (p *VaultProvider) Name() string {
 	return "vault"
 }
 
-// Helper to check for network timeouts
 func osIsTimeout(err error) bool {
 	type timeout interface {
 		Timeout() bool

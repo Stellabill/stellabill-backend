@@ -1,0 +1,22 @@
+{
+  "pagination": {
+    "has_more": true,
+    "next_cursor": "eyJpZCI6InBsYW5fMiIsInNvcnRfdmFsdWUiOiJQcm8ifQ=="
+  },
+  "plans": [
+    {
+      "id": "plan_1",
+      "name": "Basic",
+      "amount": "10.00",
+      "currency": "USD",
+      "interval": "month"
+    },
+    {
+      "id": "plan_2",
+      "name": "Pro",
+      "amount": "29.99",
+      "currency": "USD",
+      "interval": "month"
+    }
+  ]
+}

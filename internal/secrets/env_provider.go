@@ -2,30 +2,24 @@ package secrets
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 )
 
-// EnvProvider reads secrets from environment variables.
 type EnvProvider struct {
-	// prefix is prepended to every key lookup (e.g. "APP_" turns key "JWT_SECRET" into "APP_JWT_SECRET").
 	prefix string
 }
 
-// NewEnvProvider returns a provider that reads from os.Getenv.
 func NewEnvProvider() *EnvProvider {
 	return &EnvProvider{}
 }
 
-// NewEnvProviderWithPrefix returns a provider that prepends prefix to every key.
 func NewEnvProviderWithPrefix(prefix string) *EnvProvider {
 	return &EnvProvider{prefix: prefix}
 }
 
-// GetSecret retrieves the value of the environment variable identified by key.
-// Returns ErrSecretNotFound if the variable is unset or empty.
-// Returns ErrProviderTimeout if the context is already cancelled.
 func (p *EnvProvider) GetSecret(ctx context.Context, key string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrProviderTimeout, err)
@@ -44,10 +38,51 @@ func (p *EnvProvider) GetSecret(ctx context.Context, key string) (string, error)
 	return val, nil
 }
 
-// Name returns "env".
 func (p *EnvProvider) Name() string {
 	if p.prefix != "" {
 		return "env:" + p.prefix
 	}
 	return "env"
+}
+
+func (p *EnvProvider) Metadata(ctx context.Context, key string) (SecretMetadata, error) {
+	if err := ctx.Err(); err != nil {
+		return SecretMetadata{}, err
+	}
+
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return SecretMetadata{}, ErrMetadataNotFound
+	}
+
+	envKey := p.prefix + key + "_ROTATION_METADATA"
+	raw := os.Getenv(envKey)
+	if raw == "" {
+		return SecretMetadata{}, ErrMetadataNotFound
+	}
+
+	var md SecretMetadata
+	if err := json.Unmarshal([]byte(raw), &md); err != nil {
+		return SecretMetadata{}, fmt.Errorf("parse %s: %w", envKey, err)
+	}
+
+	if md.Name == "" {
+		md.Name = key
+	}
+	if md.Source == "" {
+		md.Source = p.Name()
+	}
+	if md.RotationCadence != "" && md.RotationInterval == 0 {
+		if d, err := ParseDurationLikeRotation(md.RotationCadence); err == nil {
+			md.RotationInterval = d
+		}
+	}
+	if md.NextRotationDueAt.IsZero() && !md.LastRotatedAt.IsZero() && md.RotationInterval > 0 {
+		md.NextRotationDueAt = md.LastRotatedAt.Add(md.RotationInterval)
+	}
+	if md.VerificationSteps == nil {
+		md.VerificationSteps = []string{}
+	}
+
+	return md, nil
 }

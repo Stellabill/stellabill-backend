@@ -43,7 +43,7 @@ func ParseLimit(raw string, defaultLimit int) (int, error) {
 	}
 
 	if limit > MaxLimit {
-		return MaxLimit, nil
+		return 0, ErrInvalidLimit
 	}
 
 	return limit, nil

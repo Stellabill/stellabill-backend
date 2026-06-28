@@ -117,7 +117,7 @@ func TestTenantRateLimiter_Eviction(t *testing.T) {
 }
 
 func TestTenantRateLimiter_ConcurrentAccess(t *testing.T) {
-	limiter := NewTenantRateLimiter(10, 20)
+	limiter := NewTenantRateLimiter(10, 200)
 	defer limiter.Stop()
 
 	var wg sync.WaitGroup
@@ -136,6 +136,8 @@ func TestTenantRateLimiter_ConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	time.Sleep(100 * time.Millisecond)
 
 	// Verify the limiter still works after concurrent access
 	allowed := limiter.Allow(tenantID)

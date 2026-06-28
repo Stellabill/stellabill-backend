@@ -24,6 +24,12 @@ func AuditMiddleware(log *audit.Logger) func(http.Handler) http.Handler {
 			// 3. Process the request
 			next.ServeHTTP(wrapped, r.WithContext(ctx))
 
+			// Extract request values before starting the goroutine to avoid race conditions
+			method := r.Method
+			path := r.URL.Path
+			remoteAddr := r.RemoteAddr
+			userAgent := r.UserAgent()
+
 			// 4. Fire-and-forget the log entry so we don't slow down the response
 			go func() {
 				outcome := "success"
@@ -33,14 +39,14 @@ func AuditMiddleware(log *audit.Logger) func(http.Handler) http.Handler {
 
 				_, _ = log.Log(context.Background(), audit.AuditEvent{
 					Actor:    actor,
-					Action:   r.Method,
-					Resource: r.URL.Path,
+					Action:   method,
+					Resource: path,
 					Outcome:  outcome,
 					Metadata: map[string]interface{}{
 						"latency_ms": time.Since(start).Milliseconds(),
 						"status":     wrapped.status,
-						"ip":         r.RemoteAddr,
-						"user_agent": r.UserAgent(),
+						"ip":         remoteAddr,
+						"user_agent": userAgent,
 					},
 				})
 			}()

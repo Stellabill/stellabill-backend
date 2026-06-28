@@ -1,0 +1,250 @@
+name: Benchmark Regression Gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Prevent concurrent runs on the same PR so baselines are never written
+# and read at the same time, which would corrupt the comparison.
+concurrency:
+  group: benchmark-regression-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Fail CI if any tracked benchmark regresses by more than this amount.
+  REGRESSION_THRESHOLD_PERCENT: "10"
+
+jobs:
+  benchmark-regression-gate:
+    # Pin to a stable runner class so hardware variance does not produce
+    # false positives.  ubuntu-22.04 is a fixed GA image (not `latest`).
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: read
+      actions: read      # needed to download artifacts from the main branch
+
+    steps:
+      # ---------------------------------------------------------------
+      # 1.  Check out the PR head with full history so we can also
+      #     check out origin/main in a worktree.
+      # ---------------------------------------------------------------
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history required for worktree
+
+      # ---------------------------------------------------------------
+      # 2.  Set up Go (version comes from go.mod so it stays in sync).
+      # ---------------------------------------------------------------
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # ---------------------------------------------------------------
+      # 3.  Install benchstat – the authoritative statistical comparator
+      #     from the Go performance team.  It computes p-values and
+      #     confidence intervals so single-sample noise is ignored.
+      # ---------------------------------------------------------------
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      # ---------------------------------------------------------------
+      # 4.  Download dependencies for the PR head.
+      # ---------------------------------------------------------------
+      - name: Download dependencies (PR head)
+        run: go mod download
+
+      # ---------------------------------------------------------------
+      # 5.  Run the benchmark suite on the PR head.
+      #     -count=10 gives benchstat enough samples to compute a
+      #     meaningful confidence interval and reject statistical noise.
+      # ---------------------------------------------------------------
+      - name: Run benchmarks on PR head
+        run: |
+          go test \
+            -bench=. \
+            -benchmem \
+            -count=10 \
+            -run=^$ \
+            -timeout=20m \
+            ./internal/handlers/... \
+            | tee /tmp/bench_head.txt
+          echo "PR head benchmark output:"
+          cat /tmp/bench_head.txt
+
+      # ---------------------------------------------------------------
+      # 6.  Try to restore a stored baseline produced from the last
+      #     successful push to main.  If none exists (first run, or the
+      #     artifact expired) we skip the comparison and succeed so that
+      #     new repositories are not permanently broken.
+      # ---------------------------------------------------------------
+      - name: Restore baseline artifact
+        id: restore-baseline
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-baseline-main
+          path: /tmp/baseline
+
+      # ---------------------------------------------------------------
+      # 7.  Decide whether a baseline is available.
+      # ---------------------------------------------------------------
+      - name: Check baseline availability
+        id: check-baseline
+        run: |
+          if [ -f /tmp/baseline/bench_baseline.txt ]; then
+            echo "baseline_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Baseline file found – regression gate is active."
+          else
+            echo "baseline_exists=false" >> "$GITHUB_OUTPUT"
+            echo "No baseline artifact found.  Skipping regression comparison (first run or expired artifact)."
+          fi
+
+      # ---------------------------------------------------------------
+      # 8.  Run the comparison with benchstat.
+      #     --threshold is intentionally NOT used here; we parse the
+      #     output ourselves so we can report per-benchmark details and
+      #     use a strict 10 % ceiling (benchstat's built-in threshold
+      #     option only gates on statistical significance, not magnitude).
+      # ---------------------------------------------------------------
+      - name: Compare benchmarks with benchstat
+        if: steps.check-baseline.outputs.baseline_exists == 'true'
+        id: compare
+        run: |
+          echo "## Benchmark Regression Report" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          benchstat /tmp/baseline/bench_baseline.txt /tmp/bench_head.txt \
+            | tee /tmp/benchstat_output.txt \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------------------------------------------------------
+      # 9.  Parse benchstat output and fail if any benchmark regressed
+      #     by more than REGRESSION_THRESHOLD_PERCENT.
+      #
+      #     benchstat prints lines like:
+      #       BenchmarkListPlans_Small   1.10 ± 2%   1.25 ± 3%   +13.64% (p=0.000 n=10)
+      #     We extract the final percentage column and compare to the
+      #     threshold.  Lines that lack a percentage (new / removed
+      #     benchmarks) are handled as edge cases below.
+      # ---------------------------------------------------------------
+      - name: Enforce regression threshold
+        if: steps.check-baseline.outputs.baseline_exists == 'true'
+        run: |
+          THRESHOLD=${{ env.REGRESSION_THRESHOLD_PERCENT }}
+          FAILED=0
+
+          echo "Checking for regressions > ${THRESHOLD}% …"
+
+          while IFS= read -r line; do
+            # Skip header / blank / informational lines
+            [[ "$line" =~ ^(name|goos|goarch|pkg|cpu|PASS|ok|---) ]] && continue
+            [[ -z "$line" ]] && continue
+
+            # Extract the trailing POSITIVE delta column, e.g. "+13.64%".
+            # Negative (improvement) tokens are intentionally skipped.
+            delta=$(echo "$line" | grep -oE '\+[0-9]+\.[0-9]+%' | tail -1 || true)
+            [[ -z "$delta" ]] && continue
+
+            # Strip '+' and '%' to get the magnitude
+            magnitude=$(echo "$delta" | tr -d '+' | tr -d '%')
+
+            # Compare using awk for floating-point arithmetic
+            is_regression=$(awk -v mag="$magnitude" -v thr="$THRESHOLD" \
+              'BEGIN { print (mag > thr) ? "yes" : "no" }')
+
+            if [[ "$is_regression" == "yes" ]]; then
+              echo "❌  REGRESSION: $line"
+              FAILED=$((FAILED + 1))
+            fi
+          done < /tmp/benchstat_output.txt
+
+          echo ""
+          if [[ $FAILED -gt 0 ]]; then
+            echo "❌  $FAILED benchmark(s) regressed by more than ${THRESHOLD}%." >&2
+            echo "" >&2
+            echo "To investigate locally:" >&2
+            echo "  git checkout main && go test -bench=. -count=10 -run=^$ ./internal/handlers/... | tee base.txt" >&2
+            echo "  git checkout - && go test -bench=. -count=10 -run=^$ ./internal/handlers/... | tee head.txt" >&2
+            echo "  benchstat base.txt head.txt" >&2
+            exit 1
+          else
+            echo "✅  No benchmark regressed by more than ${THRESHOLD}%."
+          fi
+
+      # ---------------------------------------------------------------
+      # 10. Persist benchmark results as an artifact so they are visible
+      #     in the Actions UI regardless of pass / fail.
+      # ---------------------------------------------------------------
+      - name: Upload PR head benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-pr-${{ github.event.pull_request.number }}
+          path: /tmp/bench_head.txt
+          retention-days: 30
+
+      # ---------------------------------------------------------------
+      # 11. Emit a summary when no baseline is available so reviewers
+      #     know why the gate was skipped.
+      # ---------------------------------------------------------------
+      - name: Summary (no baseline)
+        if: steps.check-baseline.outputs.baseline_exists != 'true'
+        run: |
+          echo "## Benchmark Regression Gate – Skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "No baseline artifact found for \`main\`.  This is expected on first run." >> "$GITHUB_STEP_SUMMARY"
+          echo "A baseline will be created after this PR merges and the \`update-benchmark-baseline\` job runs." >> "$GITHUB_STEP_SUMMARY"
+
+  # -----------------------------------------------------------------
+  # Separate job: only runs on pushes to main to update the baseline.
+  # Runs on push to main (triggered separately from the PR gate above).
+  # -----------------------------------------------------------------
+  update-benchmark-baseline:
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: read
+      actions: write   # needed to upload artifacts
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run benchmarks on main (baseline)
+        run: |
+          go test \
+            -bench=. \
+            -benchmem \
+            -count=10 \
+            -run=^$ \
+            -timeout=20m \
+            ./internal/handlers/... \
+            | tee /tmp/bench_baseline.txt
+          echo "Baseline benchmark output:"
+          cat /tmp/bench_baseline.txt
+
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-baseline-main
+          path: /tmp/bench_baseline.txt
+          # Keep for 90 days so PRs opened against an old main still
+          # have a baseline to compare against.
+          retention-days: 90
+          overwrite: true

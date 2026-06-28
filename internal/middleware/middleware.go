@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,8 @@ import (
 
 const (
 	AuthSubjectKey = "auth_subject"
+
+	LegacyAPISunsetEnv = "LEGACY_API_SUNSET"
 )
 
 type RateLimiter struct {
@@ -124,12 +127,16 @@ func (r *RateLimiter) Allow(key string) bool {
 	return true
 }
 
-// DeprecationHeaders marks legacy /api/* aliases as deprecated and points
+// DeprecatedHandler marks legacy /api/* aliases as deprecated and points
 // clients at the canonical /api/v1/* successor. Do not attach it to /api/v1/*
 // routes.
-func DeprecationHeaders() gin.HandlerFunc {
+func DeprecatedHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		path := c.Request.URL.Path
+		path := c.Request.URL.EscapedPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+
 		const legacyPrefix = "/api/"
 		const canonicalPrefix = "/api/v1/"
 		if !strings.HasPrefix(path, legacyPrefix) || strings.HasPrefix(path, canonicalPrefix) {
@@ -138,9 +145,32 @@ func DeprecationHeaders() gin.HandlerFunc {
 		}
 
 		c.Header("Deprecation", "true")
-		c.Header("Sunset", time.Now().Add(180*24*time.Hour).Format(time.RFC1123))
+		if sunset := legacyAPISunsetHeader(); sunset != "" {
+			c.Header("Sunset", sunset)
+		}
 		c.Header("Link", `</api/v1`+path[len("/api"):]+`>; rel="successor-version"`)
 
 		c.Next()
 	}
+}
+
+// DeprecationHeaders is retained for existing route wiring and tests.
+func DeprecationHeaders() gin.HandlerFunc {
+	return DeprecatedHandler()
+}
+
+func legacyAPISunsetHeader() string {
+	raw := strings.Trim(strings.TrimSpace(os.Getenv(LegacyAPISunsetEnv)), `"'`)
+	if raw == "" || strings.ContainsAny(raw, "\r\n") {
+		return ""
+	}
+
+	if t, err := http.ParseTime(raw); err == nil {
+		return t.UTC().Format(http.TimeFormat)
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC().Format(http.TimeFormat)
+	}
+
+	return ""
 }

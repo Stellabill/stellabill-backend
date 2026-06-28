@@ -31,7 +31,7 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run vulnerability scan
-        run: govulncheck ./... > vulnreport.txt 2>&1
+        run: govulncheck ./...
         continue-on-error: true
 
       - name: Upload vulnerability report

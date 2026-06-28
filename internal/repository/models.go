@@ -31,14 +31,12 @@ type StatementRow struct {
 	ID             string
 	SubscriptionID string
 	CustomerID     string
-	PeriodStart    string // RFC 3339 (NULL if archived)
-	PeriodEnd      string // RFC 3339 (NULL if archived)
-	IssuedAt       string // RFC 3339 (NULL if archived)
-	TotalAmount    string // NULL if archived
-	Currency       string // NULL if archived
-	Kind           string // NULL if archived
-	Status         string // NULL if archived
+	PeriodStart    string // RFC 3339
+	PeriodEnd      string // RFC 3339
+	IssuedAt       string // RFC 3339
+	TotalAmount    string
+	Currency       string
+	Kind           string
+	Status         string
 	DeletedAt      *time.Time
-	ArchivedAt     *time.Time // timestamp when statement was archived
-	ArchiveKey     string     // S3-like path to archived data (only set if archived)
 }

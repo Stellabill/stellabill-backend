@@ -25,12 +25,6 @@ const (
 	ErrValidationFailed ConfigErrorType = "VALIDATION_FAILED"
 )
 
-const (
-	DefaultMaxRequestSize      = 1048576  // 1MB
-	DefaultMaxGzipUncompressed = 10485760 // 10MB
-	DefaultMaxGzipRatio        = 10.0
-)
-
 // ConfigError represents a typed configuration error
 type ConfigError struct {
 	Type    ConfigErrorType
@@ -50,46 +44,49 @@ func (e *ConfigError) Error() string {
 type Config struct {
 	Env       string
 	Port      int
-	DBConn        string
-	DBReplicaConn string
-	JWTSecret     string
-	JWKSURL                string
+	DBConn    string
+	JWTSecret string
 	// Add additional secure defaults for optional configs
-	MaxHeaderBytes      int
-	MaxRequestSize      int64
-	MaxGzipUncompressed int64
-	MaxGzipRatio        float64
-	ReadTimeout         int
-	WriteTimeout        int
-	IdleTimeout         int
-	AdminToken          string
+	MaxHeaderBytes int
+	ReadTimeout    int
+	WriteTimeout   int
+	IdleTimeout    int
+	AllowedOrigins string
+	AdminToken     string
 	// Rate limiting configuration
-	RateLimitEnabled     bool
-	RateLimitMode        string
-	RateLimitRPS         int
-	RateLimitBurst       int
-	RateLimitWhitelist   []string
-	RateLimitTenantRPS   int
-	RateLimitTenantBurst int
+	RateLimitEnabled   bool
+	RateLimitMode      string
+	RateLimitRPS       int
+	RateLimitBurst     int
+	RateLimitWhitelist []string
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
-	// CORS configuration
-	AllowedOrigins string
-	// Security headers
 	SecurityFrameAncestors string
-	SecurityCSPReportURI   string
-	// Outbox JWE configuration
-	OutboxJWEEnabled             bool
-	OutboxJWESensitiveEventTypes []string
-	// DB connection pool tuning (seconds for the time-based fields)
-	DBPoolMaxConns          int
-	DBPoolMinConns          int
-	DBPoolMaxConnLifetime   int
-	DBPoolMaxConnIdleTime   int
-	DBPoolConnectTimeout    int
-	DBPoolHealthCheckPeriod int
-	DBPoolMetricsInterval   int
+	MaxRequestSize         int64
+	MaxGzipUncompressed    int64
+	MaxGzipRatio           float64
+	// DB connection pool tuning.
+	// All durations are in seconds to keep env-var parsing uniform.
+	//
+	//   DB_POOL_MAX_CONNS            (default 25)  – hard ceiling on open connections.
+	//   DB_POOL_MIN_CONNS            (default 2)   – connections kept warm at all times.
+	//   DB_POOL_MAX_CONN_LIFETIME    (default 3600) – recycle connections after this many
+	//                                                 seconds to spread load across replicas
+	//                                                 and avoid stale TCP sessions.
+	//   DB_POOL_MAX_CONN_IDLE_TIME   (default 600)  – evict idle connections after this
+	//                                                 many seconds; prevents firewall drops.
+	//   DB_POOL_CONNECT_TIMEOUT      (default 5)   – per-dial timeout in seconds.
+	//   DB_POOL_HEALTH_CHECK_PERIOD  (default 30)  – how often pgxpool probes idle conns.
+	//   DB_POOL_METRICS_INTERVAL     (default 15)  – how often pool stats are scraped
+	//                                                 into Prometheus gauges.
+	DBPoolMaxConns           int
+	DBPoolMinConns           int
+	DBPoolMaxConnLifetime    int // seconds
+	DBPoolMaxConnIdleTime    int // seconds
+	DBPoolConnectTimeout     int // seconds
+	DBPoolHealthCheckPeriod  int // seconds
+	DBPoolMetricsInterval    int // seconds
 }
 
 // ValidationResult holds the result of configuration validation
@@ -125,8 +122,6 @@ const (
 	DefaultReadTimeout  = 30      // seconds
 	DefaultWriteTimeout = 30      // seconds
 	DefaultIdleTimeout  = 120     // seconds
-	DefaultSecurityFrameAncestors = "'none'"
-	DefaultSecurityCSPReportURI = "/csp-report"
 
 	// DB pool defaults — chosen to be safe for a typical single-instance
 	// Postgres with max_connections=100.  Tune upward for larger deployments.
@@ -144,8 +139,8 @@ const (
 	MinDBPoolTimeout  = 1   // seconds
 	MaxDBPoolTimeout  = 300 // seconds
 
-	MinHeaderBytes        = 1024     // 1KB
-	MaxAllowedHeaderBytes = 10 << 20 // 10MB
+	MinHeaderBytes        = 1024        // 1KB
+	MaxAllowedHeaderBytes = 10 << 20    // 10MB
 	MinTimeoutSeconds     = 1
 	MaxTimeoutSeconds     = 600
 	MinRateLimitRPS       = 1
@@ -153,36 +148,6 @@ const (
 	MinRateLimitBurst     = 1
 	MaxRateLimitBurst     = 2000
 )
-
-// Required environment variables
-var requiredEnvVars = []string{
-	"DATABASE_URL",
-	"JWT_SECRET",
-	"ADMIN_TOKEN",
-}
-
-// Optional environment variables with defaults
-var optionalEnvVars = map[string]string{
-	"PORT":                 "8080",
-	"ENV":                  "development",
-	"MAX_HEADER_BYTES":     "1048576",
-	"READ_TIMEOUT":         "30",
-	"WRITE_TIMEOUT":        "30",
-	"IDLE_TIMEOUT":         "120",
-	"TRACING_EXPORTER":     "stdout",
-	"TRACING_SERVICE_NAME": "stellabill-backend",
-	// DB pool
-	"DB_POOL_MAX_CONNS":           "25",
-	"DB_POOL_MIN_CONNS":           "2",
-	"DB_POOL_MAX_CONN_LIFETIME":   "3600",
-	"DB_POOL_MAX_CONN_IDLE_TIME":  "600",
-	"DB_POOL_CONNECT_TIMEOUT":     "5",
-	"DB_POOL_HEALTH_CHECK_PERIOD": "30",
-	"DB_POOL_METRICS_INTERVAL":    "15",
-	"MAX_REQUEST_SIZE":            "1048576",
-	"MAX_GZIP_UNCOMPRESSED":       "10485760",
-	"MAX_GZIP_RATIO":              "10.0",
-}
 
 // Option configures the Load function.
 type Option func(*loadOptions)
@@ -204,7 +169,6 @@ var secretKeys = []string{
 	"DATABASE_URL",
 	"JWT_SECRET",
 	"ADMIN_TOKEN",
-	"DATABASE_REPLICA_URL",
 }
 
 // Load loads configuration from environment variables with validation.
@@ -219,27 +183,21 @@ func Load(opts ...Option) (Config, error) {
 	}
 
 	cfg := Config{
-		Env:                 getEnv("ENV", "development"),
-		Port:                DefaultPort,
-		DBConn:              "",
-		DBReplicaConn:       "",
-		JWTSecret:           "",
-		JWKSURL:             getEnv("JWKS_URL", ""),
-		MaxHeaderBytes:      MaxHeaderBytes,
-		MaxRequestSize:      getEnvInt64("MAX_REQUEST_SIZE", DefaultMaxRequestSize),
-		MaxGzipUncompressed: getEnvInt64("MAX_GZIP_UNCOMPRESSED", DefaultMaxGzipUncompressed),
-		MaxGzipRatio:        getEnvFloat64("MAX_GZIP_RATIO", DefaultMaxGzipRatio),
-		ReadTimeout:         DefaultReadTimeout,
-		WriteTimeout:        DefaultWriteTimeout,
-		IdleTimeout:         DefaultIdleTimeout,
-		TracingExporter:     getEnv("TRACING_EXPORTER", "stdout"),
-		TracingServiceName:  getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
-		AllowedOrigins:      getEnv("ALLOWED_ORIGINS", ""),
+		Env:            getEnv("ENV", "development"),
+		Port:           DefaultPort,
+		DBConn:         "",
+		JWTSecret:      "",
+		MaxHeaderBytes: MaxHeaderBytes,
+		ReadTimeout:    DefaultReadTimeout,
+		WriteTimeout:   DefaultWriteTimeout,
+		IdleTimeout:    DefaultIdleTimeout,
+		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
+		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
-		OutboxJWEEnabled:        getEnvBool("OUTBOX_JWE_ENABLED", false),
-		OutboxJWESensitiveEventTypes: parseCommaSeparated(getEnv("OUTBOX_JWE_SENSITIVE_EVENT_TYPES",
-			"webhook.received,payment.processed")),
-		// DB pool defaults; overridden by valid DB_POOL_* env vars in validateDBPool.
+		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10), // 10MB
+		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
+		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
+		// DB pool — safe production defaults
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
 		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
@@ -296,9 +254,6 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	// Validate required secrets are present via the provider
 	for _, key := range secretKeys {
 		if err, failed := secretErrs[key]; failed {
-			if key == "DATABASE_REPLICA_URL" && errors.Is(err, secrets.ErrSecretNotFound) {
-				continue // optional
-			}
 			if errors.Is(err, secrets.ErrSecretNotFound) {
 				result.Errors = append(result.Errors, ConfigError{
 					Type:    ErrMissingEnvVar,
@@ -350,24 +305,6 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.DBConn = dbURL
-		}
-	}
-
-	// Validate DATABASE_REPLICA_URL format if present, else fallback to DATABASE_URL
-	replicaURL, ok := resolvedSecrets["DATABASE_REPLICA_URL"]
-	if !ok || replicaURL == "" {
-		replicaURL = c.DBConn
-	}
-	if replicaURL != "" {
-		if !isValidDatabaseURL(replicaURL) {
-			result.Errors = append(result.Errors, ConfigError{
-				Type:    ErrInvalidURL,
-				Key:     "DATABASE_REPLICA_URL",
-				Message: "must be a valid database connection string",
-				Value:   maskPassword(replicaURL),
-			})
-		} else {
-			c.DBReplicaConn = replicaURL
 		}
 	}
 
@@ -541,46 +478,6 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 
 	// Validate TRACING_EXPORTER
 	if exporter := os.Getenv("TRACING_EXPORTER"); exporter != "" {
-		// Validate per-tenant rate limiting configuration
-		if val := os.Getenv("RATE_LIMIT_TENANT_RPS"); val != "" {
-			if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitRPS && rps <= MaxRateLimitRPS {
-				c.RateLimitTenantRPS = rps
-			} else {
-				result.Errors = append(result.Errors, ConfigError{
-					Type:    ErrInvalidValue,
-					Key:     "RATE_LIMIT_TENANT_RPS",
-					Message: fmt.Sprintf("must be between %d and %d", MinRateLimitRPS, MaxRateLimitRPS),
-					Value:   val,
-				})
-			}
-		} else {
-			c.RateLimitTenantRPS = 5 // Conservative default for per-tenant limits
-		}
-
-		if val := os.Getenv("RATE_LIMIT_TENANT_BURST"); val != "" {
-			if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitBurst && burst <= MaxRateLimitBurst {
-				c.RateLimitTenantBurst = burst
-			} else {
-				result.Errors = append(result.Errors, ConfigError{
-					Type:    ErrInvalidValue,
-					Key:     "RATE_LIMIT_TENANT_BURST",
-					Message: fmt.Sprintf("must be between %d and %d", MinRateLimitBurst, MaxRateLimitBurst),
-					Value:   val,
-				})
-			}
-		} else {
-			c.RateLimitTenantBurst = 10 // Conservative default (2x tenant RPS)
-		}
-
-		if c.RateLimitTenantBurst < c.RateLimitTenantRPS {
-			result.Errors = append(result.Errors, ConfigError{
-				Type:    ErrInvalidValue,
-				Key:     "RATE_LIMIT_TENANT_BURST",
-				Message: "must be greater than or equal to RATE_LIMIT_TENANT_RPS",
-				Value:   strconv.Itoa(c.RateLimitTenantBurst),
-			})
-		}
-
 		validExporters := map[string]bool{"stdout": true, "otlp": true, "none": true}
 		if !validExporters[exporter] {
 			result.Errors = append(result.Errors, ConfigError{
@@ -598,48 +495,6 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		c.TracingServiceName = svcName
 	}
 
-	// Validate ALLOWED_ORIGINS
-	allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
-	if err := validateAllowedOrigins(allowedOrigins, c.Env); err != nil {
-		result.Errors = append(result.Errors, ConfigError{
-			Type:    ErrInvalidValue,
-			Key:     "ALLOWED_ORIGINS",
-			Message: err.Error(),
-			Value:   allowedOrigins,
-		})
-	}
-
-	// Validate optional security settings
-	if sf := os.Getenv("SECURITY_FRAME_ANCESTORS"); sf != "" {
-		c.SecurityFrameAncestors = sf
-	}
-	if c.SecurityFrameAncestors == "" {
-		c.SecurityFrameAncestors = DefaultSecurityFrameAncestors
-	}
-	if strings.ContainsAny(c.SecurityFrameAncestors, ";\n\r") {
-		result.Errors = append(result.Errors, ConfigError{
-			Type:    ErrInvalidValue,
-			Key:     "SECURITY_FRAME_ANCESTORS",
-			Message: "must not contain control characters or semicolons",
-			Value:   c.SecurityFrameAncestors,
-		})
-	}
-
-	if uri := os.Getenv("SECURITY_CSP_REPORT_URI"); uri != "" {
-		c.SecurityCSPReportURI = uri
-	}
-	if c.SecurityCSPReportURI == "" {
-		c.SecurityCSPReportURI = DefaultSecurityCSPReportURI
-	}
-	if !strings.HasPrefix(c.SecurityCSPReportURI, "/") {
-		result.Errors = append(result.Errors, ConfigError{
-			Type:    ErrInvalidValue,
-			Key:     "SECURITY_CSP_REPORT_URI",
-			Message: "must be an absolute path starting with '/'",
-			Value:   c.SecurityCSPReportURI,
-		})
-	}
-
 	// Validate DB pool configuration
 	validateDBPool(c, result)
 
@@ -647,35 +502,6 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	c.Env = getEnv("ENV", "development")
 
 	return result
-}
-
-// validateAllowedOrigins validates the CORS ALLOWED_ORIGINS setting. In
-// production a wildcard ("*") is rejected because it disables same-origin
-// protections; explicit, scheme-qualified origins are required. In non-production
-// environments any value (including empty) is accepted to ease local development.
-func validateAllowedOrigins(allowedOrigins, env string) error {
-	if allowedOrigins == "" {
-		return nil
-	}
-
-	isProd := strings.EqualFold(env, "production")
-	for _, raw := range strings.Split(allowedOrigins, ",") {
-		origin := strings.TrimSpace(raw)
-		if origin == "" {
-			continue
-		}
-		if origin == "*" {
-			if isProd {
-				return errors.New("wildcard origin '*' is not allowed in production")
-			}
-			continue
-		}
-		parsed, err := url.Parse(origin)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return fmt.Errorf("invalid origin %q: must include scheme and host (e.g. https://app.example.com)", origin)
-		}
-	}
-	return nil
 }
 
 // isValidDatabaseURL validates that the database URL has a valid scheme and structure
@@ -796,29 +622,6 @@ func getEnvFloat64(key string, fallback float64) float64 {
 	return fallback
 }
 
-func getEnvBool(key string, fallback bool) bool {
-	if v := os.Getenv(key); v != "" {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "1", "true", "yes", "on":
-			return true
-		case "0", "false", "no", "off":
-			return false
-		}
-	}
-	return fallback
-}
-
-func parseCommaSeparated(value string) []string {
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if trimmed := strings.TrimSpace(p); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}
-
 // validateDBPool reads DB_POOL_* env vars, validates them, and writes safe
 // values back into cfg.  Invalid values produce warnings (not hard errors) so
 // the server can still start with defaults rather than refusing to boot.
@@ -872,3 +675,4 @@ func validateDBPool(c *Config, result *ValidationResult) {
 				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
 	}
 }
+

@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"regexp"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -70,13 +69,4 @@ func generateRequestID() string {
 	bytes := make([]byte, 8)
 	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
-}
-
-// sanitizeRequestID trims spaces and validates the request ID format, returning empty if invalid.
-func sanitizeRequestID(id string) string {
-	trimmed := strings.TrimSpace(id)
-	if isValidRequestID(trimmed) {
-		return trimmed
-	}
-	return ""
 }

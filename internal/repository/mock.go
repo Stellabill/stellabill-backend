@@ -1,10 +1,6 @@
 package repository
 
-import (
-	"context"
-	"sort"
-	"time"
-)
+import "context"
 
 // MockSubscriptionRepo is an in-memory SubscriptionRepository for testing.
 type MockSubscriptionRepo struct {
@@ -18,15 +14,6 @@ func NewMockSubscriptionRepo(rows ...*SubscriptionRow) *MockSubscriptionRepo {
 		m.records[r.ID] = r
 	}
 	return m
-}
-
-// All returns every row in the mock repo.
-func (m *MockSubscriptionRepo) All() []*SubscriptionRow {
-	out := make([]*SubscriptionRow, 0, len(m.records))
-	for _, r := range m.records {
-		out = append(out, r)
-	}
-	return out
 }
 
 // FindByID returns the SubscriptionRow with the given ID, or ErrNotFound.
@@ -47,19 +34,6 @@ func (m *MockSubscriptionRepo) FindByIDAndTenant(_ context.Context, id string, t
 		return nil, ErrNotFound
 	}
 	return row, nil
-}
-
-// UpdateStatus updates the subscription status for the tenant-scoped record.
-func (m *MockSubscriptionRepo) UpdateStatus(_ context.Context, id string, tenantID string, status string) error {
-	row, ok := m.records[id]
-	if !ok {
-		return ErrNotFound
-	}
-	if row.TenantID != tenantID {
-		return ErrNotFound
-	}
-	row.Status = status
-	return nil
 }
 
 // MockPlanRepo is an in-memory PlanRepository for testing.
@@ -135,10 +109,12 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 	if m.listErr != nil {
 		return nil, 0, m.listErr
 	}
-
-	filtered := make([]*StatementRow, 0)
+	out := make([]*StatementRow, 0)
 	for _, r := range m.records {
 		if r.CustomerID != customerID {
+			continue
+		}
+		if q.SubscriptionID != "" && r.SubscriptionID != q.SubscriptionID {
 			continue
 		}
 		if q.Kind != "" && r.Kind != q.Kind {
@@ -147,70 +123,23 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 		if q.Status != "" && r.Status != q.Status {
 			continue
 		}
-		if q.SubscriptionID != "" && r.SubscriptionID != q.SubscriptionID {
+		// Basic simulated filtering for period checks
+		if q.StartAfter != "" && r.PeriodStart < q.StartAfter {
 			continue
 		}
-		if q.StartAfter != "" {
-			after, err := time.Parse(time.RFC3339, q.StartAfter)
-			if err == nil {
-				start, err := time.Parse(time.RFC3339, r.PeriodStart)
-				if err != nil || !start.After(after) {
-					continue
-				}
-			}
+		if q.EndBefore != "" && r.PeriodEnd > q.EndBefore {
+			continue
 		}
-		if q.EndBefore != "" {
-			before, err := time.Parse(time.RFC3339, q.EndBefore)
-			if err == nil {
-				end, err := time.Parse(time.RFC3339, r.PeriodEnd)
-				if err != nil || !end.Before(before) {
-					continue
-				}
-			}
-		}
-		filtered = append(filtered, r)
-	}
 
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].PeriodStart < filtered[j].PeriodStart
-	})
-
-	total := len(filtered)
-
-	page := q.Page
-	if page <= 0 {
-		page = 1
+		out = append(out, r)
 	}
-	pageSize := q.PageSize
-	if pageSize <= 0 {
-		pageSize = 10
+	totalCount := len(out)
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 10
 	}
-	start := (page - 1) * pageSize
-	if start >= total {
-		return []*StatementRow{}, total, nil
+	if len(out) > limit {
+		out = out[:limit]
 	}
-
-	end := start + pageSize
-	if end > len(filtered) {
-		end = len(filtered)
-	}
-
-	return filtered[start:end], total, nil
-}
-
-// UpdateArchivedData updates an archived statement with rehydrated data.
-func (m *MockStatementRepo) UpdateArchivedData(_ context.Context, id string, stmt *StatementRow) error {
-	row, ok := m.records[id]
-	if !ok {
-		return ErrNotFound
-	}
-	// Update the row with rehydrated data
-	row.PeriodStart = stmt.PeriodStart
-	row.PeriodEnd = stmt.PeriodEnd
-	row.IssuedAt = stmt.IssuedAt
-	row.TotalAmount = stmt.TotalAmount
-	row.Currency = stmt.Currency
-	row.Kind = stmt.Kind
-	row.Status = stmt.Status
-	return nil
+	return out, totalCount, nil
 }

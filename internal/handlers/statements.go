@@ -2,20 +2,14 @@ package handlers
 
 import (
 	"errors"
-	"crypto/sha256"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
-	"stellarbill-backend/internal/validation"
 )
 
 // ---------------- CONSTANTS ----------------
@@ -57,20 +51,16 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		// Extract auth context set by middleware.
 		callerID, roles, ok := getAuthContext(c)
 		if !ok {
-			RespondWithAuthError(c, "unauthorized")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
 
-		isLegacy := strings.Contains(c.Request.URL.Path, "/v1")
-
-		// customer_id is required; fallback to callerID for subscribers listing own statements in new routes
+		// customer_id is required: the caller must declare whose statements
+		// they are requesting (RBAC enforcement happens in the service).
 		customerID := c.Query("customer_id")
 		if customerID == "" {
-			if isLegacy {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "customer_id is required"})
-				return
-			}
-			customerID = callerID
+			c.JSON(http.StatusBadRequest, gin.H{"error": "customer_id is required"})
+			return
 		}
 
 		// Parse remaining filter / pagination params.
@@ -80,7 +70,7 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 			return
 		}
 
-		result, total, serviceWarnings, err := svc.ListByCustomer(
+		result, total, _, err := svc.ListByCustomer(
 			c.Request.Context(),
 			callerID,
 			roles,
@@ -88,16 +78,11 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 			q,
 		)
 		if err != nil {
-			if isLegacy {
-				if errors.Is(err, service.ErrForbidden) {
-					c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-					return
-				}
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list statements"})
+			if errors.Is(err, service.ErrForbidden) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
-			code, errCode, msg := MapServiceErrorToResponse(err)
-			RespondWithError(c, code, errCode, msg)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list statements"})
 			return
 		}
 
@@ -109,30 +94,10 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 			statements = []*service.StatementDetail{}
 		}
 
-		if isLegacy {
-			c.JSON(http.StatusOK, gin.H{
-				"statements": statements,
-				"total":      total,
-			})
-			return
-		}
-
-		resp := gin.H{
-			"api_version": "2025-01-01",
-			"data": gin.H{
-				"statements": statements,
-			},
-			"pagination": gin.H{
-				"page":      q.Page,
-				"page_size": q.PageSize,
-				"count":     total,
-			},
-		}
-		if len(serviceWarnings) > 0 {
-			resp["warnings"] = serviceWarnings
-		}
-
-		c.JSON(http.StatusOK, resp)
+		c.JSON(http.StatusOK, gin.H{
+			"statements": statements,
+			"total":      total,
+		})
 	}
 }
 
@@ -159,74 +124,36 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 		// Extract auth context set by middleware.
 		callerID, roles, ok := getAuthContext(c)
 		if !ok {
-			RespondWithAuthError(c, "unauthorized")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
 
-		isLegacy := strings.Contains(c.Request.URL.Path, "/v1")
-
-		id := strings.TrimSpace(c.Param("id"))
+		id := c.Param("id")
 		if id == "" {
-			if isLegacy {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
-				return
-			}
-			RespondWithValidationFields(c, "Invalid statement ID", []validation.FieldError{{Field: "id", Message: "statement ID is required"}})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
 			return
 		}
 
-		stmt, warnings, err := svc.GetDetail(
+		stmt, _, err := svc.GetDetail(
 			c.Request.Context(),
 			callerID,
 			roles,
 			id,
 		)
 		if err != nil {
-			if isLegacy {
-				if errors.Is(err, service.ErrNotFound) || errors.Is(err, service.ErrDeleted) {
-					c.JSON(http.StatusNotFound, gin.H{"error": "statement not found"})
-					return
-				}
-				if errors.Is(err, service.ErrForbidden) {
-					c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-					return
-				}
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch statement"})
+			if errors.Is(err, service.ErrNotFound) || errors.Is(err, service.ErrDeleted) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "statement not found"})
 				return
 			}
-			code, errCode, msg := MapServiceErrorToResponse(err)
-			RespondWithError(c, code, errCode, msg)
+			if errors.Is(err, service.ErrForbidden) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch statement"})
 			return
 		}
 
-		tenantID := c.GetString("tenantID")
-		versionBytes, _ := json.Marshal(stmt)
-		version := fmt.Sprintf("%x", sha256.Sum256(versionBytes))
-		eTagHash := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s", tenantID, stmt.ID, version)))
-		eTag := fmt.Sprintf(`"%x"`, eTagHash)
-
-		c.Header("ETag", eTag)
-		c.Header("Cache-Control", "private, max-age=0, must-revalidate")
-
-		if match := c.GetHeader("If-None-Match"); match == eTag {
-			c.Status(http.StatusNotModified)
-			return
-		}
-
-		if isLegacy {
-			c.JSON(http.StatusOK, stmt)
-			return
-		}
-
-		resp := gin.H{
-			"api_version": "2025-01-01",
-			"data":        stmt,
-		}
-		if len(warnings) > 0 {
-			resp["warnings"] = warnings
-		}
-
-		c.JSON(http.StatusOK, resp)
+		c.JSON(http.StatusOK, stmt)
 	}
 }
 
@@ -236,75 +163,29 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 // These values are stored by the auth middleware before handlers run.
 func getAuthContext(c *gin.Context) (callerID string, roles []string, ok bool) {
 	callerRaw, ok1 := c.Get("caller_id")
-	if !ok1 {
-		callerRaw, ok1 = c.Get("callerID")
-	}
-	if !ok1 {
+	rolesRaw, ok2 := c.Get("roles")
+	if !ok1 || !ok2 {
 		return "", nil, false
 	}
 	callerID, castOK := callerRaw.(string)
 	if !castOK || callerID == "" {
 		return "", nil, false
 	}
-
-	rolesRaw, ok2 := c.Get("roles")
-	if !ok2 {
-		rolesRaw, ok2 = c.Get("role")
+	roles, castOK = rolesRaw.([]string)
+	if !castOK {
+		return "", nil, false
 	}
-	if !ok2 {
-		roles = []string{}
-	} else {
-		switch typed := rolesRaw.(type) {
-		case []string:
-			roles = typed
-		case []auth.Role:
-			roles = make([]string, 0, len(typed))
-			for _, role := range typed {
-				if trimmed := strings.TrimSpace(string(role)); trimmed != "" {
-					roles = append(roles, trimmed)
-				}
-			}
-		case string:
-			roles = []string{typed}
-		case auth.Role:
-			if trimmed := strings.TrimSpace(string(typed)); trimmed != "" {
-				roles = []string{trimmed}
-			}
-		default:
-			roles = []string{}
-		}
-	}
-
 	return callerID, roles, true
 }
 
+// buildStatementQuery parses optional filter and pagination query parameters
+// into a repository.StatementQuery. Returns an error on any invalid input so
+// the handler can respond 400 before touching the service layer.
 func buildStatementQuery(c *gin.Context) (repository.StatementQuery, error) {
 	q := repository.StatementQuery{
+		Limit: defaultLimit,
 		Order: "desc",
 	}
-
-	pageStr := c.Query("page")
-	if pageStr == "" {
-		q.Page = 1
-	} else {
-		page, err := strconv.Atoi(pageStr)
-		if err != nil || page < 1 {
-			return q, errors.New("invalid page parameter")
-		}
-		q.Page = page
-	}
-
-	pageSizeStr := c.Query("page_size")
-	if pageSizeStr == "" {
-		q.PageSize = 10
-	} else {
-		pageSize, err := strconv.Atoi(pageSizeStr)
-		if err != nil || pageSize < 1 {
-			return q, errors.New("invalid page_size parameter")
-		}
-		q.PageSize = pageSize
-	}
-	q.Limit = q.PageSize
 
 	if v := c.Query("subscription_id"); v != "" {
 		q.SubscriptionID = v

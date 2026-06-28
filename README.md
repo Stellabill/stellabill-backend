@@ -10,7 +10,6 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 - [What this backend provides (for the frontend)](#what-this-backend-provides-for-the-frontend)
 - [Background Worker](#background-worker)
 - [Local setup](#local-setup)
-- [Operational playbooks](#operational-playbooks)
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [API reference](#api-reference)
@@ -36,7 +35,7 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 This service is the **backend only**. A separate frontend (or any client) can:
 
 - **Health check** - `GET /api/health` to verify the API is up.
-- **Plans** - `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). When `DATABASE_URL` is configured, plans are read from PostgreSQL via the `plans` table; otherwise the app falls back to the in-memory repository.
+- **Plans** - `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). Currently returns an empty list; DB integration is planned.
 - **Subscriptions** - `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
 
 CORS is enabled for all origins in development so a frontend on another port or domain can call these endpoints.
@@ -53,7 +52,7 @@ The backend includes a production-ready background worker system for automated b
 - **Distributed Locking**: Prevents duplicate processing when running multiple worker instances
 - **Retry Policy**: Automatic retry with exponential backoff (1s, 4s, 9s) for failed jobs
 - **Dead-Letter Queue**: Failed jobs after max attempts are moved for manual review
-- **Graceful Shutdown**: Workers and the HTTP server complete in-flight work before shutting down
+- **Graceful Shutdown**: Workers complete in-flight jobs before shutting down
 - **Metrics Tracking**: Monitor job processing statistics (processed, succeeded, failed, dead-lettered)
 - **Concurrent Workers**: Multiple workers can run safely without duplicate processing
 
@@ -133,7 +132,6 @@ IDLE_TIMEOUT=120
 MAX_HEADER_BYTES=1048576
 AUDIT_HMAC_SECRET=stellarbill-dev-audit
 AUDIT_LOG_PATH=audit.log
-LEGACY_API_SUNSET="Thu, 31 Dec 2026 23:59:59 GMT"
 ```
 
 Or export them in your shell. The app now fails fast when required values are missing or insecure.
@@ -161,41 +159,7 @@ curl -X POST http://localhost:8080/api/outbox/test
 
 ---
 
-## Operational playbooks
-
-Keep the operational docs close to the code so the measurement workflow is easy to find during review and incident response:
-
-- [Capacity planning playbook](docs/runbooks/capacity-planning.md)
-- [Multi-region failover playbook](docs/runbooks/multi-region-failover.md)
-- [Operational runbooks index](docs/ops/README.md)
-
-The capacity planning playbook includes the reproducible snapshot script, the sizing model, alert thresholds, and the edge-case checks for zero-traffic and burst-traffic tenant profiles. The multi-region failover playbook documents RTO/RPO targets, the seven-phase cutover procedure (fence → promote → route → verify), edge cases for promotion mid-write and stuck-connection draining, and the quarterly drill schedule.
-
-### Quarterly failover drills
-
-> **Reminder.** The team runs a multi-region failover drill **every quarter** on the **second Tuesday at 14:00 UTC**, alternating between a surprise chaos cutover (Q1, Q4) and a scheduled drill (`--case mid-write` in Q2, `--case stuck-connection` in Q3). Owners rotate per the schedule in [`docs/runbooks/multi-region-failover.md` §10](docs/runbooks/multi-region-failover.md#10-quarterly-drill-schedule).
-
-To run a dry rehearsal before the scheduled drill:
-
-```bash
-bash scripts/drills/failover.sh --dry-run
-# Optional: pass real (redacted) DSNs and a region to validate against staging first.
-bash scripts/drills/failover.sh --dry-run --region=us-west-2 \
-  --primary-dsn="$(echo "$DATABASE_URL" | sed -E 's|://[^@]+@|://[REDACTED]@|')" \
-  --replica-dsn="$(echo "$DATABASE_REPLICA_URL" | sed -E 's|://[^@]+@|://[REDACTED]@|')"
-
-# Edge-case drills (ENV=staging required):
-bash scripts/drills/failover.sh --case mid-write       --replica-dsn="$DATABASE_REPLICA_URL"
-bash scripts/drills/failover.sh --case stuck-connection --replica-dsn="$DATABASE_REPLICA_URL"
-```
-
 ## Configuration
-
-> **Quick start:** copy [`.env.example`](.env.example) to `.env`, fill in the
-> required values marked `[REQUIRED]`, and start the server. Never commit `.env`.
-> The example file is kept in sync with `config.go` and validated by
-> `TestEnvExampleValuesPassValidation` in `internal/config/config_test.go`.
-
 
 | Variable        | Default                                      | Description                    |
 |----------------|----------------------------------------------|--------------------------------|
@@ -212,7 +176,6 @@ bash scripts/drills/failover.sh --case stuck-connection --replica-dsn="$DATABASE
 | `WRITE_TIMEOUT` | `30` | Timeout in seconds, range `1` to `3600` |
 | `IDLE_TIMEOUT` | `120` | Timeout in seconds, range `1` to `3600` |
 | `MAX_HEADER_BYTES` | `1048576` | Header size in bytes, range `1024` to `16777216` |
-| `LEGACY_API_SUNSET` | `""` | Optional HTTP-date or RFC3339 timestamp emitted as `Sunset` on legacy `/api/*` aliases |
 | `FF_DEFAULT_ENABLED` | `false`                                | Default state for unknown flags |
 | `FF_LOG_DISABLED` | `true`                                  | Log when flags block requests  |
 | `FF_CONFIG_FILE` | `""`                                    | Path to feature flags config file |
@@ -698,7 +661,6 @@ This project follows a **spec-first** approach using OpenAPI 3.0.3. The specific
 - **Contract Tests**: Automatically validate that implementation matches the spec (`go test ./internal/contract/...`).
 - **CI Enforcement**: Pull requests are checked for undocumented endpoints via `go run ./cmd/openapi-validate`.
 - **Versioning**: Versioned endpoints use `/api/v1/` prefix; unversioned public endpoints (like health) stay at `/api/`.
-- **Legacy Alias Policy**: When a protected `/api/*` alias is retained for backward compatibility, it must reuse the same handler and RBAC as `/api/v1/*`, and only the legacy alias gets deprecation headers.
 - **Contributor Checklist**: See `docs/OPENAPI_GUIDE.md` for the full checklist when modifying API endpoints.
 
 ### Useful Commands

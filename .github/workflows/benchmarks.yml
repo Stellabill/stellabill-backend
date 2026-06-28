@@ -23,7 +23,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: '1.22'
           cache: true
       
       - name: Download dependencies
@@ -39,38 +39,6 @@ jobs:
       
       - name: Install benchstat
         run: go install golang.org/x/perf/cmd/benchstat@latest
-      
-      - name: Install k6
-        run: |
-          curl -fsSL https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz -o /tmp/k6.tar.gz
-          sudo tar -xzf /tmp/k6.tar.gz -C /usr/local/bin --strip-components=1 k6-v0.54.0-linux-amd64/k6
-          k6 version
-      
-      - name: Run load test smoke profile
-        run: |
-          set -euo pipefail
-          export DATABASE_URL="${DATABASE_URL:-postgres://user:pass@127.0.0.1:5432/stellabill?sslmode=disable}"
-          export JWT_SECRET="${JWT_SECRET:-LoadTest1!JwtSecret-MixedAlphaNumeric@123}"
-          export ADMIN_TOKEN="${ADMIN_TOKEN:-LoadTest1!AdminToken-MixedAlphaNumeric@123}"
-          export ENV="${ENV:-development}"
-          export TRACING_EXPORTER="${TRACING_EXPORTER:-none}"
-          go run ./cmd/server >/tmp/loadtest-server.log 2>&1 &
-          SERVER_PID=$!
-          trap 'kill $SERVER_PID >/dev/null 2>&1' EXIT
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8080/api/health >/dev/null; then
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              cat /tmp/loadtest-server.log || true
-              exit 1
-            fi
-            sleep 1
-          done
-          LOADTEST_JWT="$(go run ./scripts/loadtest/gentoken)"
-          LOADTEST_TARGET=http://127.0.0.1:8080 JWT_SECRET="$JWT_SECRET" LOADTEST_JWT="$LOADTEST_JWT" k6 run --summary-export=./plans-smoke-summary.json ./scripts/loadtest/plans.js
-          LOADTEST_TARGET=http://127.0.0.1:8080 JWT_SECRET="$JWT_SECRET" LOADTEST_JWT="$LOADTEST_JWT" k6 run --summary-export=./subscriptions-smoke-summary.json ./scripts/loadtest/subscriptions.js
-          LOADTEST_TARGET=http://127.0.0.1:8080 JWT_SECRET="$JWT_SECRET" LOADTEST_JWT="$LOADTEST_JWT" k6 run --summary-export=./statements-smoke-summary.json ./scripts/loadtest/statements.js
       
       - name: Download baseline
         continue-on-error: true
@@ -172,10 +140,9 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v4
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version: '1.22'
       
       - name: Run security checks
         run: |

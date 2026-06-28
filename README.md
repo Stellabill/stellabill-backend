@@ -166,9 +166,28 @@ curl -X POST http://localhost:8080/api/outbox/test
 Keep the operational docs close to the code so the measurement workflow is easy to find during review and incident response:
 
 - [Capacity planning playbook](docs/runbooks/capacity-planning.md)
+- [Multi-region failover playbook](docs/runbooks/multi-region-failover.md)
 - [Operational runbooks index](docs/ops/README.md)
 
-The capacity planning playbook includes the reproducible snapshot script, the sizing model, alert thresholds, and the edge-case checks for zero-traffic and burst-traffic tenant profiles.
+The capacity planning playbook includes the reproducible snapshot script, the sizing model, alert thresholds, and the edge-case checks for zero-traffic and burst-traffic tenant profiles. The multi-region failover playbook documents RTO/RPO targets, the seven-phase cutover procedure (fence → promote → route → verify), edge cases for promotion mid-write and stuck-connection draining, and the quarterly drill schedule.
+
+### Quarterly failover drills
+
+> **Reminder.** The team runs a multi-region failover drill **every quarter** on the **second Tuesday at 14:00 UTC**, alternating between a surprise chaos cutover (Q1, Q4) and a scheduled drill (`--case mid-write` in Q2, `--case stuck-connection` in Q3). Owners rotate per the schedule in [`docs/runbooks/multi-region-failover.md` §10](docs/runbooks/multi-region-failover.md#10-quarterly-drill-schedule).
+
+To run a dry rehearsal before the scheduled drill:
+
+```bash
+bash scripts/drills/failover.sh --dry-run
+# Optional: pass real (redacted) DSNs and a region to validate against staging first.
+bash scripts/drills/failover.sh --dry-run --region=us-west-2 \
+  --primary-dsn="$(echo "$DATABASE_URL" | sed -E 's|://[^@]+@|://[REDACTED]@|')" \
+  --replica-dsn="$(echo "$DATABASE_REPLICA_URL" | sed -E 's|://[^@]+@|://[REDACTED]@|')"
+
+# Edge-case drills (ENV=staging required):
+bash scripts/drills/failover.sh --case mid-write       --replica-dsn="$DATABASE_REPLICA_URL"
+bash scripts/drills/failover.sh --case stuck-connection --replica-dsn="$DATABASE_REPLICA_URL"
+```
 
 ## Configuration
 

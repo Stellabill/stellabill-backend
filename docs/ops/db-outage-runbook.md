@@ -11,6 +11,11 @@
 
 This runbook covers PostgreSQL connectivity loss, connection pool exhaustion, replica lag, and slow query incidents affecting the Stellabill backend. The service connects via `DATABASE_URL` (never logged). The outbox pattern is used for transactional event publishing — a DB outage also halts event delivery.
 
+> **Related:** for region-wide outages, see the
+> [multi-region failover playbook](../runbooks/multi-region-failover.md),
+> which covers promotion, traffic cutover, connection draining, and the
+> quarterly drill schedule.
+
 When healthy, the `/api/health` endpoint returns:
 ```json
 {"status": "ok", "db": "up", "worker": "running"}

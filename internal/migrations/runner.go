@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"time"
 )
 
@@ -14,8 +16,65 @@ type AppliedMigration struct {
 	AppliedAt time.Time
 }
 
+// DryRunResult holds the result of a dry-run: the list of pending migrations
+// that would be applied, in order.
+type DryRunResult struct {
+	Pending []Migration
+}
+
 type Runner struct {
 	DB *sql.DB
+}
+
+// DryRun connects, acquires the schema_migrations lock inside a transaction,
+// collects all pending migrations, prints each SQL statement to out (defaults
+// to os.Stdout), then rolls back — leaving the database unchanged.
+//
+// The advisory lock is released when the transaction is rolled back, so a
+// crash mid-dry-run never leaves a dangling lock.
+func (r Runner) DryRun(ctx context.Context, migs []Migration, out io.Writer) (*DryRunResult, error) {
+	if err := r.Validate(); err != nil {
+		return nil, err
+	}
+	if len(migs) == 0 {
+		return nil, errors.New("no migrations provided")
+	}
+	if out == nil {
+		out = os.Stdout
+	}
+
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Always roll back — this is intentional for dry-run.
+	defer func() { _ = tx.Rollback() }()
+
+	if err := r.EnsureSchemaMigrations(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := r.lock(ctx, tx); err != nil {
+		return nil, err
+	}
+
+	appliedSet, err := r.appliedVersions(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	var pending []Migration
+	for _, m := range migs {
+		if _, ok := appliedSet[m.Version]; ok {
+			continue
+		}
+		pending = append(pending, m)
+	}
+
+	for _, m := range pending {
+		fmt.Fprintf(out, "-- [dry-run] %d_%s\n%s\n", m.Version, m.Name, m.UpSQL)
+	}
+
+	return &DryRunResult{Pending: pending}, nil
 }
 
 func (r Runner) Validate() error {

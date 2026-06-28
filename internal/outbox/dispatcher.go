@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -188,14 +189,7 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 		return
 	}
 
-	// Get last progress
-	since, lastID, err := d.repository.GetPublisherProgress(name)
-	if err != nil {
-		log.Printf("Failed to get publisher progress for %s: %v", name, err)
-		return
-	}
-
-	events, err := d.repository.GetPendingEventsSince(since, lastID, d.config.BatchSize)
+	events, err := d.repository.GetPendingEventsForPublisher(name, d.config.BatchSize)
 	if err != nil {
 		log.Printf("Failed to get pending events for publisher %s: %v", name, err)
 		return
@@ -212,6 +206,13 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 			cancel()
 			if err != nil {
 				log.Printf("Publisher %s failed for event %s: %v", name, event.ID, err)
+
+				// Permanent errors go straight to dead-letter; no retry, no backoff.
+				if IsPermanentPublishError(err) {
+					errorMsg := err.Error()
+					_ = d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg)
+					continue
+				}
 
 				// update failure/backoff (per publisher)
 				d.mu.Lock()
@@ -254,9 +255,9 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 			d.publisherNextAttempt[name] = time.Time{}
 			d.mu.Unlock()
 
-			// Success: advance publisher cursor
-			if err := d.repository.UpdatePublisherProgress(name, event.OccurredAt, event.ID); err != nil {
-				log.Printf("Failed to update publisher progress for %s: %v", name, err)
+			// Success: atomically acknowledge this publisher's high-water mark.
+			if err := d.repository.MarkPublished(name, event, d.publisherNames()); err != nil {
+				log.Printf("Failed to mark event %s published for %s: %v", event.ID, name, err)
 				continue
 			}
 
@@ -268,18 +269,6 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 				}
 			}
 
-			// If all publishers have processed this event, mark it completed
-			all, err := d.allPublishersProcessed(event)
-			if err != nil {
-				log.Printf("Failed to check all publishers progress for event %s: %v", event.ID, err)
-				continue
-			}
-			if all {
-				if err := d.repository.UpdateStatus(event.ID, StatusCompleted, nil); err != nil {
-					log.Printf("Failed to mark event %s as completed: %v", event.ID, err)
-				}
-			}
-
 		case <-ctx.Done():
 			cancel()
 			log.Printf("Publisher %s processing timeout for event %s", name, event.ID)
@@ -287,26 +276,13 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 	}
 }
 
-// allPublishersProcessed checks whether every registered publisher has progressed past the event
-func (d *dispatcher) allPublishersProcessed(event *Event) (bool, error) {
+func (d *dispatcher) publisherNames() []string {
+	names := make([]string, 0, len(d.publisherMap))
 	for name := range d.publisherMap {
-		since, lastID, err := d.repository.GetPublisherProgress(name)
-		if err != nil {
-			return false, err
-		}
-		if since == nil {
-			return false, nil
-		}
-		if since.Before(event.OccurredAt) {
-			return false, nil
-		}
-		if since.Equal(event.OccurredAt) {
-			if lastID == nil || lastID.String() < event.ID.String() {
-				return false, nil
-			}
-		}
+		names = append(names, name)
 	}
-	return true, nil
+	sort.Strings(names)
+	return names
 }
 
 // processPendingEvents processes a batch of pending events

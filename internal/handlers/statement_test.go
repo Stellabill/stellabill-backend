@@ -12,7 +12,6 @@ import (
 
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
-	"stellarbill-backend/internal/storage/s3"
 )
 
 // ---------------------------------------------------------------------------
@@ -45,12 +44,6 @@ func (m *mockStatementService) GetDetail(
 	statementID string,
 ) (*service.StatementDetail, []string, error) {
 	return m.getResult, nil, m.getErr
-}
-
-func (m *mockStatementService) ExportStatements(
-	_ context.Context, _ string, _ []string, _, _ string, _ s3.S3Uploader,
-) (*service.ExportResult, error) {
-	return nil, nil
 }
 
 // ---------------------------------------------------------------------------

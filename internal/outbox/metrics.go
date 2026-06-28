@@ -3,7 +3,8 @@ package outbox
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-	OutboxPublisherLag *prometheus.GaugeVec
+	OutboxPublisherLag          *prometheus.GaugeVec
+	ChaosOutboxCancellationsTotal prometheus.Counter
 )
 
 func init() {
@@ -15,4 +16,10 @@ func init() {
 		[]string{"publisher"},
 	)
 	_ = prometheus.Register(OutboxPublisherLag)
+
+	ChaosOutboxCancellationsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "chaos_outbox_cancellations_total",
+		Help: "Total number of outbox publish cancellations injected by the chaos hook (staging only)",
+	})
+	_ = prometheus.Register(ChaosOutboxCancellationsTotal)
 }

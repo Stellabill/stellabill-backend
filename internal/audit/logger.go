@@ -12,7 +12,22 @@ import (
 	"time"
 )
 
-const redactedValue = "***REDACTED***"
+type auditContextKey string
+
+const (
+	actorKey auditContextKey = "audit_actor"
+)
+
+// WithActor returns a new context with the provided actor ID.
+func WithActor(ctx context.Context, actor string) context.Context {
+	return context.WithValue(ctx, actorKey, actor)
+}
+
+// FromContext extracts the actor ID from the context.
+func FromContext(ctx context.Context) (string, bool) {
+	val, ok := ctx.Value(actorKey).(string)
+	return val, ok
+}
 
 type Logger struct {
 	mu       sync.Mutex
@@ -45,10 +60,9 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) 
 
 	// 1. Prepare Event Metadata
 	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now()
-	}
-	if event.Actor == "" {
-		event.Actor = GetActor(ctx)
+		event.Timestamp = time.Now().UTC()
+	} else {
+		event.Timestamp = event.Timestamp.UTC()
 	}
 	
 	// 2. Redaction (PII Protection)
@@ -77,6 +91,8 @@ func (l *Logger) computeHash(e AuditEvent) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+const redactedValue = "[REDACTED]"
+
 func (l *Logger) redact(meta map[string]interface{}) map[string]interface{} {
 	if meta == nil {
 		return nil
@@ -91,9 +107,6 @@ func (l *Logger) redact(meta map[string]interface{}) map[string]interface{} {
 		
 		for _, sk := range sensitiveKeys {
 			if strings.Contains(strings.ToLower(k), sk) || strings.Contains(valStr, "bearer") {
-				if sk == "key" && strings.Contains(strings.ToLower(k), "keys_purged") {
-					continue
-				}
 				isSensitive = true
 				break
 			}

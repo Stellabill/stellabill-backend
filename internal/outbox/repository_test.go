@@ -287,6 +287,78 @@ func TestPostgresRepository_ScanError(t *testing.T) {
 	})
 }
 
+func TestPostgresRepository_GetPendingEventsForPublisher(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := NewPostgresRepository(db)
+	eventID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	rows := sqlmock.NewRows([]string{"id", "event_type", "event_data", "aggregate_id", "aggregate_type", "occurred_at", "status", "retry_count", "max_retries", "next_retry_at", "error_message", "created_at", "updated_at", "version", "deduplication_id"}).
+		AddRow(eventID, "user.created", []byte(`{"type":"user.created"}`), nil, nil, time.Now(), StatusPending, 0, 3, nil, nil, time.Now(), time.Now(), 1, nil)
+
+	mock.ExpectQuery(`FROM outbox_events e\s+LEFT JOIN outbox_publisher_progress p ON p.publisher = \$1`).
+		WithArgs("default", StatusPending, StatusFailed, sqlmock.AnyArg(), 10).
+		WillReturnRows(rows)
+
+	events, err := repo.GetPendingEventsForPublisher("default", 10)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, eventID, events[0].ID)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresRepository_MarkPublishedUpdatesProgressAndCompletesAtomically(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := NewPostgresRepository(db)
+	event := &Event{ID: uuid.MustParse("00000000-0000-0000-0000-000000000002")}
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO outbox_publisher_progress`).
+		WithArgs("default", event.ID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT last_event_id\s+FROM outbox_publisher_progress\s+WHERE publisher = \$1`).
+		WithArgs("default").
+		WillReturnRows(sqlmock.NewRows([]string{"last_event_id"}).AddRow(event.ID))
+	mock.ExpectExec(`UPDATE outbox_events\s+SET status = \$1, error_message = NULL, updated_at = \$2\s+WHERE id = \$3`).
+		WithArgs(StatusCompleted, sqlmock.AnyArg(), event.ID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err = repo.MarkPublished("default", event, []string{"default"})
+	require.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresRepository_MarkPublishedLeavesHigherProgressInPlace(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := NewPostgresRepository(db)
+	older := &Event{ID: uuid.MustParse("00000000-0000-0000-0000-000000000001")}
+	newerID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO outbox_publisher_progress`).
+		WithArgs("default", older.ID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT last_event_id\s+FROM outbox_publisher_progress\s+WHERE publisher = \$1`).
+		WithArgs("default").
+		WillReturnRows(sqlmock.NewRows([]string{"last_event_id"}).AddRow(newerID))
+	mock.ExpectExec(`UPDATE outbox_events\s+SET status = \$1, error_message = NULL, updated_at = \$2\s+WHERE id = \$3`).
+		WithArgs(StatusCompleted, sqlmock.AnyArg(), older.ID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err = repo.MarkPublished("default", older, []string{"default"})
+	require.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestNewEvent(t *testing.T) {
 	tests := []struct {
 		name          string

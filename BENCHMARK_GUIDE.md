@@ -36,37 +36,6 @@ go test ./internal/handlers/... -bench=. -benchmem -memprofile=mem.prof
 go tool pprof mem.prof
 ```
 
-## Load Test Smoke Profile
-
-The repository now includes an end-to-end load-test harness that exercises the running HTTP server with realistic concurrency and authorization. The smoke profile is designed to validate:
-
-- GET `/api/v1/plans`
-- GET `/api/v1/subscriptions`
-- GET `/api/v1/statements`
-- p95 latency under `250ms` at `200 RPS`
-- error rate under `0.1%`
-- auth token reuse and warmup before steady-state measurement
-
-### Run a local smoke profile
-
-```bash
-make loadtest-smoke
-```
-
-Set a custom target and JWT secret for staging or remote environments:
-
-```bash
-LOADTEST_TARGET=https://staging.example.com \
-JWT_SECRET=${JWT_SECRET} \
-make loadtest-smoke
-```
-
-### Run a single k6 script
-
-```bash
-k6 run --summary-export=./scripts/loadtest/plans-summary.json ./scripts/loadtest/plans.js
-```
-
 ## Benchmark Categories
 
 ### 1. Dataset Size Benchmarks

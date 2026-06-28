@@ -4,20 +4,22 @@ type Role string
 
 const (
 	RoleAdmin    Role = "admin"
-	RoleUser     Role = "user"
 	RoleMerchant Role = "merchant"
 	RoleCustomer Role = "customer"
+	RoleUser     Role = "user"
 )
 
 type Permission string
 
 const (
-	PermReadPlans           Permission = "read:plans"
-	PermReadSubscriptions   Permission = "read:subscriptions"
-	PermManagePlans         Permission = "manage:plans"
+	PermReadPlans          Permission = "read:plans"
+	PermReadSubscriptions  Permission = "read:subscriptions"
+	PermManagePlans        Permission = "manage:plans"
 	PermManageSubscriptions Permission = "manage:subscriptions"
-	PermManageReconciliation Permission = "manage:reconciliation"
-	PermReadReconciliation   Permission = "read:reconciliation"
+	PermReadStatements     Permission = "read:statements"
+	PermManageStatements       Permission = "manage:statements"
+	PermManageReconciliation   Permission = "manage:reconciliation"
+	PermReadReconciliation     Permission = "read:reconciliation"
 )
 
 var rolePermissions = map[Role][]Permission{
@@ -26,15 +28,24 @@ var rolePermissions = map[Role][]Permission{
 		PermReadSubscriptions,
 		PermManagePlans,
 		PermManageSubscriptions,
+		PermReadStatements,
+		PermManageStatements,
 		PermManageReconciliation,
 		PermReadReconciliation,
 	},
 	RoleMerchant: {
 		PermReadPlans,
 		PermReadSubscriptions,
+		PermManagePlans,
 		PermManageSubscriptions,
-		PermManageReconciliation,
+		PermReadStatements,
+		PermManageStatements,
 		PermReadReconciliation,
+	},
+	RoleCustomer: {
+		PermReadPlans,
+		PermReadSubscriptions,
+		PermReadStatements,
 	},
 	RoleUser: {
 		PermReadPlans,

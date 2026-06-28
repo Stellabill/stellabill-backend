@@ -77,7 +77,7 @@ w.Start()
 defer w.Stop()
 
 scheduler := worker.NewScheduler(store)
-job, _ := scheduler.ScheduleCharge("sub-123", timeutil.NowUTC(), 3)
+job, _ := scheduler.ScheduleCharge("sub-123", timeutil.NowUTC(), 3, worker.PriorityHigh)
 ```
 
 ---

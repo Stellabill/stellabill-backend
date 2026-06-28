@@ -12,6 +12,13 @@ import (
 	"go.opentelemetry.io/contrib/bridges/otellogrus"
 )
 
+
+// Logger is a minimal structured logging interface used by internal packages.
+type Logger interface {
+	Info(msg string, args ...interface{})
+	Warn(msg string, args ...interface{})
+	Error(msg string, args ...interface{})
+}
 var Log = logrus.New()
 
 var requiredKeys = map[string]bool{

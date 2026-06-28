@@ -11,10 +11,13 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/featureflags"
+	graphqlgateway "stellarbill-backend/internal/graphql"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
@@ -59,7 +62,13 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.TraceIDMiddleware())
 	r.Use(metrics.MetricsMiddleware())
 
+	// Dev-only: validate incoming JSON request bodies against embedded OpenAPI spec.
+	if cfg.Env != "production" {
+		r.Use(middleware.OpenAPIRequestBodyValidation())
+	}
+
 	r.Use(middleware.CORS(cfg.Env, cfg.AllowedOrigins))
+
 
 	rateLimitConfig := middleware.RateLimiterConfig{
 		Enabled:        cfg.RateLimitEnabled,
@@ -71,6 +80,8 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	var dbPool *pgxpool.Pool
 	var planDB *sql.DB
+	var replicaDB *sql.DB
+	var routerDB db.DBTX
 	if cfg.DBConn != "" {
 		var err error
 		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
@@ -96,6 +107,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		} else {
 			routerDB = planDB
 		}
+		_ = routerDB
 	}
 
 	var stopMetrics chan struct{}
@@ -180,7 +192,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	api.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	v1 := api.Group("/v1")
 
-	dep := middleware.DeprecationHeaders()
+	dep := middleware.DeprecatedHandler()
 
 	// Public health check
 	api.GET("/health", dep, h.LivenessProbe)
@@ -198,32 +210,46 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		v1.GET("/plans", auth.RequirePermission(auth.PermReadPlans), h.ListPlans)
 		v1.GET("/statements/:id", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewListStatementsHandler(stmtSvc))
+
+		// GraphQL gateway — authenticated and per-tenant rate limited
+		gqlSvc := graphqlgateway.Services{
+			SubSvc:   svc,
+			StmtSvc:  stmtSvc,
+			PlanRepo: cachedPlanRepo,
+		}
+		tenantRL := middleware.TenantRateLimitMiddleware(middleware.TenantRateLimitConfig{
+			Enabled: cfg.RateLimitEnabled,
+			RPS:     cfg.RateLimitRPS,
+			Burst:   cfg.RateLimitBurst,
+		})
+		if gqlHandler, err := graphqlgateway.NewHandler(gqlSvc); err == nil {
+			v1.POST("/graphql", tenantRL, gqlHandler.ServeHTTP)
+		} else {
+			log.Printf("failed to initialise GraphQL handler: %v", err)
+		}
 	}
 
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
+	apiProtected.Use(dep)
 	apiProtected.Use(authMiddleware)
 	apiProtected.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 	{
 		apiProtected.GET("/plans",
-			dep,
 			auth.RequirePermission(auth.PermReadPlans),
 			h.ListPlans,
 		)
 
 		apiProtected.GET("/subscriptions",
-			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			h.ListSubscriptions,
 		)
 
 		apiProtected.GET("/subscriptions/:id",
-			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			h.GetSubscription,
 		)
 		apiProtected.POST("/subscriptions/:id/status",
-			dep,
 			auth.RequirePermission(auth.PermManageSubscriptions),
 			handlers.NewChangeSubscriptionStatusHandler(svc),
 		)
@@ -236,31 +262,31 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	admin.Use(authMiddleware)
 	admin.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 	{
-		admin.POST("/purge", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, adminHandler.PurgeCache)
+		admin.POST("/purge", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
-		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
+		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageAdmin), diagHandler.Handle)
 
 		// Reconciliation — scoped by RBAC and tenant
 		adapter := reconciliation.NewMemoryAdapter()
 		reconStore := reconciliation.NewMemoryStore()
-		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
+		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageReconciliation), idemMiddleware, handlers.NewReconcileHandler(adapter, reconStore))
 		admin.GET("/reports", auth.RequirePermission(auth.PermReadReconciliation), handlers.NewListReportsHandler(reconStore))
 
-		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
-		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
+		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageAdmin), featureFlagsHandler.GetFeatureFlags)
+		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
 
 		if planDB != nil {
 			outboxRepo := outbox.NewPostgresRepository(planDB)
 			h.OutboxRepo = outboxRepo
 			subscriberKeyRepo := outbox.NewPostgresSubscriberKeyRepository(planDB)
 			subscriberKeysHandler := handlers.NewSubscriberKeysHandler(subscriberKeyRepo)
-			admin.POST("/subscriber-keys", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, subscriberKeysHandler.RegisterSubscriberKey)
-			admin.GET("/subscriber-keys/:subscriber_id", auth.RequirePermission(auth.PermManageSubscriptions), subscriberKeysHandler.ListSubscriberKeys)
-			admin.GET("/subscriber-keys/id/:id", auth.RequirePermission(auth.PermManageSubscriptions), subscriberKeysHandler.GetSubscriberKey)
-			admin.PATCH("/subscriber-keys/id/:id", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, subscriberKeysHandler.UpdateSubscriberKey)
-			admin.GET("/outbox/dead-letter", auth.RequirePermission(auth.PermManageSubscriptions), h.ListDeadLetteredEvents)
-			admin.POST("/outbox/:id/requeue", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, h.RequeueOutboxEvent)
+			admin.POST("/subscriber-keys", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, subscriberKeysHandler.RegisterSubscriberKey)
+			admin.GET("/subscriber-keys/:subscriber_id", auth.RequirePermission(auth.PermManageAdmin), subscriberKeysHandler.ListSubscriberKeys)
+			admin.GET("/subscriber-keys/id/:id", auth.RequirePermission(auth.PermManageAdmin), subscriberKeysHandler.GetSubscriberKey)
+			admin.PATCH("/subscriber-keys/id/:id", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, subscriberKeysHandler.UpdateSubscriberKey)
+			admin.GET("/outbox/dead-letter", auth.RequirePermission(auth.PermManageAdmin), h.ListDeadLetteredEvents)
+			admin.POST("/outbox/:id/requeue", auth.RequirePermission(auth.PermManageAdmin), idemMiddleware, h.RequeueOutboxEvent)
 		}
 	}
 

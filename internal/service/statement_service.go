@@ -288,3 +288,48 @@ func (s *statementService) rehydrateFromArchive(ctx context.Context, stub *repos
 
 	return hydrated, nil
 }
+
+// ExportStatements renders all statements for customerID as gzipped CSV,
+// uploads to S3 under a tenant-scoped versioned key, and returns a presigned URL.
+func (s *statementService) ExportStatements(ctx context.Context, callerID string, roles []string, tenantID, customerID string, uploader s3.S3Uploader) (*ExportResult, error) {
+	isAdmin := false
+	for _, r := range roles {
+		if r == "admin" {
+			isAdmin = true
+			break
+		}
+	}
+	if !isAdmin && callerID != customerID {
+		return nil, errors.New("forbidden: only admin or the owning customer may export statements")
+	}
+
+	stmts, _, _, err := s.ListByCustomer(ctx, callerID, roles, customerID, repository.StatementQuery{Limit: 10000})
+	if err != nil {
+		return nil, fmt.Errorf("list statements: %w", err)
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	fmt.Fprintln(gz, "id,subscription_id,period_start,period_end,issued_at,total_amount,currency,kind,status")
+	for _, st := range stmts.Statements {
+		fmt.Fprintf(gz, "%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+			st.ID, st.SubscriptionID, st.PeriodStart, st.PeriodEnd,
+			st.IssuedAt, st.TotalAmount, st.Currency, st.Kind, st.Status)
+	}
+	if err := gz.Close(); err != nil {
+		return nil, fmt.Errorf("compress csv: %w", err)
+	}
+
+	objectKey := fmt.Sprintf("exports/%s/%s/%d.csv.gz", tenantID, customerID, time.Now().UnixNano())
+
+	if err := uploader.PutObject(ctx, objectKey, buf.Bytes(), "application/gzip"); err != nil {
+		return nil, fmt.Errorf("upload export: %w", err)
+	}
+
+	presigned, err := uploader.PresignURL(ctx, objectKey, ExportPresignTTL)
+	if err != nil {
+		return nil, fmt.Errorf("presign url: %w", err)
+	}
+
+	return &ExportResult{ObjectKey: objectKey, URL: presigned.URL, ExpiresAt: presigned.ExpiresAt}, nil
+}

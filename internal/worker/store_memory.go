@@ -108,18 +108,33 @@ func (s *MemoryStore) ListPending(limit int) ([]*Job, error) {
 
 	for _, job := range s.jobs {
 		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
-			jobCopy := *job
-			if job.Payload != nil {
-				jobCopy.Payload = make(map[string]interface{})
-				for k, v := range job.Payload {
-					jobCopy.Payload[k] = v
-				}
-			}
-			pending = append(pending, &jobCopy)
+			jobCopy := s.copyJob(job)
+			pending = append(pending, jobCopy)
 		}
 	}
 
-	// Sort by scheduled time (oldest first)
+	SortJobs(pending)
+
+	if len(pending) > limit {
+		pending = pending[:limit]
+	}
+
+	return pending, nil
+}
+
+func (s *MemoryStore) ListPendingByPriority(priority Priority, limit int) ([]*Job, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var pending []*Job
+	now := time.Now()
+
+	for _, job := range s.jobs {
+		if job.Priority == priority && job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
+			pending = append(pending, s.copyJob(job))
+		}
+	}
+
 	sort.Slice(pending, func(i, j int) bool {
 		return pending[i].ScheduledAt.Before(pending[j].ScheduledAt)
 	})
@@ -129,6 +144,47 @@ func (s *MemoryStore) ListPending(limit int) ([]*Job, error) {
 	}
 
 	return pending, nil
+}
+
+func (s *MemoryStore) copyJob(job *Job) *Job {
+	cp := *job
+	if job.Payload != nil {
+		cp.Payload = make(map[string]interface{})
+		for k, v := range job.Payload {
+			cp.Payload[k] = v
+		}
+	}
+	return &cp
+}
+
+func (s *MemoryStore) LaneDepth(priority Priority) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	now := time.Now()
+	for _, job := range s.jobs {
+		if job.Priority == priority && job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *MemoryStore) QueueDepth() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	now := time.Now()
+
+	for _, job := range s.jobs {
+		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
+			count++
+		}
+	}
+
+	return count
 }
 
 func (s *MemoryStore) ListDeadLetter() ([]*Job, error) {
@@ -190,22 +246,6 @@ func (s *MemoryStore) ReleaseLock(jobID string, workerID string) error {
 	return nil
 }
 
-func (s *MemoryStore) QueueDepth() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	count := 0
-	now := time.Now()
-
-	for _, job := range s.jobs {
-		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
-			count++
-		}
-	}
-
-	return count
-}
-
 func (s *MemoryStore) OldestPending() *Job {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -216,8 +256,7 @@ func (s *MemoryStore) OldestPending() *Job {
 	for _, job := range s.jobs {
 		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
 			if oldest == nil || job.CreatedAt.Before(oldest.CreatedAt) {
-				copy := *job
-				oldest = &copy
+				oldest = s.copyJob(job)
 			}
 		}
 	}

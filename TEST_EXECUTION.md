@@ -191,8 +191,8 @@ func main() {
     
     // Schedule test jobs
     scheduler := worker.NewScheduler(store)
-    scheduler.ScheduleCharge("sub-1", time.Now(), 3)
-    scheduler.ScheduleInvoice("sub-2", time.Now().Add(5*time.Second), 3)
+    scheduler.ScheduleCharge("sub-1", time.Now(), 3, worker.PriorityHigh)
+    scheduler.ScheduleInvoice("sub-2", time.Now().Add(5*time.Second), 3, worker.PriorityNormal)
     
     // Let it run
     time.Sleep(30 * time.Second)

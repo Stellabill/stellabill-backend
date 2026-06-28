@@ -1,57 +1,51 @@
 package middleware
 
 import (
-    "time"
+	"time"
 
-    "github.com/gin-gonic/gin"
-    "github.com/google/uuid"
-    "stellarbill-backend/internal/logger"
-    "stellarbill-backend/internal/correlation"
+	"stellarbill-backend/internal/correlation"
+	"stellarbill-backend/internal/logger"
+	"stellarbill-backend/internal/security"
+
+	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
-// RequestLogger enriches each request with IDs and logs request details.
 func RequestLogger() gin.HandlerFunc {
-    return func(c *gin.Context) {
-        start := time.Now()
+	return func(c *gin.Context) {
 
-        // Ensure request ID exists (fallback)
-        requestID := c.GetString("request_id")
-        if requestID == "" {
-            requestID = uuid.New().String()
-            c.Set("request_id", requestID)
-            c.Writer.Header().Set("X-Request-ID", requestID)
-        }
+		start := time.Now()
 
-        // Ensure correlation ID exists (fallback)
-        correlationID := c.GetString("correlation_id")
-        if correlationID == "" {
-            correlationID = correlation.NewID()
-            c.Set("correlation_id", correlationID)
-            c.Writer.Header().Set("X-Correlation-ID", correlationID)
-        }
+		requestID := correlation.NewID()
+		c.Set("request_id", requestID)
 
-        // Ensure trace ID exists (fallback)
-        traceID := c.GetString("traceID")
-        if traceID == "" {
-            // TraceIDMiddleware should set this, but fallback to new UUID
-            traceID = uuid.New().String()
-            c.Set("traceID", traceID)
-            c.Writer.Header().Set("X-Trace-ID", traceID)
-        }
+		ctx := correlation.WithRequestID(c.Request.Context(), requestID)
+		c.Request = c.Request.WithContext(ctx)
 
-        c.Next()
+		ctx, span := otel.Tracer("middleware").Start(ctx, "RequestLogger")
+		if span != nil {
+			span.SetAttributes(attribute.String("request_id", requestID))
+			defer span.End()
+		}
 
-        latency := time.Since(start)
-        logger.Log.WithFields(map[string]interface{}{
-            "level":          "info",
-            "request_id":     requestID,
-            "correlation_id": correlationID,
-            "trace_id":       traceID,
-            "method":         c.Request.Method,
-            "path":           c.Request.URL.Path,
-            "status":         c.Writer.Status(),
-            "latency_ms":     latency.Milliseconds(),
-            "client_ip":      c.ClientIP(),
-        }).Info("request completed")
-    }
+		c.Writer.Header().Set("X-Request-ID", requestID)
+
+		c.Next()
+
+		latency := time.Since(start)
+
+		// Build fields with redaction applied
+		fields := map[string]interface{}{
+			"level":      "info",
+			"request_id": requestID,
+			"method":     c.Request.Method,
+			"path":       security.MaskPII(c.FullPath()),
+			"status":     c.Writer.Status(),
+			"latency_ms": latency.Milliseconds(),
+			"client_ip":  c.ClientIP(),
+		}
+		// Use the logger with structured fields (the Logrus hook will redact)
+		logger.Log.WithFields(fields).Info("request completed")
+	}
 }

@@ -167,7 +167,7 @@ func TestPostgresIdempotencyStore_GetOrInsert_RequestMismatch(t *testing.T) {
 	const ttl = time.Hour
 
 	// First insert
-	statusCode, body, isReplay, isInFlight, err := store.GetOrInsert(ctx, scope, key, method, path, hash1, ttl)
+	statusCode, _, isReplay, isInFlight, err := store.GetOrInsert(ctx, scope, key, method, path, hash1, ttl)
 	require.NoError(t, err)
 	assert.Equal(t, 0, statusCode)
 	assert.False(t, isReplay)
@@ -230,3 +230,57 @@ func TestPostgresIdempotencyStore_ContextCancellation(t *testing.T) {
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func TestPostgresIdempotencyStore_DeleteExpiredBatch_Concurrency(t *testing.T) {
+	pool, cleanup := setupTestPostgres(t)
+	defer cleanup()
+
+	store := NewPostgresIdempotencyStore(pool)
+	ctx := context.Background()
+
+	// Insert 10 expired keys and 1 valid key
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("expired-key-%d", i)
+		// Use a negative TTL to make it instantly expired
+		_, _, _, _, err := store.GetOrInsert(ctx, "test", key, "POST", "/test", "hash", -1*time.Hour)
+		require.NoError(t, err)
+	}
+	_, _, _, _, err := store.GetOrInsert(ctx, "test", "valid-key", "POST", "/test", "hash", time.Hour)
+	require.NoError(t, err)
+
+	// Open a transaction to lock one of the expired keys
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+
+	// Ensure we rollback at the end (will no-op if already rolled back/committed)
+	defer tx.Rollback(ctx)
+
+	// Lock the first expired key using a row-level lock
+	var lockedID int64
+	err = tx.QueryRow(ctx, "SELECT id FROM idempotency_keys WHERE scope=$1 AND key=$2 FOR UPDATE", "test", "expired-key-0").Scan(&lockedID)
+	require.NoError(t, err)
+
+	// In a separate connection (using the store pool implicitly), run DeleteExpiredBatch
+	// It should skip the locked row and delete the remaining 9 expired keys.
+	// The valid-key should be ignored entirely because it hasn't expired.
+	deleted, err := store.DeleteExpiredBatch(ctx, 5000)
+	require.NoError(t, err)
+
+	// Assert exactly 9 keys were deleted
+	assert.Equal(t, int64(9), deleted)
+
+	// Release the lock by rolling back
+	err = tx.Rollback(ctx)
+	require.NoError(t, err)
+
+	// Run again to verify the previously locked key is now deleted
+	deletedAgain, err := store.DeleteExpiredBatch(ctx, 5000)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deletedAgain)
+
+	// Verify no expired keys remain pending
+	pending, err := store.CountExpiredPending(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), pending)
+}
+

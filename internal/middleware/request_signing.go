@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -18,11 +17,11 @@ import (
 )
 
 const (
-	AdminSignatureHeader = "X-Stellabill-Signature"
-	AdminDateHeader      = "X-Stellabill-Date"
-	AdminRequestIDHeader = "X-Stellabill-Request-ID"
+	AdminSignatureHeader  = "X-Stellabill-Signature"
+	AdminDateHeader       = "X-Stellabill-Date"
+	AdminRequestIDHeader  = "X-Stellabill-Request-ID"
 	AdminSignatureVersion = "v1"
-	AdminTimestampSkew   = 60
+	AdminTimestampSkew    = 60
 )
 
 var (

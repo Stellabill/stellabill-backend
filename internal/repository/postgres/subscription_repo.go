@@ -56,3 +56,59 @@ func (r *SubscriptionRepo) FindByID(ctx context.Context, id string) (*repository
 	s.DeletedAt = deletedAt
 	return &s, nil
 }
+
+// FindByIDAndTenant fetches the subscription scoped to a specific tenant.
+// Returns repository.ErrNotFound if no row exists for that tenant.
+func (r *SubscriptionRepo) FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*repository.SubscriptionRow, error) {
+	const q = `
+		SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, deleted_at
+		FROM subscriptions
+		WHERE id = $1 AND tenant_id = $2`
+
+	ctx, span := tracer.Start(ctx, "SubscriptionRepo.FindByIDAndTenant",
+		trace.WithAttributes(
+			attribute.String("subscription.id", id),
+			attribute.String("tenant.id", tenantID),
+		))
+	defer span.End()
+
+	var s repository.SubscriptionRow
+	var deletedAt *time.Time
+
+	err := r.pool.QueryRow(ctx, q, id, tenantID).Scan(
+		&s.ID, &s.PlanID, &s.TenantID, &s.CustomerID, &s.Status,
+		&s.Amount, &s.Currency, &s.Interval, &s.NextBilling,
+		&deletedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, repository.ErrNotFound
+		}
+		return nil, err
+	}
+	s.DeletedAt = deletedAt
+	return &s, nil
+}
+
+// UpdateStatus updates the status of a tenant-scoped subscription.
+// Returns repository.ErrNotFound if no row was updated.
+func (r *SubscriptionRepo) UpdateStatus(ctx context.Context, id string, tenantID string, status string) error {
+	const q = `UPDATE subscriptions SET status = $1 WHERE id = $2 AND tenant_id = $3`
+
+	ctx, span := tracer.Start(ctx, "SubscriptionRepo.UpdateStatus",
+		trace.WithAttributes(
+			attribute.String("subscription.id", id),
+			attribute.String("tenant.id", tenantID),
+			attribute.String("subscription.status", status),
+		))
+	defer span.End()
+
+	tag, err := r.pool.Exec(ctx, q, status, id, tenantID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}

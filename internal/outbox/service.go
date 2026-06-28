@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -15,6 +16,15 @@ type Service struct {
 	repository Repository
 	dispatcher Dispatcher
 	db         *sql.DB
+	jwe        *JWEConfig
+}
+
+// JWEConfig holds optional JWE encryption settings for sensitive events.
+type JWEConfig struct {
+	Enabled   bool
+	Keys      SubscriberKeyRepository
+	Encryptor *JWEEncryptor
+	Sensitive *SensitiveEventRegistry
 }
 
 // ServiceConfig holds configuration for the outbox service
@@ -22,6 +32,7 @@ type ServiceConfig struct {
 	DispatcherConfig DispatcherConfig
 	PublisherType    string // "console", "http", "multi"
 	HTTPEndpoint     string
+	JWE              *JWEConfig
 }
 
 // NewService creates a new outbox service
@@ -43,31 +54,112 @@ func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 	default:
 		publisher = NewConsolePublisher() // Default to console
 	}
+
+	if config.JWE != nil && config.JWE.Enabled && config.JWE.Keys != nil {
+		encryptor := config.JWE.Encryptor
+		if encryptor == nil {
+			encryptor = NewJWEEncryptor()
+		}
+		sensitive := config.JWE.Sensitive
+		if sensitive == nil {
+			sensitive = NewSensitiveEventRegistry(nil)
+		}
+		publisher = NewJWEPublisher(publisher, config.JWE.Keys, encryptor, sensitive)
+	}
 	
 	dispatcher := NewDispatcher(repo, publisher, config.DispatcherConfig)
-	
+
 	return &Service{
 		repository: repo,
 		dispatcher: dispatcher,
 		db:         db,
+		jwe:        config.JWE,
 	}, nil
 }
 
 // PublishEvent publishes an event using the outbox pattern
 func (s *Service) PublishEvent(ctx context.Context, eventType string, data interface{}, aggregateID, aggregateType *string) error {
-	// Create the event
-	event, err := NewEvent(eventType, data, aggregateID, aggregateType)
+	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create event: %w", err)
 	}
-	
-	// Store the event in a transaction
+
 	if err := s.storeEventInTransaction(ctx, event); err != nil {
 		return fmt.Errorf("failed to store event: %w", err)
 	}
-	
+
 	log.Printf("Event %s stored in outbox: %s", event.ID, eventType)
 	return nil
+}
+
+func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, aggregateType *string, deduplicationID *string) (*Event, error) {
+	subscriberID := ""
+	if aggregateType != nil && aggregateID != nil && *aggregateType == "subscriber" {
+		subscriberID = *aggregateID
+	}
+		if dataMap, ok := data.(map[string]interface{}); ok {
+		if sid, ok := dataMap["subscriber_id"].(string); ok && sid != "" {
+			subscriberID = sid
+		} else if cid, ok := dataMap["customer_id"].(string); ok && cid != "" {
+			subscriberID = cid
+		}
+	}
+
+	var eventData json.RawMessage
+	var err error
+	if s.jwe != nil && s.jwe.Enabled && s.jwe.Keys != nil {
+		encryptor := s.jwe.Encryptor
+		if encryptor == nil {
+			encryptor = NewJWEEncryptor()
+		}
+		sensitive := s.jwe.Sensitive
+		if sensitive == nil {
+			sensitive = NewSensitiveEventRegistry(nil)
+		}
+		eventData, err = PrepareEncryptedEventData(eventType, data, subscriberID, s.jwe.Keys, encryptor, sensitive)
+	} else {
+		event, createErr := NewEventWithDeduplication(eventType, data, aggregateID, aggregateType, deduplicationID)
+		return event, createErr
+	}
+	if err != nil {
+		if IsPermanentPublishError(err) {
+			event := &Event{
+				ID:            uuid.New(),
+				EventType:     eventType,
+				EventData:     mustMarshalEventData(eventType, data),
+				AggregateID:   aggregateID,
+				AggregateType: aggregateType,
+				OccurredAt:    time.Now(),
+				Status:        StatusFailed,
+				RetryCount:    0,
+				MaxRetries:    3,
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
+				Version:       1,
+				DeduplicationID: deduplicationID,
+			}
+			errMsg := err.Error()
+			event.ErrorMessage = &errMsg
+			return event, nil
+		}
+		return nil, err
+	}
+
+	return &Event{
+		ID:              uuid.New(),
+		EventType:       eventType,
+		EventData:       eventData,
+		AggregateID:     aggregateID,
+		AggregateType:   aggregateType,
+		OccurredAt:      time.Now(),
+		Status:          StatusPending,
+		RetryCount:      0,
+		MaxRetries:      3,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+		Version:         1,
+		DeduplicationID: deduplicationID,
+	}, nil
 }
 
 // storeEventInTransaction stores an event within a database transaction
@@ -93,20 +185,15 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 
 // PublishEventWithTx publishes an event within an existing transaction
 func (s *Service) PublishEventWithTx(tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
-	// Create the event
-	event, err := NewEvent(eventType, data, aggregateID, aggregateType)
+	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
-	
-	// Store the event using the transaction
-	// Note: This requires a transaction-aware repository implementation
-	// For now, we'll use the regular repository (in a real implementation,
-	// you'd create a transactional wrapper)
+
 	if err := s.repository.Store(event); err != nil {
 		return nil, fmt.Errorf("failed to store event: %w", err)
 	}
-	
+
 	return event, nil
 }
 
@@ -239,4 +326,13 @@ func (e PaymentProcessed) AggregateType() *string {
 
 func (e PaymentProcessed) OccurredAt() time.Time {
 	return e.Timestamp
+}
+
+func mustMarshalEventData(eventType string, data interface{}) json.RawMessage {
+	envelope, err := NewEvent(eventType, data, nil, nil)
+	if err != nil {
+		raw, _ := json.Marshal(EventData{Type: eventType, Data: data, Timestamp: time.Now(), ID: uuid.New().String()})
+		return raw
+	}
+	return envelope.EventData
 }

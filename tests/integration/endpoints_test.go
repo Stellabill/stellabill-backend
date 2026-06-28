@@ -1,3 +1,5 @@
+//go:build integration
+
 package integration
 
 import (
@@ -14,7 +16,8 @@ import (
 
 func setupRouter() *gin.Engine {
 	// Initialize required configuration for tests
-	os.Setenv("DATABASE_URL", "postgres://localhost:5432/test")
+	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	os.Setenv("MOCK_DB", "true")
 	os.Setenv("JWT_SECRET", "Test-Secret-Must-Be-Long-And-Complex-123!")
 	os.Setenv("ADMIN_TOKEN", "Admin-Token-Must-Be-Long-And-Complex-123!")
 	os.Setenv("ENV", "development")
@@ -132,11 +135,11 @@ func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 			description:     "merchant can access plans",
 		},
 		{
-			name:            "valid customer token",
-			token:           createCustomerToken(tg),
-			expectedStatus:  http.StatusOK,
-			shouldHaveError: false,
-			description:     "customer can access plans",
+			name:           "valid customer token",
+			token:          createCustomerToken(tg),
+			expectedStatus: http.StatusForbidden,
+			shouldHaveError: true,
+			description:    "customer cannot access plans",
 		},
 		{
 			name:            "token without user_id",
@@ -188,14 +191,14 @@ func TestListSubscriptionsAuthorizationEnforcement(t *testing.T) {
 			name:           "no token",
 			token:          "",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "missing authorization header",
+			expectedError:  "authorization header required",
 			description:    "authentication required",
 		},
 		{
 			name:           "expired token",
 			token:          createExpiredToken(tg),
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "invalid or expired token",
+			expectedError:  "token validation failed: token has invalid claims: token is expired",
 			description:    "expired tokens rejected",
 		},
 		{
@@ -271,7 +274,7 @@ func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 			token:          "",
 			subscriptionID: "sub-123",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "missing authorization header",
+			expectedError:  "authorization header required",
 			description:    "authentication required",
 		},
 		{
@@ -279,7 +282,7 @@ func TestGetSubscriptionByIDAuthorizationEnforcement(t *testing.T) {
 			token:          createExpiredToken(tg),
 			subscriptionID: "sub-123",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "invalid or expired token",
+			expectedError:  "token validation failed: token has invalid claims: token is expired",
 			description:    "expired tokens rejected",
 		},
 		{

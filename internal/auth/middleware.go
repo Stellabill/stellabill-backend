@@ -26,12 +26,6 @@ func ExtractRoles(c *gin.Context) []Role {
 		return roles
 	}
 
-	if c.Request != nil {
-		if headerRole := c.GetHeader("X-Role"); headerRole != "" {
-			return []Role{Role(strings.TrimSpace(headerRole))}
-		}
-	}
-
 	return nil
 }
 
@@ -86,8 +80,8 @@ func RequirePermission(permission Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		roles := ExtractRoles(c)
 		if len(roles) == 0 {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "insufficient permissions",
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "missing role - ensure JWT middleware is applied",
 			})
 			return
 		}
@@ -103,7 +97,7 @@ func RequirePermission(permission Permission) gin.HandlerFunc {
 
 		if len(roles) > 0 {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "insufficient permissions",
+				"error": "insufficient permissions for this operation",
 			})
 			return
 		}

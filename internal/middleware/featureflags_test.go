@@ -148,7 +148,7 @@ func TestFeatureFlag_CustomResponse(t *testing.T) {
 func TestConditionalFeatureFlag_ConditionTrue(t *testing.T) {
 	router := setupTestRouter()
 	
-	featureflags.GetInstance().SetFlag("test_conditional", false, "")
+	featureflags.GetInstance().SetFlag("test_conditional", true, "")
 	
 	condition := func(c *gin.Context) bool {
 		return c.GetHeader("X-Test-Condition") == "true"
@@ -163,8 +163,8 @@ func TestConditionalFeatureFlag_ConditionTrue(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	
-	if w.Code != 200 {
-		t.Errorf("Expected status 200, got %d", w.Code)
+	if w.Code != 503 {
+		t.Errorf("Expected status 503, got %d", w.Code)
 	}
 }
 

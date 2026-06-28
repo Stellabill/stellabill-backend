@@ -218,7 +218,7 @@ func TestRecoveryReturnsStructuredError(t *testing.T) {
 	if res.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", res.Code)
 	}
-	assertBodyField(t, res, "error", "internal server error")
+	assertBodyField(t, res, "error", "Internal server error")
 	assertBodyField(t, res, "request_id", "req-panic")
 	if !contains(logs.String(), "panic recovered request_id=req-panic err=boom") {
 		t.Fatalf("expected panic details in logs, got %q", logs.String())

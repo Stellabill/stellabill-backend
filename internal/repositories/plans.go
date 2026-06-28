@@ -27,11 +27,11 @@ type Plan struct {
 // PlanRepository interface for plan operations
 type PlanRepository interface {
 	Create(plan *Plan) error
-	GetByID(id string) (*Plan, error)
-	GetByMerchantID(merchantID string, limit, offset int) ([]*Plan, error)
+	GetByID(ctx context.Context, id string) (*Plan, error)
+	GetByMerchantID(ctx context.Context, merchantID string, limit, offset int) ([]*Plan, error)
 	Update(plan *Plan) error
 	Delete(id string) error
-	GetActivePlansByMerchantID(merchantID string) ([]*Plan, error)
+	GetActivePlansByMerchantID(ctx context.Context, merchantID string) ([]*Plan, error)
 	List(ctx context.Context) ([]*Plan, error)
 	WithTx(tx db.DBTX) PlanRepository
 }
@@ -86,7 +86,7 @@ func (r *postgresPlanRepository) Create(plan *Plan) error {
 }
 
 // GetByID retrieves a plan by ID
-func (r *postgresPlanRepository) GetByID(id string) (*Plan, error) {
+func (r *postgresPlanRepository) GetByID(ctx context.Context, id string) (*Plan, error) {
 	query := `
 		SELECT id, name, amount, currency, interval, description, merchant_id, created_at, updated_at
 		FROM plans
@@ -96,7 +96,7 @@ func (r *postgresPlanRepository) GetByID(id string) (*Plan, error) {
 	var plan Plan
 	var description sql.NullString
 	
-	err := r.db.QueryRow(query, id).Scan(
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&plan.ID,
 		&plan.Name,
 		&plan.Amount,
@@ -123,7 +123,7 @@ func (r *postgresPlanRepository) GetByID(id string) (*Plan, error) {
 }
 
 // GetByMerchantID retrieves plans for a merchant with pagination
-func (r *postgresPlanRepository) GetByMerchantID(merchantID string, limit, offset int) ([]*Plan, error) {
+func (r *postgresPlanRepository) GetByMerchantID(ctx context.Context, merchantID string, limit, offset int) ([]*Plan, error) {
 	query := `
 		SELECT id, name, amount, currency, interval, description, merchant_id, created_at, updated_at
 		FROM plans
@@ -132,7 +132,7 @@ func (r *postgresPlanRepository) GetByMerchantID(merchantID string, limit, offse
 		LIMIT $2 OFFSET $3
 	`
 	
-	rows, err := r.db.Query(query, merchantID, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, merchantID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get plans: %w", err)
 	}
@@ -212,7 +212,7 @@ func (r *postgresPlanRepository) Delete(id string) error {
 }
 
 // GetActivePlansByMerchantID retrieves active plans for a merchant
-func (r *postgresPlanRepository) GetActivePlansByMerchantID(merchantID string) ([]*Plan, error) {
+func (r *postgresPlanRepository) GetActivePlansByMerchantID(ctx context.Context, merchantID string) ([]*Plan, error) {
 	query := `
 		SELECT id, name, amount, currency, interval, description, merchant_id, created_at, updated_at
 		FROM plans
@@ -220,7 +220,7 @@ func (r *postgresPlanRepository) GetActivePlansByMerchantID(merchantID string) (
 		ORDER BY created_at DESC
 	`
 	
-	rows, err := r.db.Query(query, merchantID)
+	rows, err := r.db.QueryContext(ctx, query, merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active plans: %w", err)
 	}

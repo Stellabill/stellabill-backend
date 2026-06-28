@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ type OutboxTestSuite struct {
 
 // MockPublisher for testing
 type MockPublisher struct {
+	mu              sync.Mutex
 	publishedEvents []*Event
 	publishErrors   map[uuid.UUID]error
 	delayedErrors   map[uuid.UUID]time.Duration
@@ -40,6 +42,8 @@ func NewMockPublisher() *MockPublisher {
 }
 
 func (m *MockPublisher) Publish(ctx context.Context, event *Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if delay, exists := m.delayedErrors[event.ID]; exists {
 		time.Sleep(delay)
 	}
@@ -51,18 +55,26 @@ func (m *MockPublisher) Publish(ctx context.Context, event *Event) error {
 }
 
 func (m *MockPublisher) SetPublishError(id uuid.UUID, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.publishErrors[id] = err
 }
 
 func (m *MockPublisher) SetDelayedError(id uuid.UUID, delay time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.delayedErrors[id] = delay
 }
 
 func (m *MockPublisher) GetPublishedEvents() []*Event {
-	return m.publishedEvents
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]*Event(nil), m.publishedEvents...)
 }
 
 func (m *MockPublisher) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.publishedEvents = make([]*Event, 0)
 	m.publishErrors = make(map[uuid.UUID]error)
 	m.delayedErrors = make(map[uuid.UUID]time.Duration)

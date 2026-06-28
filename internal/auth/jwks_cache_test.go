@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -52,19 +51,17 @@ func TestJWKSCache_GetKey(t *testing.T) {
 	assert.Equal(t, "test-kid", k.KeyID())
 	assert.Equal(t, int32(1), atomic.LoadInt32(&callCount))
 
-	// 3. Unknown kid (negative cache)
+	// 3. Unknown kid while refresh is rate-limited (no second fetch)
 	_, err = cache.GetKey(context.Background(), "unknown-kid")
 	assert.Error(t, err)
-	// One refresh happens because we look for "unknown-kid" and it's not in the initial set
-	// Wait, actually the first call fetched "test-kid", so the set is in cache.
-	// Looking for "unknown-kid" will trigger a refresh because it's not found in the cached set.
-	assert.Equal(t, int32(2), atomic.LoadInt32(&callCount))
+	assert.Contains(t, err.Error(), "rate limited")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&callCount))
 
-	// 4. Rate limiting (no extra call for unknown kid within 60s)
+	// 4. Rate limiting (no extra call for another unknown kid within 60s)
 	_, err = cache.GetKey(context.Background(), "another-unknown")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limited")
-	assert.Equal(t, int32(2), atomic.LoadInt32(&callCount))
+	assert.Equal(t, int32(1), atomic.LoadInt32(&callCount))
 }
 
 func TestJWKSCache_ExpiredCache(t *testing.T) {

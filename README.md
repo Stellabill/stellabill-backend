@@ -10,6 +10,7 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 - [What this backend provides (for the frontend)](#what-this-backend-provides-for-the-frontend)
 - [Background Worker](#background-worker)
 - [Local setup](#local-setup)
+- [Operational playbooks](#operational-playbooks)
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [API reference](#api-reference)
@@ -35,7 +36,7 @@ Go (Gin) API backend for Stellabill - subscription and billing plans API. This r
 This service is the **backend only**. A separate frontend (or any client) can:
 
 - **Health check** - `GET /api/health` to verify the API is up.
-- **Plans** - `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). Currently returns an empty list; DB integration is planned.
+- **Plans** - `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). When `DATABASE_URL` is configured, plans are read from PostgreSQL via the `plans` table; otherwise the app falls back to the in-memory repository.
 - **Subscriptions** - `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
 
 CORS is enabled for all origins in development so a frontend on another port or domain can call these endpoints.
@@ -52,7 +53,7 @@ The backend includes a production-ready background worker system for automated b
 - **Distributed Locking**: Prevents duplicate processing when running multiple worker instances
 - **Retry Policy**: Automatic retry with exponential backoff (1s, 4s, 9s) for failed jobs
 - **Dead-Letter Queue**: Failed jobs after max attempts are moved for manual review
-- **Graceful Shutdown**: Workers complete in-flight jobs before shutting down
+- **Graceful Shutdown**: Workers and the HTTP server complete in-flight work before shutting down
 - **Metrics Tracking**: Monitor job processing statistics (processed, succeeded, failed, dead-lettered)
 - **Concurrent Workers**: Multiple workers can run safely without duplicate processing
 
@@ -159,7 +160,22 @@ curl -X POST http://localhost:8080/api/outbox/test
 
 ---
 
+## Operational playbooks
+
+Keep the operational docs close to the code so the measurement workflow is easy to find during review and incident response:
+
+- [Capacity planning playbook](docs/runbooks/capacity-planning.md)
+- [Operational runbooks index](docs/ops/README.md)
+
+The capacity planning playbook includes the reproducible snapshot script, the sizing model, alert thresholds, and the edge-case checks for zero-traffic and burst-traffic tenant profiles.
+
 ## Configuration
+
+> **Quick start:** copy [`.env.example`](.env.example) to `.env`, fill in the
+> required values marked `[REQUIRED]`, and start the server. Never commit `.env`.
+> The example file is kept in sync with `config.go` and validated by
+> `TestEnvExampleValuesPassValidation` in `internal/config/config_test.go`.
+
 
 | Variable        | Default                                      | Description                    |
 |----------------|----------------------------------------------|--------------------------------|
@@ -661,6 +677,7 @@ This project follows a **spec-first** approach using OpenAPI 3.0.3. The specific
 - **Contract Tests**: Automatically validate that implementation matches the spec (`go test ./internal/contract/...`).
 - **CI Enforcement**: Pull requests are checked for undocumented endpoints via `go run ./cmd/openapi-validate`.
 - **Versioning**: Versioned endpoints use `/api/v1/` prefix; unversioned public endpoints (like health) stay at `/api/`.
+- **Legacy Alias Policy**: When a protected `/api/*` alias is retained for backward compatibility, it must reuse the same handler and RBAC as `/api/v1/*`, and only the legacy alias gets deprecation headers.
 - **Contributor Checklist**: See `docs/OPENAPI_GUIDE.md` for the full checklist when modifying API endpoints.
 
 ### Useful Commands

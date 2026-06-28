@@ -1,9 +1,6 @@
 package service
 
-import (
-	"encoding/json"
-)
-
+import "encoding/json"
 // PlanMetadata is the plan subset embedded in the response.
 type PlanMetadata struct {
 	PlanID      string `json:"plan_id"`
@@ -32,16 +29,23 @@ type SubscriptionDetail struct {
 	BillingSummary BillingSummary `json:"billing_summary" redacted:"amount"`
 }
 
-// MarshalJSON implements redacted JSON marshaling.
-func (sd *SubscriptionDetail) MarshalJSON() ([]byte, error) {
+func (sd SubscriptionDetail) MarshalJSON() ([]byte, error) {
 	type Alias SubscriptionDetail
-	data := struct {
-		*Alias
-		Customer string `json:"customer,omitempty"`
-	}{
-		Alias: (*Alias)(sd),
+	copysd := Alias(sd)
+	if copysd.Customer != "" {
+		copysd.Customer = "cust_***"
 	}
-	return json.Marshal(data)
+	return json.Marshal(copysd)
+}
+
+
+
+// SubscriptionStatusChange is returned after a successful status mutation.
+type SubscriptionStatusChange struct {
+	ID             string `json:"id"`
+	PreviousStatus string `json:"previous_status"`
+	Status         string `json:"status"`
+	Changed        bool   `json:"changed"`
 }
 
 // StatementDetail is the payload for billing statements.
@@ -84,4 +88,3 @@ type PaginationMetadata struct {
 	TotalCount     int    `json:"total_count,omitempty"`
 	Limit          int    `json:"limit"`
 }
-

@@ -17,6 +17,25 @@ go test ./internal/handlers/... -bench=. -benchmem
 ./scripts/analyze_benchmarks.sh baseline.txt new.txt
 ```
 
+## Load Test Smoke Profile
+
+The repository includes a k6 smoke profile that exercises the API with real HTTP requests and authorization. It validates end-to-end service behavior under load and enforces:
+
+- p95 latency < `250ms`
+- error rate < `0.1%`
+
+```bash
+make loadtest-smoke
+```
+
+For remote targets, set `LOADTEST_TARGET` and `JWT_SECRET`:
+
+```bash
+LOADTEST_TARGET=https://staging.example.com \
+JWT_SECRET=${JWT_SECRET} \
+make loadtest-smoke
+```
+
 ## Benchmark Categories
 
 ### 1. Dataset Size Tests

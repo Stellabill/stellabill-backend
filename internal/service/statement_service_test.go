@@ -52,7 +52,10 @@ func seedStatements() []*repository.StatementRow {
 }
 
 func newStatementService(rows ...*repository.StatementRow) service.StatementService {
-	subRepo := repository.NewMockSubscriptionRepo()
+	subRepo := repository.NewMockSubscriptionRepo(
+		&repository.SubscriptionRow{ID: "sub-1", TenantID: "merchant-1", CustomerID: "cust-1", Status: "active", PlanID: "plan-1"},
+		&repository.SubscriptionRow{ID: "sub-2", TenantID: "merchant-1", CustomerID: "cust-2", Status: "active", PlanID: "plan-1"},
+	)
 	stmtRepo := repository.NewMockStatementRepo(rows...)
 	return service.NewStatementService(subRepo, stmtRepo)
 }
@@ -350,7 +353,12 @@ func TestStatementListByCustomer_LargeSet(t *testing.T) {
 
 func TestStatementListByCustomer_MerchantAccess(t *testing.T) {
 	rows := seedStatements()
-	svc := newStatementService(rows...)
+	subRepo := repository.NewMockSubscriptionRepo(
+		&repository.SubscriptionRow{ID: "sub-1", TenantID: "merchant-1", CustomerID: "cust-1", Status: "active", PlanID: "p1"},
+		&repository.SubscriptionRow{ID: "sub-2", TenantID: "merchant-2", CustomerID: "cust-2", Status: "active", PlanID: "p1"},
+	)
+	stmtRepo := repository.NewMockStatementRepo(rows...)
+	svc := service.NewStatementService(subRepo, stmtRepo)
 
 	q := repository.StatementQuery{Limit: 10}
 	detail, count, _, err := svc.ListByCustomer(context.Background(), "merchant-1", []string{"merchant"}, "cust-1", q)

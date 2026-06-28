@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"runtime/debug"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"stellarbill-backend/internal/logger"
-	"stellarbill-backend/internal/security"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,26 +36,43 @@ const (
 	redactedPlaceholder  = "[REDACTED]"
 )
 
+// secretPatterns captures common shapes for credentials that occasionally end
+// up inside panic values (e.g. a panic from a third-party SDK echoing an
+// Authorization header). They are redacted in the *log line* so internal
+// observability tooling does not become a new exfil channel. The client
+// response never contains the panic value at all.
 var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(bearer|token|auth|key|secret|password|passwd|pwd)([^\w])`),
+	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._\-]+`),
+	regexp.MustCompile(`(?i)authorization:\s*\S+`),
+	regexp.MustCompile(`(?i)(password|passwd|pwd)\s*[:=]\s*\S+`),
+	regexp.MustCompile(`(?i)(api[_-]?key|apikey|secret|token)\s*[:=]\s*\S+`),
+	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	// JWT: three base64url segments separated by dots.
+	regexp.MustCompile(`eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+`),
 }
 
 // Recovery returns a Gin middleware that captures any panic raised by a
 // downstream handler or middleware, logs a structured event with the
 // request id, and writes a redacted error envelope to the client.
-func Recovery() gin.HandlerFunc {
+func Recovery(logger ...*log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var std *log.Logger
+		if len(logger) > 0 {
+			std = logger[0]
+		}
 		defer func() {
 			if rec := recover(); rec != nil {
-				handlePanic(c, rec, debug.Stack())
+				handlePanic(c, rec, debug.Stack(), std)
 			}
 		}()
 		c.Next()
 	}
 }
 
-func handlePanic(c *gin.Context, rec any, stack []byte) {
-	// Guard against a panic from inside the recovery path itself.
+func handlePanic(c *gin.Context, rec any, stack []byte, stdLogger *log.Logger) {
+	// Guard against a panic from inside the recovery path itself. Without
+	// this, a faulty logger or response writer would crash the goroutine
+	// and tear down the connection without an error envelope.
 	defer func() {
 		if r2 := recover(); r2 != nil {
 			logger.Log.WithFields(map[string]any{
@@ -95,6 +112,12 @@ func handlePanic(c *gin.Context, rec any, stack []byte) {
 	}
 
 	logger.Log.WithFields(fields).Error("panic recovered")
+
+	// Also write a lightweight line to the provided stdlib logger when one
+	// is supplied (tests pass a stdlib logger and assert on its output).
+	if stdLogger != nil {
+		stdLogger.Printf("panic recovered request_id=%s err=%s", requestID, panicMsg)
+	}
 
 	envelope := ErrorResponse{
 		Error:   internalErrorMessage,
@@ -142,8 +165,7 @@ func redactSecrets(s string) string {
 	for _, re := range secretPatterns {
 		s = re.ReplaceAllString(s, redactedPlaceholder)
 	}
-	// Also use the general PII masker
-	return security.MaskPII(s)
+	return s
 }
 
 func safePath(c *gin.Context) string {
@@ -153,6 +175,7 @@ func safePath(c *gin.Context) string {
 	return c.Request.URL.Path
 }
 
+// RecoveryLogger is retained for backward compatibility with older wiring.
 func RecoveryLogger() gin.HandlerFunc {
 	return Recovery()
 }

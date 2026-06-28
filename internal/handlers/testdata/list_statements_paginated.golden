@@ -1,0 +1,36 @@
+{
+  "api_version": "2025-01-01",
+  "data": {
+    "statements": [
+      {
+        "id": "stmt-3",
+        "subscription_id": "",
+        "customer": "",
+        "period_start": "",
+        "period_end": "",
+        "issued_at": "",
+        "total_amount": "3000",
+        "currency": "USD",
+        "kind": "invoice",
+        "status": "paid"
+      },
+      {
+        "id": "stmt-4",
+        "subscription_id": "",
+        "customer": "",
+        "period_start": "",
+        "period_end": "",
+        "issued_at": "",
+        "total_amount": "4000",
+        "currency": "USD",
+        "kind": "receipt",
+        "status": "pending"
+      }
+    ]
+  },
+  "pagination": {
+    "count": 10,
+    "page": 2,
+    "page_size": 2
+  }
+}

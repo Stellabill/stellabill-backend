@@ -1,0 +1,22 @@
+{
+  "has_more": false,
+  "next_cursor": "",
+  "subscriptions": [
+    {
+      "id": "sub_1",
+      "plan_id": "plan_1",
+      "customer": "Alice",
+      "status": "active",
+      "amount": "",
+      "interval": ""
+    },
+    {
+      "id": "sub_2",
+      "plan_id": "plan_2",
+      "customer": "Bob",
+      "status": "canceled",
+      "amount": "",
+      "interval": ""
+    }
+  ]
+}

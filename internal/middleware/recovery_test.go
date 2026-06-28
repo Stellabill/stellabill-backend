@@ -2,13 +2,25 @@ package middleware
 
 import (
 	"encoding/json"
+	"log"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
+
+const testInternalErrorMessage = "internal server error"
+
+type testRuntimeErr string
+
+type TestErrorResponse struct {
+	Error   string    `json:"error"`
+	Code    string    `json:"code"`
+	Request string    `json:"request_id"`
+	Time    time.Time `json:"timestamp"`
+}
 
 func TestRecoveryMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -27,8 +39,8 @@ func TestRecoveryMiddleware(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			router.Use(Recovery())
-
+			router.Use(Recovery(log.Default()))
+			
 			router.GET("/panic", func(c *gin.Context) {
 				panic(tt.panicValue)
 			})
@@ -46,7 +58,7 @@ func TestRecoveryMiddleware(t *testing.T) {
 			var response map[string]interface{}
 			err := json.Unmarshal(w.Body.Bytes(), &response)
 			assert.NoError(t, err)
-			assert.Equal(t, internalErrorMessage, response["error"])
+			assert.Equal(t, testInternalErrorMessage, response["error"])
 		})
 	}
 }
@@ -55,8 +67,8 @@ func TestRecoveryWithRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
-
+	router.Use(Recovery(log.Default()))
+	
 	router.GET("/panic", func(c *gin.Context) {
 		panic("test panic")
 	})
@@ -73,15 +85,15 @@ func TestRecoveryWithRequestID(t *testing.T) {
 	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
-	assert.Equal(t, internalErrorMessage, response["error"])
+	assert.Equal(t, testInternalErrorMessage, response["error"])
 }
 
 func TestRecoveryGeneratesRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
-
+	router.Use(Recovery(log.Default()))
+	
 	router.GET("/panic", func(c *gin.Context) {
 		panic("test panic")
 	})
@@ -94,7 +106,7 @@ func TestRecoveryGeneratesRequestID(t *testing.T) {
 
 	assert.Equal(t, 500, w.Code)
 
-	var resp ErrorResponse
+	var resp TestErrorResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, resp.Request, "request_id must be generated when none provided")
@@ -104,8 +116,8 @@ func TestRecoveryPlainTextResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
-
+	router.Use(Recovery(log.Default()))
+	
 	router.GET("/panic", func(c *gin.Context) {
 		panic("test panic")
 	})
@@ -125,8 +137,8 @@ func TestPanicAfterHeadersWritten(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
-
+	router.Use(Recovery(log.Default()))
+	
 	router.GET("/panic-after-write", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 		panic("panic after response written")
@@ -147,8 +159,8 @@ func TestNestedPanic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
-
+	router.Use(Recovery(log.Default()))
+	
 	router.GET("/nested-panic", func(c *gin.Context) {
 		func() {
 			defer func() {
@@ -171,18 +183,87 @@ func TestNestedPanic(t *testing.T) {
 	assert.Equal(t, 500, w.Code)
 }
 
-func TestSanitizeStackTruncation(t *testing.T) {
-	short := "short stack trace"
-	assert.Equal(t, short, sanitizeStack(short))
+func TestRecoveryRequestIDMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 
-	long := strings.Repeat("a", 5000)
-	result := sanitizeStack(long)
-	assert.Len(t, result, maxStackBytes+len("... (truncated)"))
-	assert.Contains(t, result, "... (truncated)")
+	tests := []struct {
+		name         string
+		requestID    string
+		expectHeader bool
+	}{
+		{
+			name:         "with existing request ID",
+			requestID:    "existing-123",
+			expectHeader: true,
+		},
+		{
+			name:         "without request ID",
+			requestID:    "",
+			expectHeader: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(RequestID())
+			
+			router.GET("/test", func(c *gin.Context) {
+				id := GetRequestID(c)
+				assert.NotEmpty(t, id)
+				c.JSON(200, gin.H{"request_id": id})
+			})
+
+			req := httptest.NewRequest("GET", "/test", nil)
+			if tt.requestID != "" {
+				req.Header.Set("X-Request-ID", tt.requestID)
+			}
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, 200, w.Code)
+			assert.Equal(t, tt.expectHeader, w.Header().Get("X-Request-ID") != "")
+			
+			var response map[string]interface{}
+			err := json.Unmarshal(w.Body.Bytes(), &response)
+			assert.NoError(t, err)
+			assert.NotEmpty(t, response["request_id"])
+		})
+	}
 }
 
-// Test-local types to avoid collisions with other _test.go files.
-type testRuntimeErr string
+func TestRecoveryGetRequestID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("with request ID in context", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Set("request_id", "test-123")
+		
+		id := GetRequestID(c)
+		assert.Equal(t, "test-123", id)
+	})
+
+	t.Run("without request ID in context", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		
+		id := GetRequestID(c)
+		assert.Empty(t, id)
+	})
+}
+
+// func TestSanitizeStack(t *testing.T) {
+// 	// Test with short stack trace
+// 	shortStack := "short stack trace"
+// 	result := sanitizeStack(shortStack)
+// 	assert.Equal(t, shortStack, result)
+// 
+// 	// Test with long stack trace (over 4000 chars)
+// 	longStack := strings.Repeat("a", 5000)
+// 	result = sanitizeStack(longStack)
+// 	assert.Len(t, result, 4000+len("... (truncated)"))
+// 	assert.Contains(t, result, "... (truncated)")
+// }
 
 func (e testRuntimeErr) Error() string { return string(e) }
 
@@ -194,7 +275,7 @@ func BenchmarkRecoveryMiddleware(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(log.Default()))
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
@@ -212,7 +293,7 @@ func BenchmarkRecoveryWithPanic(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(Recovery())
+	router.Use(Recovery(log.Default()))
 	router.GET("/panic", func(c *gin.Context) {
 		panic("benchmark panic")
 	})

@@ -1,0 +1,36 @@
+package auth
+
+import (
+	"github.com/golang-jwt/jwt/v5"
+)
+
+// Claims represents the JWT claims structure
+type Claims struct {
+	UserID     string   `json:"user_id"`
+	Email      string   `json:"email"`
+	Role       Role     `json:"role"`
+	Roles      []Role   `json:"roles,omitempty"`
+	MerchantID string   `json:"merchant_id,omitempty"`
+	TenantID   string   `json:"tenant_id,omitempty"`
+	jwt.RegisteredClaims
+}
+
+// Roles are defined in roles.go
+
+// AllRoles returns all valid roles
+func AllRoles() []string {
+	return []string{string(RoleAdmin), string(RoleMerchant), string(RoleCustomer)}
+}
+
+// HasRole checks if claims contain the specified role
+func (c *Claims) HasRole(role string) bool {
+	if string(c.Role) == role {
+		return true
+	}
+	for _, r := range c.Roles {
+		if string(r) == role {
+			return true
+		}
+	}
+	return false
+}

@@ -19,7 +19,10 @@ type memoryRepository struct {
 }
 
 func newMemoryRepository() *memoryRepository {
-	return &memoryRepository{events: make(map[uuid.UUID]*Event)}
+	return &memoryRepository{
+		events:   make(map[uuid.UUID]*Event),
+		progress: make(map[string]uuid.UUID),
+	}
 }
 
 func (m *memoryRepository) Store(event *Event) error {
@@ -31,15 +34,23 @@ func (m *memoryRepository) Store(event *Event) error {
 }
 
 func (m *memoryRepository) GetPendingEvents(limit int) ([]*Event, error) {
+	return m.GetPendingEventsForPublisher("default", limit)
+}
+
+func (m *memoryRepository) GetPendingEventsForPublisher(publisher string, limit int) ([]*Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
 	var pending []*Event
+	lastID, hasProgress := m.progress[publisher]
 	for _, event := range m.events {
 		if event.Status != StatusPending {
 			continue
 		}
 		if event.NextRetryAt != nil && event.NextRetryAt.After(now) {
+			continue
+		}
+		if hasProgress && event.ID.String() <= lastID.String() {
 			continue
 		}
 		pending = append(pending, event)
@@ -221,6 +232,58 @@ func TestDispatcherPublishesPendingEvent(t *testing.T) {
 	stored, err := repo.GetByID(event.ID)
 	require.NoError(t, err)
 	assert.Equal(t, StatusCompleted, stored.Status)
+}
+
+func TestDispatcherSkipsEventAtPersistedPublisherProgress(t *testing.T) {
+	repo := newMemoryRepository()
+	publisher := NewMockPublisher()
+	cfg := DefaultDispatcherConfig()
+	cfg.PollInterval = 20 * time.Millisecond
+	cfg.BatchSize = 5
+
+	event := &Event{
+		ID:         uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		EventType:  "already.delivered",
+		EventData:  json.RawMessage(`{"type":"already.delivered"}`),
+		OccurredAt: time.Now(),
+		Status:     StatusPending,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Version:    1,
+	}
+	require.NoError(t, repo.Store(event))
+	repo.progress["default"] = event.ID
+
+	d := NewDispatcher(repo, publisher, cfg)
+	require.NoError(t, d.Start())
+	defer d.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+	assert.Empty(t, publisher.GetPublishedEvents())
+}
+
+func TestMarkPublishedDoesNotRegressProgress(t *testing.T) {
+	repo := newMemoryRepository()
+	older := &Event{
+		ID:        uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		EventType: "older",
+		Status:    StatusPending,
+	}
+	newer := &Event{
+		ID:        uuid.MustParse("00000000-0000-0000-0000-000000000002"),
+		EventType: "newer",
+		Status:    StatusPending,
+	}
+	require.NoError(t, repo.Store(older))
+	require.NoError(t, repo.Store(newer))
+
+	require.NoError(t, repo.MarkPublished("default", newer, []string{"default"}))
+	require.NoError(t, repo.MarkPublished("default", older, []string{"default"}))
+
+	progress, err := repo.GetPublisherProgress("default")
+	require.NoError(t, err)
+	require.NotNil(t, progress)
+	assert.Equal(t, newer.ID, *progress)
 }
 
 func TestDispatcherPermanentErrorDeadLetters(t *testing.T) {

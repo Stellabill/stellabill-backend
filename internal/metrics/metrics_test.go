@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func setupTestRouter() *gin.Engine {
@@ -216,7 +218,7 @@ func TestMetricsMiddleware_MultipleRequests(t *testing.T) {
 	}
 
 	if testutil.ToFloat64(HTTPRequestTotal.WithLabelValues("/count", "GET", "200")) != 5 {
-		t.Errorf("Expected HTTPRequestTotal to be 5, got %f", 
+		t.Errorf("Expected HTTPRequestTotal to be 5, got %f",
 			testutil.ToFloat64(HTTPRequestTotal.WithLabelValues("/count", "GET", "200")))
 	}
 }
@@ -251,7 +253,6 @@ func TestMetricsEndpoint(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/test", nil)
 	r.ServeHTTP(w, req)
 
-	// Observe DB metrics so they appear in output
 	done := DBTimer("SELECT", "users")
 	done(nil)
 
@@ -280,7 +281,7 @@ func TestMetricsEndpoint(t *testing.T) {
 
 func TestDBTimer_DifferentOperations(t *testing.T) {
 	resetMetrics()
-	
+
 	operations := []struct {
 		op    string
 		table string
@@ -328,5 +329,97 @@ func TestHighCardinalityProtection(t *testing.T) {
 	count := testutil.ToFloat64(HTTPRequestTotal.WithLabelValues("/test/:id", "GET", "200"))
 	if count != 100 {
 		t.Errorf("Expected 100 requests on route pattern, got %f", count)
+	}
+}
+
+// ---- exemplar tests ----
+
+func newSampledCtx(t *testing.T) (context.Context, func()) {
+	t.Helper()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	ctx, span := tp.Tracer("test").Start(context.Background(), "op")
+	return ctx, func() { span.End() }
+}
+
+func newUnsampledCtx(t *testing.T) (context.Context, func()) {
+	t.Helper()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.NeverSample()))
+	ctx, span := tp.Tracer("test").Start(context.Background(), "op")
+	return ctx, func() { span.End() }
+}
+
+func TestSpanExemplar_SampledRecording(t *testing.T) {
+	ctx, stop := newSampledCtx(t)
+	defer stop()
+	labels := spanExemplar(ctx)
+	if labels == nil {
+		t.Fatal("expected non-nil labels for sampled+recording span")
+	}
+	if len(labels["trace_id"]) != 32 {
+		t.Errorf("trace_id length = %d, want 32", len(labels["trace_id"]))
+	}
+	if len(labels["span_id"]) != 16 {
+		t.Errorf("span_id length = %d, want 16", len(labels["span_id"]))
+	}
+}
+
+func TestSpanExemplar_Unsampled(t *testing.T) {
+	ctx, stop := newUnsampledCtx(t)
+	defer stop()
+	if labels := spanExemplar(ctx); labels != nil {
+		t.Errorf("expected nil for unsampled span, got %v", labels)
+	}
+}
+
+func TestSpanExemplar_NoSpan(t *testing.T) {
+	// Background context — no span, no-op span is not sampled/recording.
+	if labels := spanExemplar(context.Background()); labels != nil {
+		t.Errorf("expected nil for context without span, got %v", labels)
+	}
+}
+
+func TestSpanExemplar_EndedSpan(t *testing.T) {
+	ctx, stop := newSampledCtx(t)
+	stop() // end immediately — IsRecording becomes false
+	if labels := spanExemplar(ctx); labels != nil {
+		t.Errorf("expected nil for ended (non-recording) span, got %v", labels)
+	}
+}
+
+func TestMetricsMiddleware_ExemplarAttachedOnSampledRequest(t *testing.T) {
+	resetMetrics()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	ctx, span := tp.Tracer("test").Start(context.Background(), "req")
+	defer span.End()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(MetricsMiddleware())
+	r.GET("/ex", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req := httptest.NewRequest("GET", "/ex", nil).WithContext(ctx)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	if testutil.ToFloat64(HTTPRequestTotal.WithLabelValues("/ex", "GET", "200")) != 1 {
+		t.Error("counter must be 1 after sampled request")
+	}
+}
+
+func TestMetricsMiddleware_NoExemplarOnUnsampledRequest(t *testing.T) {
+	resetMetrics()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.NeverSample()))
+	ctx, span := tp.Tracer("test").Start(context.Background(), "req")
+	defer span.End()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(MetricsMiddleware())
+	r.GET("/noex", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req := httptest.NewRequest("GET", "/noex", nil).WithContext(ctx)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	if testutil.ToFloat64(HTTPRequestTotal.WithLabelValues("/noex", "GET", "200")) != 1 {
+		t.Error("counter must be 1 after unsampled request")
 	}
 }

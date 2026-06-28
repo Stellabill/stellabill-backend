@@ -11,10 +11,13 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/featureflags"
+	graphqlgateway "stellarbill-backend/internal/graphql"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
@@ -71,6 +74,8 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	var dbPool *pgxpool.Pool
 	var planDB *sql.DB
+	var replicaDB *sql.DB
+	var routerDB db.DBTX
 	if cfg.DBConn != "" {
 		var err error
 		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
@@ -96,6 +101,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		} else {
 			routerDB = planDB
 		}
+		_ = routerDB
 	}
 
 	var stopMetrics chan struct{}
@@ -198,6 +204,23 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		v1.GET("/plans", auth.RequirePermission(auth.PermReadPlans), h.ListPlans)
 		v1.GET("/statements/:id", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewListStatementsHandler(stmtSvc))
+
+		// GraphQL gateway — authenticated and per-tenant rate limited
+		gqlSvc := graphqlgateway.Services{
+			SubSvc:   svc,
+			StmtSvc:  stmtSvc,
+			PlanRepo: cachedPlanRepo,
+		}
+		tenantRL := middleware.TenantRateLimitMiddleware(middleware.TenantRateLimitConfig{
+			Enabled: cfg.RateLimitEnabled,
+			RPS:     cfg.RateLimitRPS,
+			Burst:   cfg.RateLimitBurst,
+		})
+		if gqlHandler, err := graphqlgateway.NewHandler(gqlSvc); err == nil {
+			v1.POST("/graphql", tenantRL, gqlHandler.ServeHTTP)
+		} else {
+			log.Printf("failed to initialise GraphQL handler: %v", err)
+		}
 	}
 
 	// Legacy /api routes - also protected

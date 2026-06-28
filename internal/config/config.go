@@ -54,7 +54,6 @@ type Config struct {
 	DBReplicaConn string
 	JWTSecret     string
 	JWKSURL                string
-	SecurityFrameAncestors string
 	// Add additional secure defaults for optional configs
 	MaxHeaderBytes      int
 	MaxRequestSize      int64
@@ -79,6 +78,7 @@ type Config struct {
 	AllowedOrigins string
 	// Security headers
 	SecurityFrameAncestors string
+	SecurityCSPReportURI   string
 	// Outbox JWE configuration
 	OutboxJWEEnabled             bool
 	OutboxJWESensitiveEventTypes []string

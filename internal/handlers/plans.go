@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -132,4 +135,48 @@ func ListPlans(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"plans": out})
+}
+
+func GetPlan(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
+		return
+	}
+
+	if planRepo == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "plan not found"})
+		return
+	}
+
+	row, err := planRepo.FindByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "plan not found"})
+		return
+	}
+
+	plan := Plan{
+		ID:          row.ID,
+		Name:        row.Name,
+		Amount:      row.Amount,
+		Currency:    row.Currency,
+		Interval:    row.Interval,
+		Description: row.Description,
+	}
+
+	tenantID := c.GetString("tenantID")
+	versionBytes, _ := json.Marshal(plan)
+	version := fmt.Sprintf("%x", sha256.Sum256(versionBytes))
+	eTagHash := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s", tenantID, plan.ID, version)))
+	eTag := fmt.Sprintf(`"%x"`, eTagHash)
+
+	c.Header("ETag", eTag)
+	c.Header("Cache-Control", "private, max-age=0, must-revalidate")
+
+	if match := c.GetHeader("If-None-Match"); match == eTag {
+		c.Status(http.StatusNotModified)
+		return
+	}
+
+	c.JSON(http.StatusOK, plan)
 }

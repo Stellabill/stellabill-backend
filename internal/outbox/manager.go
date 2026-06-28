@@ -144,8 +144,7 @@ func (m *Manager) createOutboxTable() error {
 		-- publisher progress table for per-publisher cursors
 		CREATE TABLE IF NOT EXISTS outbox_publisher_progress (
 			publisher VARCHAR(255) PRIMARY KEY,
-			last_processed_at TIMESTAMPTZ,
-			last_processed_id UUID,
+			last_event_id UUID NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 

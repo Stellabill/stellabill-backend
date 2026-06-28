@@ -14,16 +14,11 @@ import (
 type memRepo struct {
 	mu       sync.Mutex
 	events   []*Event
-	progress map[string]*publisherCursor
-}
-
-type publisherCursor struct {
-	lastAt *time.Time
-	lastID *uuid.UUID
+	progress map[string]uuid.UUID
 }
 
 func newMemRepo() *memRepo {
-	return &memRepo{progress: make(map[string]*publisherCursor)}
+	return &memRepo{progress: make(map[string]uuid.UUID)}
 }
 
 func (r *memRepo) Store(event *Event) error {
@@ -34,7 +29,7 @@ func (r *memRepo) Store(event *Event) error {
 }
 
 func (r *memRepo) GetPendingEvents(limit int) ([]*Event, error) {
-	return r.GetPendingEventsSince(nil, nil, limit)
+	return r.GetPendingEventsForPublisher("", limit)
 }
 
 func (r *memRepo) GetByID(id uuid.UUID) (*Event, error)                                { return nil, nil }
@@ -49,41 +44,32 @@ func (r *memRepo) RequeueEvent(id uuid.UUID) error                          { re
 
 func (r *memRepo) EnsurePublisherProgressTable() error { return nil }
 
-func (r *memRepo) GetPublisherProgress(publisher string) (*time.Time, *uuid.UUID, error) {
+func (r *memRepo) GetPublisherProgress(publisher string) (*uuid.UUID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	c := r.progress[publisher]
-	if c == nil {
-		return nil, nil, nil
+	id, ok := r.progress[publisher]
+	if !ok {
+		return nil, nil
 	}
-	return c.lastAt, c.lastID, nil
+	return &id, nil
 }
 
-func (r *memRepo) UpdatePublisherProgress(publisher string, lastProcessedAt time.Time, lastProcessedID uuid.UUID) error {
+func (r *memRepo) MarkPublished(publisher string, event *Event, publishers []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	c := r.progress[publisher]
-	if c == nil {
-		c = &publisherCursor{}
-		r.progress[publisher] = c
+	if current, ok := r.progress[publisher]; !ok || current.String() < event.ID.String() {
+		r.progress[publisher] = event.ID
 	}
-	t := lastProcessedAt
-	id := lastProcessedID
-	c.lastAt = &t
-	c.lastID = &id
 	return nil
 }
 
-func (r *memRepo) GetPendingEventsSince(since *time.Time, lastID *uuid.UUID, limit int) ([]*Event, error) {
+func (r *memRepo) GetPendingEventsForPublisher(publisher string, limit int) ([]*Event, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []*Event
+	lastID, hasProgress := r.progress[publisher]
 	for _, e := range r.events {
-		if since == nil {
-			out = append(out, e)
-			continue
-		}
-		if e.OccurredAt.After(*since) || (e.OccurredAt.Equal(*since) && lastID != nil && e.ID.String() > lastID.String()) {
+		if !hasProgress || e.ID.String() > lastID.String() {
 			out = append(out, e)
 		}
 	}
@@ -139,14 +125,14 @@ func TestPerPublisherDrain(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Check progress: publisher-1 (succeedPublisher) should have progressed
-	since1, id1, _ := repo.GetPublisherProgress("publisher-1")
-	if assert.NotNil(t, since1) {
+	id1, _ := repo.GetPublisherProgress("publisher-1")
+	if assert.NotNil(t, id1) {
 		assert.Equal(t, e.ID.String(), id1.String())
 	}
 
 	// publisher-0 (console) is also a console publisher that succeeds, so both should progress
-	since0, id0, _ := repo.GetPublisherProgress("publisher-0")
-	if assert.NotNil(t, since0) {
+	id0, _ := repo.GetPublisherProgress("publisher-0")
+	if assert.NotNil(t, id0) {
 		assert.Equal(t, e.ID.String(), id0.String())
 	}
 }
@@ -173,23 +159,21 @@ func TestFailureIsolationAndRecovery(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// succeedPublisher should progress (publisher-1)
-	since1, id1, _ := repo.GetPublisherProgress("publisher-1")
-	if assert.NotNil(t, since1) {
+	id1, _ := repo.GetPublisherProgress("publisher-1")
+	if assert.NotNil(t, id1) {
 		assert.Equal(t, e.ID.String(), id1.String())
 	}
 
 	// failPublisher should not progress
-	since0, id0, _ := repo.GetPublisherProgress("publisher-0")
-	assert.Nil(t, since0)
+	id0, _ := repo.GetPublisherProgress("publisher-0")
 	assert.Nil(t, id0)
 
 	// Simulate crash recovery: update failing publisher progress to event to simulate manual catch-up
-	_ = repo.UpdatePublisherProgress("publisher-0", e.OccurredAt, e.ID)
+	_ = repo.MarkPublished("publisher-0", e, []string{"publisher-0", "publisher-1"})
 
 	// After updating, the event should be marked completed when both have progress
 	time.Sleep(200 * time.Millisecond)
 	// event should be completed: in mem repo we don't update status, but ensure both cursors present
-	since0b, id0b, _ := repo.GetPublisherProgress("publisher-0")
-	assert.NotNil(t, since0b)
+	id0b, _ := repo.GetPublisherProgress("publisher-0")
 	assert.Equal(t, e.ID.String(), id0b.String())
 }

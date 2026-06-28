@@ -18,6 +18,7 @@ const (
 	PermManageSubscriptions Permission = "manage:subscriptions"
 	PermManageReconciliation Permission = "manage:reconciliation"
 	PermReadReconciliation   Permission = "read:reconciliation"
+	PermManageAdmin          Permission = "manage:admin"
 )
 
 var rolePermissions = map[Role][]Permission{
@@ -28,6 +29,7 @@ var rolePermissions = map[Role][]Permission{
 		PermManageSubscriptions,
 		PermManageReconciliation,
 		PermReadReconciliation,
+		PermManageAdmin,
 	},
 	RoleMerchant: {
 		PermReadPlans,

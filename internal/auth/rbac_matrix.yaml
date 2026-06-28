@@ -1,0 +1,247 @@
+# RBAC expectations for every protected route registered by internal/routes.
+# Tests fail when a protected route is not listed here. Roles omitted from a
+# route entry are denied by default and are exercised by the "auditor" edge case.
+roles:
+  - admin
+  - user
+  - merchant
+  - customer
+
+default_denied_roles:
+  - auditor
+
+routes:
+  - method: GET
+    path: /api/v1/subscriptions
+    request_path: /api/v1/subscriptions
+    roles:
+      admin: 200
+      user: 200
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/v1/subscriptions/:id
+    request_path: /api/v1/subscriptions/sub-123
+    roles:
+      admin: 200
+      user: 200
+      merchant: 200
+      customer: 403
+
+  - method: POST
+    path: /api/v1/subscriptions/:id/status
+    request_path: /api/v1/subscriptions/sub-123/status
+    body: '{"status":"active"}'
+    roles:
+      admin: 200
+      user: 403
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/v1/plans
+    request_path: /api/v1/plans
+    roles:
+      admin: 200
+      user: 200
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/v1/statements/:id
+    request_path: /api/v1/statements/stmt-123
+    roles:
+      admin: 404
+      user: 404
+      merchant: 404
+      customer: 403
+
+  - method: GET
+    path: /api/v1/statements
+    request_path: /api/v1/statements
+    roles:
+      admin: 200
+      user: 200
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/plans
+    request_path: /api/plans
+    roles:
+      admin: 200
+      user: 200
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/subscriptions
+    request_path: /api/subscriptions
+    roles:
+      admin: 200
+      user: 200
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/subscriptions/:id
+    request_path: /api/subscriptions/sub-123
+    roles:
+      admin: 200
+      user: 200
+      merchant: 200
+      customer: 403
+
+  - method: POST
+    path: /api/subscriptions/:id/status
+    request_path: /api/subscriptions/sub-123/status
+    body: '{"status":"active"}'
+    roles:
+      admin: 200
+      user: 403
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/statements/:id
+    request_path: /api/statements/stmt-123
+    roles:
+      admin: 404
+      user: 404
+      merchant: 404
+      customer: 403
+
+  - method: GET
+    path: /api/statements
+    request_path: /api/statements
+    roles:
+      admin: 200
+      user: 200
+      merchant: 200
+      customer: 403
+
+  - method: POST
+    path: /api/admin/purge
+    request_path: /api/admin/purge
+    headers:
+      Idempotency-Key: rbac-purge
+      X-Admin-Token: RBACTest1!AdminToken
+    roles:
+      admin: 200
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: GET
+    path: /api/admin/diagnostics
+    request_path: /api/admin/diagnostics
+    roles:
+      admin: 200
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: POST
+    path: /api/admin/reconcile
+    request_path: /api/admin/reconcile
+    headers:
+      Idempotency-Key: rbac-reconcile
+    body: "[]"
+    roles:
+      admin: 200
+      user: 403
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/admin/reports
+    request_path: /api/admin/reports
+    roles:
+      admin: 200
+      user: 403
+      merchant: 200
+      customer: 403
+
+  - method: GET
+    path: /api/admin/feature-flags
+    request_path: /api/admin/feature-flags
+    roles:
+      admin: 200
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: PATCH
+    path: /api/admin/feature-flags
+    request_path: /api/admin/feature-flags
+    headers:
+      Idempotency-Key: rbac-feature-flags
+    body: '{"name":"rbac-matrix-nonexistent"}'
+    roles:
+      admin: 404
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: POST
+    path: /api/admin/subscriber-keys
+    request_path: /api/admin/subscriber-keys
+    headers:
+      Idempotency-Key: rbac-subscriber-keys
+    body: '{"subscriber_id":"sub","key_id":"key","jwk":{"kty":"oct","k":"abc"}}'
+    roles:
+      admin: 500
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: GET
+    path: /api/admin/subscriber-keys/:subscriber_id
+    request_path: /api/admin/subscriber-keys/sub
+    roles:
+      admin: 500
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: GET
+    path: /api/admin/subscriber-keys/id/:id
+    request_path: /api/admin/subscriber-keys/id/not-a-uuid
+    roles:
+      admin: 400
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: PATCH
+    path: /api/admin/subscriber-keys/id/:id
+    request_path: /api/admin/subscriber-keys/id/not-a-uuid
+    headers:
+      Idempotency-Key: rbac-subscriber-key-update
+    body: '{"status":"revoked"}'
+    roles:
+      admin: 400
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: GET
+    path: /api/admin/outbox/dead-letter
+    request_path: /api/admin/outbox/dead-letter
+    roles:
+      admin: 500
+      user: 403
+      merchant: 403
+      customer: 403
+
+  - method: POST
+    path: /api/admin/outbox/:id/requeue
+    request_path: /api/admin/outbox/event-123/requeue
+    headers:
+      Idempotency-Key: rbac-outbox-requeue
+    roles:
+      admin: 500
+      user: 403
+      merchant: 403
+      customer: 403

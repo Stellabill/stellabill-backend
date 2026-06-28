@@ -1,0 +1,61 @@
+{
+  "consumer": { "name": "stellabill-webhook-consumer" },
+  "provider": { "name": "stellabill-backend" },
+  "interactions": [
+    {
+      "description": "a statement.issued webhook event",
+      "providerState": "statement issued",
+      "request": {
+        "method": "POST",
+        "path": "/webhooks",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Webhook-Signature": "valid-hmac-placeholder"
+        },
+        "body": {
+          "event_type": "statement.issued",
+          "data": {
+            "statement_id": "stmt_def456",
+            "subscription_id": "sub_abc123",
+            "amount": "29.99",
+            "currency": "USD",
+            "issued_at": "2025-01-15T00:00:00Z"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json; charset=utf-8" },
+        "body": {
+          "status": "accepted",
+          "event_type": "statement.issued",
+          "statement_id": "stmt_def456"
+        }
+      }
+    },
+    {
+      "description": "an unknown event type must fail with a clear diff",
+      "providerState": "subscription created",
+      "request": {
+        "method": "POST",
+        "path": "/webhooks",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Webhook-Signature": "valid-hmac-placeholder"
+        },
+        "body": {
+          "event_type": "payment.unknown",
+          "data": { "foo": "bar" }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": { "Content-Type": "application/json; charset=utf-8" },
+        "body": {
+          "error": "unknown_event_type"
+        }
+      }
+    }
+  ],
+  "metadata": { "pactSpecification": { "version": "2.0.0" } }
+}

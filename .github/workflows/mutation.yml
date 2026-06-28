@@ -1,0 +1,40 @@
+name: Mutation
+
+on:
+  pull_request:
+    paths:
+      - "internal/subscriptions/**"
+  push:
+    branches: [main]
+    paths:
+      - "internal/subscriptions/**"
+
+jobs:
+  mutation-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install go-mutesting
+        run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
+
+      - name: Mutation test subscription state machine (≥ 80 % killed)
+        shell: bash
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          OUTPUT=$(go-mutesting ./internal/subscriptions/... 2>&1)
+          echo "$OUTPUT"
+          # score = killed / total.  ≥ 0.80  required.
+          SCORE=$(echo "$OUTPUT" | grep -oP 'mutation score is \K[0-9.]+')
+          THRESHOLD=0.80
+          echo "Mutation score (killed/total): $SCORE  (gate: ≥ $THRESHOLD)"
+          if awk "BEGIN{exit !($SCORE < $THRESHOLD)}"; then
+            echo "FAIL: score $SCORE is below $THRESHOLD"
+            exit 1
+          fi
+          echo "PASS: mutation score $SCORE meets threshold"

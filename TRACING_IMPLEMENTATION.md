@@ -164,6 +164,31 @@ The worker creates a standalone root span with `job.id` as the entry point. The 
 
 Sampling is controlled by the `TRACING_SAMPLER` environment variable.
 
+### Bounded tail decisions
+
+Set `TRACING_TAIL_ENABLED=true` to retain a completed server trace when its
+root span has any of the following:
+
+- an HTTP response status of 500 or greater;
+- latency at or above `TRACING_TAIL_LATENCY_MS` (default `1000`);
+- OpenTelemetry error status, an `exception` event, or an `error` attribute.
+
+`TRACING_TAIL_ERROR_RATE` (default `0.05`, range `0.0` to `1.0`) retains a
+representative baseline of traces which match none of those conditions, so
+error-rate analysis still has a sampled success denominator. Errors themselves
+are always kept.
+When `TRACING_TAIL_ENABLED` is absent or false, tracing uses the existing
+parent-based behavior.
+
+Tail decisions happen in the span processor, because the OpenTelemetry sampler
+runs when a span starts and cannot inspect its final duration or status. The
+processor buffers at most 1,024 traces and 64 ended spans per trace for two
+seconds. On a burst, the oldest incomplete trace is discarded. A qualifying
+root which finishes after that decision window is still promoted, although
+already-evicted child spans cannot be recovered. These fixed limits prevent
+untrusted request volume or high-cardinality trace IDs from causing unbounded
+memory use.
+
 | Environment | Sampler | Effective rate |
 |-------------|---------|---------------|
 | `development` | `AlwaysSample` | 100% |

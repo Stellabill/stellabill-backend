@@ -1,26 +1,47 @@
 package middleware
 
 import (
-	"strings"
-	"time"
+	"context"
+	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/baggage"
 )
 
-// DeprecationHeaders adds Deprecation, Sunset, and Link headers indicating the
-// /api/v1 successor route for legacy /api endpoints.
-func DeprecationHeaders() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Deprecation", "true")
-		c.Header("Sunset", time.Now().Add(180*24*time.Hour).Format(time.RFC1123))
+// ContextKey ensures type safety for context extraction.
+type ContextKey string
 
-		path := c.Request.URL.Path
-		const prefix = "/api"
-		if strings.HasPrefix(path, prefix) {
-			successor := prefix + "/v1" + path[len(prefix):]
-			c.Header("Link", `<`+successor+`>; rel="successor-version"`)
+const (
+	TenantIDKey   ContextKey = "tenant_id"
+	CustomerIDKey ContextKey = "customer_id"
+)
+
+// BaggageMiddleware extracts tenant and customer IDs and populates the OpenTelemetry Baggage context.
+func BaggageMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		tenantID, _ := ctx.Value(TenantIDKey).(string)
+		customerID, _ := ctx.Value(CustomerIDKey).(string)
+
+		var members []baggage.Member
+
+		if tenantID != "" {
+			if m, err := baggage.NewMember("tenant_id", tenantID); err == nil {
+				members = append(members, m)
+			}
+		}
+		if customerID != "" {
+			if m, err := baggage.NewMember("customer_id", customerID); err == nil {
+				members = append(members, m)
+			}
 		}
 
-		c.Next()
-	}
+		if len(members) > 0 {
+			if bag, err := baggage.New(members...); err == nil {
+				ctx = baggage.ContextWithBaggage(ctx, bag)
+			}
+		}
+
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

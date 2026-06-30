@@ -1,0 +1,138 @@
+# .github/workflows/fuzz.yml
+#
+# Nightly fuzz-testing workflow for the Stellabill handler layer.
+#
+# Each target runs for the configured duration (default: 60s) so regressions in
+# request parsing and filtering logic are surfaced without blocking regular CI.
+
+name: Nightly Fuzz
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Fuzz duration per target (e.g. 60s, 5m)"
+        required: false
+        default: "60s"
+
+env:
+  FUZZ_TIME: ${{ github.event.inputs.fuzztime || '60s' }}
+
+jobs:
+  fuzz-list-plans:
+    name: "Fuzz: FuzzListPlans"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run FuzzListPlans
+        run: |
+          go test \
+            -run=^$ \
+            -fuzz=FuzzListPlans \
+            -fuzztime=${{ env.FUZZ_TIME }} \
+            -fuzzminimizetime=10s \
+            ./internal/handlers/...
+
+      - name: Upload crash corpus
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-FuzzListPlans-${{ github.run_id }}
+          path: internal/handlers/testdata/fuzz/FuzzListPlans/
+          retention-days: 30
+
+  fuzz-list-statements:
+    name: "Fuzz: FuzzListStatements"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run FuzzListStatements
+        run: |
+          go test \
+            -run=^$ \
+            -fuzz=FuzzListStatements \
+            -fuzztime=${{ env.FUZZ_TIME }} \
+            -fuzzminimizetime=10s \
+            ./internal/handlers/...
+
+      - name: Upload crash corpus
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-FuzzListStatements-${{ github.run_id }}
+          path: internal/handlers/testdata/fuzz/FuzzListStatements/
+          retention-days: 30
+
+  fuzz-swap-input:
+    name: "Fuzz: FuzzSwapInput"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run FuzzSwapInput
+        run: |
+          go test \
+            -run=^$ \
+            -fuzz=FuzzSwapInput \
+            -fuzztime=${{ env.FUZZ_TIME }} \
+            -fuzzminimizetime=10s \
+            ./internal/handlers/...
+
+      - name: Upload crash corpus
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-FuzzSwapInput-${{ github.run_id }}
+          path: internal/handlers/testdata/fuzz/FuzzSwapInput/
+          retention-days: 30
+
+  fuzz-summary:
+    name: "Fuzz: Summary"
+    runs-on: ubuntu-latest
+    needs:
+      - fuzz-list-plans
+      - fuzz-list-statements
+      - fuzz-swap-input
+    if: always()
+
+    steps:
+      - name: Report fuzz results
+        run: |
+          echo "## Nightly Fuzz Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| FuzzListPlans      | ${{ needs.fuzz-list-plans.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FuzzListStatements | ${{ needs.fuzz-list-statements.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FuzzSwapInput      | ${{ needs.fuzz-swap-input.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FuzzSwapExactIn    | ${{ needs.fuzz-swap-exact-in.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FuzzSwapExactOut   | ${{ needs.fuzz-swap-exact-out.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FuzzSwapRawBody    | ${{ needs.fuzz-swap-raw-body.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Fuzz time per target: \`${{ env.FUZZ_TIME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "Run ID: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY

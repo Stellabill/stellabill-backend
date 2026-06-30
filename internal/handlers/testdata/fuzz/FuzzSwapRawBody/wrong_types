@@ -1,0 +1,3 @@
+go test fuzz v1
+string("{\"token_in\":123,\"token_out\":true,\"amount_in\":\"not-a-number\",\"min_amount_out\":null}")
+bool(true)

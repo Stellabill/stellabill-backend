@@ -1,0 +1,5 @@
+go test fuzz v1
+string("USDC")
+string("XLM")
+float64(0.0)
+float64(0.0)

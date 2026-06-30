@@ -1,0 +1,9 @@
+go test fuzz v1
+string("cust-1")
+string("sub-abc")
+string("")
+string("")
+string("2024-01-01T00:00:00Z")
+string("2024-12-31T23:59:59Z")
+string("50")
+string("asc")

@@ -1,7 +1,11 @@
-GetByTenant()
+package repository
 
-Create()
+type NotificationPreferenceRepository interface {
+	GetByTenant()
 
-Update()
+	Create()
 
-Upsert()
+	Update()
+
+	Upsert()
+}

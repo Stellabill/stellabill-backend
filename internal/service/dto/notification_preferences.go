@@ -1,12 +1,14 @@
+package dto
+
 type UpdateNotificationPreferencesRequest struct {
-    EmailEnabled bool
-    SlackEnabled bool
-    InAppEnabled bool
+	EmailEnabled bool
+	SlackEnabled bool
+	InAppEnabled bool
 
-    QuietHoursEnabled bool
+	QuietHoursEnabled bool
 
-    QuietStart string
-    QuietEnd string
+	QuietStart string
+	QuietEnd   string
 
-    Timezone string
+	Timezone string
 }

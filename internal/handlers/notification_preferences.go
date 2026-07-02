@@ -1,3 +1,9 @@
-func GetNotificationPreferences(...)
+package handlers
 
-func UpdateNotificationPreferences(...)
+func GetNotificationPreferences() {
+	// TODO: implement
+}
+
+func UpdateNotificationPreferences() {
+	// TODO: implement
+}

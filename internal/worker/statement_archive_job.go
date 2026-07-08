@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"stellarbill-backend/internal/cache"
+	"stellarbill-backend/internal/featureflags"
 	"stellarbill-backend/internal/logger"
 	"stellarbill-backend/internal/repository"
 )
@@ -183,16 +184,24 @@ func (j *StatementArchiveJob) archiveBatch() {
 	threshold := time.Now().AddDate(0, -j.config.ArchiveThresholdMonths, 0)
 	thresholdStr := threshold.Format(time.RFC3339)
 
-	rows, err := j.db.QueryContext(
-		batchCtx,
-		`SELECT id, subscription_id, customer_id, period_start, period_end, 
+	tableName := "statements"
+	if featureflags.IsEnabled("statements_partitioning") {
+		tableName = "statements_partitioned"
+	}
+
+	query := fmt.Sprintf(`SELECT id, subscription_id, customer_id, period_start, period_end, 
 		        issued_at, total_amount, currency, kind, status
-		 FROM statements
+		 FROM %s
 		 WHERE archived_at IS NULL 
 		   AND deleted_at IS NULL 
 		   AND issued_at < $1
+		   AND period_start < $1
 		 ORDER BY issued_at ASC
-		 LIMIT $2`,
+		 LIMIT $2`, tableName)
+
+	rows, err := j.db.QueryContext(
+		batchCtx,
+		query,
 		thresholdStr,
 		j.config.BatchSize,
 	)
@@ -283,10 +292,15 @@ func (j *StatementArchiveJob) archiveStatement(ctx context.Context, stmt *reposi
 		return fmt.Errorf("upload to object store: %w", err)
 	}
 
+	tableName := "statements"
+	if featureflags.IsEnabled("statements_partitioning") {
+		tableName = "statements_partitioned"
+	}
+
 	// Update row in database: clear data and set archived_at + archive_key
 	_, err = j.db.ExecContext(
 		ctx,
-		`UPDATE statements
+		fmt.Sprintf(`UPDATE %s
 		 SET archived_at = $1,
 		     archive_key = $2,
 		     period_start = NULL,
@@ -296,10 +310,11 @@ func (j *StatementArchiveJob) archiveStatement(ctx context.Context, stmt *reposi
 		     currency = NULL,
 		     kind = NULL,
 		     status = NULL
-		 WHERE id = $3`,
+		 WHERE id = $3 AND period_start = $4`, tableName),
 		now,
 		key,
 		stmt.ID,
+		stmt.PeriodStart,
 	)
 	if err != nil {
 		// Attempt to delete from object store on failure (cleanup)

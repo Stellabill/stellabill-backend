@@ -36,6 +36,7 @@ func Register(r *gin.Engine) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
+	r.Use(middleware.TailSamplingSignals())
 	r.Use(middleware.TraceIDMiddleware())
 
 	// Rate limiting
@@ -165,6 +166,7 @@ import (
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/saga"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/tracing"
@@ -204,6 +206,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
+	r.Use(middleware.TailSamplingSignals())
 	r.Use(middleware.TraceIDMiddleware())
 	r.Use(metrics.MetricsMiddleware())
 
@@ -306,6 +309,30 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	// Statement service wiring (in-memory mock for test/dev)
 	stmtRepo := repository.NewMockStatementRepo()
 	stmtSvc := service.NewStatementService(rawSubRepo, stmtRepo)
+
+	// Saga coordinator wiring
+	var sagaCoordinator saga.Coordinator
+	var sagaStore saga.Store
+	if planDB != nil {
+		sagaStore = saga.NewPostgresStore(planDB)
+	} else {
+		sagaStore = saga.NewMemoryStore()
+	}
+	sagaCoordinator = saga.NewCoordinator(sagaStore, nil)
+
+	go func() {
+		running, err := sagaStore.ListRunning(context.Background())
+		if err != nil {
+			log.Printf("saga: failed to list running sagas for resume: %v", err)
+			return
+		}
+		for _, s := range running {
+			log.Printf("saga: resuming saga %s (%s)", s.ID, s.Name)
+			if err := sagaCoordinator.Resume(context.Background(), s.ID); err != nil {
+				log.Printf("saga: resume failed for %s: %v", s.ID, err)
+			}
+		}
+	}()
 
 	// handlerSubSvc adapts the mock repo to satisfy handlers.SubscriptionService.
 	handlerSubSvc := &mockHandlerSubSvc{repo: rawSubRepo}

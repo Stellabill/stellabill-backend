@@ -110,9 +110,7 @@ func (s *tenantExportService) ExportTenantData(
 			return nil, fmt.Errorf("export cancelled during statement fetch: %w", err)
 		}
 		q := repository.StatementQuery{
-			Limit:    statementsPageSize,
-			Page:     1,
-			PageSize: statementsPageSize,
+			Limit: statementsPageSize,
 		}
 		statements, _, err := s.stmtRepo.ListByCustomerID(ctx, customerID, q)
 		if err != nil {

@@ -370,6 +370,9 @@ func (e errStmtRepo) ListByCustomerID(_ context.Context, _ string, _ repository.
 func (e errStmtRepo) UpdateArchivedData(_ context.Context, _ string, _ *repository.StatementRow) error {
 	return nil
 }
+func (e errStmtRepo) Create(_ context.Context, _ *repository.StatementRow) error {
+	return nil
+}
 
 func TestGraphQL_Statements_RepoError(t *testing.T) {
 	subRepo := repository.NewMockSubscriptionRepo(

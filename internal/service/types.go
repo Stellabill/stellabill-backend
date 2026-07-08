@@ -85,3 +85,11 @@ type PaginationMetadata struct {
 	Limit          int    `json:"limit"`
 }
 
+// SubscriptionStatusChange is the result of a subscription status change operation.
+type SubscriptionStatusChange struct {
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	PreviousStatus string `json:"previous_status"`
+	Changed        bool   `json:"changed"`
+}
+

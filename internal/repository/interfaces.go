@@ -12,6 +12,8 @@ var ErrNotFound = errors.New("not found")
 type SubscriptionRepository interface {
 	FindByID(ctx context.Context, id string) (*SubscriptionRow, error)
 	FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*SubscriptionRow, error)
+	ListByTenant(ctx context.Context, tenantID string) ([]*SubscriptionRow, error)
+	UpdateStatus(ctx context.Context, id string, tenantID string, status string) error
 }
 
 // PlanRepository is the read interface used by the service.
@@ -38,4 +40,6 @@ type StatementQuery struct {
 type StatementRepository interface {
 	FindByID(ctx context.Context, id string) (*StatementRow, error)
 	ListByCustomerID(ctx context.Context, customerID string, q StatementQuery) ([]*StatementRow, int, error)
+	Create(ctx context.Context, stmt *StatementRow) error
+	UpdateArchivedData(ctx context.Context, id string, stmt *StatementRow) error
 }

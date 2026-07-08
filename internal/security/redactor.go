@@ -73,3 +73,18 @@ func ProductionLogger() *zap.Logger {
 	logger, _ := config.Build(zap.Hooks(ZapRedactHook))
 	return logger
 }
+
+// DevLogger returns a development zap logger with no redaction.
+func DevLogger() *zap.Logger {
+	config := zap.NewDevelopmentConfig()
+	logger, _ := config.Build()
+	return logger
+}
+
+// RedactStringField redacts a single string value based on its key name.
+func RedactStringField(key, value string) string {
+	if fullyRedactedFieldNames[strings.ToLower(key)] {
+		return "***REDACTED***"
+	}
+	return MaskPII(value)
+}

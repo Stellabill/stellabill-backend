@@ -170,6 +170,19 @@ func (csr *CachedSubscriptionRepo) FindByIDAndTenant(ctx context.Context, id str
 	return &sr, nil
 }
 
+func (csr *CachedSubscriptionRepo) ListByTenant(ctx context.Context, tenantID string) ([]*SubscriptionRow, error) {
+	return csr.backend.ListByTenant(ctx, tenantID)
+}
+
+// UpdateStatus delegates the status update to the backend and invalidates cached entries.
+func (csr *CachedSubscriptionRepo) UpdateStatus(ctx context.Context, id string, tenantID string, status string) error {
+	if err := csr.backend.UpdateStatus(ctx, id, tenantID, status); err != nil {
+		return err
+	}
+	_ = csr.Delete(ctx, id, tenantID)
+	return nil
+}
+
 // Delete removes cached entries for a subscription and records invalidation times.
 // It clears both the by-id and by-id-and-tenant keys.
 func (csr *CachedSubscriptionRepo) Delete(ctx context.Context, id string, tenantID string) error {

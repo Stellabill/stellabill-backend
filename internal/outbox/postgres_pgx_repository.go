@@ -357,5 +357,5 @@ func (r *PostgresPgxRepository) GetPendingEventsSince(since *time.Time, lastID *
 		}
 		events = append(events, ev)
 	}
-	return events, rows.Err()
+	return &event, nil
 }

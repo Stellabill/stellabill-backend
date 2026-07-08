@@ -10,12 +10,15 @@ import (
 
 // FeesHandler handles fee-related HTTP requests.
 type FeesHandler struct {
-	svc service.FeeService
+	svc       service.FeeService
+	freshness service.FreshnessProvider
 }
 
-// NewFeesHandler creates a FeesHandler.
-func NewFeesHandler(svc service.FeeService) *FeesHandler {
-	return &FeesHandler{svc: svc}
+// NewFeesHandler creates a FeesHandler. The freshness provider is optional; when
+// non-nil, GetFeeHistory annotates responses with the fee-revenue materialized
+// view's last_refreshed_at and a stale-but-served flag.
+func NewFeesHandler(svc service.FeeService, freshness service.FreshnessProvider) *FeesHandler {
+	return &FeesHandler{svc: svc, freshness: freshness}
 }
 
 // GetFeeHistory godoc
@@ -56,6 +59,16 @@ func (h *FeesHandler) GetFeeHistory(c *gin.Context) {
 	if err != nil {
 		RespondWithInternalError(c, "failed to retrieve fee history")
 		return
+	}
+
+	// Annotate with materialized-view freshness when a provider is configured.
+	// A freshness lookup failure must not fail the report: the data is still
+	// valid, so we log-and-serve without the metadata rather than 500.
+	if h.freshness != nil {
+		if err := history.WithFreshness(c.Request.Context(), h.freshness, time.Now().UTC()); err != nil {
+			history.LastRefreshedAt = nil
+			history.Stale = false
+		}
 	}
 
 	c.JSON(http.StatusOK, history)

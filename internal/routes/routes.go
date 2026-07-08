@@ -36,6 +36,7 @@ func Register(r *gin.Engine) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
+	r.Use(middleware.TailSamplingSignals())
 	r.Use(middleware.TraceIDMiddleware())
 
 	// Rate limiting
@@ -205,6 +206,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
+	r.Use(middleware.TailSamplingSignals())
 	r.Use(middleware.TraceIDMiddleware())
 	r.Use(metrics.MetricsMiddleware())
 

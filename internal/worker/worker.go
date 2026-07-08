@@ -24,9 +24,13 @@ type Config struct {
 	BatchSize       int
 	ShutdownTimeout time.Duration
 
-	// NEW: Backpressure controls
+	// Backpressure controls
 	MaxConcurrency int
 	MaxQueueDepth  int
+
+	// LaneWeights controls the weighted round-robin distribution across
+	// priority lanes.  If nil, DefaultLaneWeights is used.
+	LaneWeights map[Priority]int
 }
 
 // DefaultConfig returns sensible defaults for the worker
@@ -52,19 +56,20 @@ type JobExecutor interface {
 
 // Worker manages background job scheduling and execution
 type Worker struct {
-	config   Config
+	config    Config
 	store     JobStore
+	scheduler *Scheduler
 	executor  JobExecutor
 	executors map[string]JobExecutor
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	metrics  *Metrics
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	metrics   *Metrics
 
 	sem chan struct{}
 }
 
-// Metrics tracks worker execution statistics
+// Metrics tracks worker execution statistics and per-lane observability.
 type Metrics struct {
 	mu               sync.RWMutex
 	JobsProcessed    int64
@@ -75,29 +80,39 @@ type Metrics struct {
 
 	QueueDepth int
 	QueueLag   time.Duration
+
+	LaneDepth       map[Priority]int
+	LanePickedTotal map[Priority]int64
 }
 
 // NewWorker creates a new billing worker
 func NewWorker(store JobStore, executor JobExecutor, config Config) *Worker {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Worker{
-		config:   config,
-		store:    store,
-		executor: executor,
-		ctx:      ctx,
-		cancel:   cancel,
-		metrics:  &Metrics{},
-		sem:      make(chan struct{}, config.MaxConcurrency), // NEW
+	w := &Worker{
+		config:    config,
+		store:     store,
+		scheduler: NewScheduler(store),
+		executor:  executor,
+		ctx:       ctx,
+		cancel:    cancel,
+		metrics:   &Metrics{},
+		sem:       make(chan struct{}, config.MaxConcurrency),
 	}
+
+	if config.LaneWeights != nil {
+		w.scheduler.SetWeights(config.LaneWeights)
+	}
+
+	return w
 }
 
-// GetMetrics returns a snapshot of the current worker metrics.
+// GetMetrics returns a snapshot of the current worker metrics including
+// per-lane depth and picked counters.
 func (w *Worker) GetMetrics() Metrics {
 	w.metrics.mu.RLock()
 	defer w.metrics.mu.RUnlock()
 
-	// NEW: add queue stats
 	depth := w.store.QueueDepth()
 	oldest := w.store.OldestPending()
 
@@ -105,6 +120,18 @@ func (w *Worker) GetMetrics() Metrics {
 
 	if oldest != nil {
 		queueLag = time.Since(oldest.CreatedAt)
+	}
+
+	laneDepth := make(map[Priority]int, len(laneOrder))
+	for _, p := range laneOrder {
+		laneDepth[p] = w.store.LaneDepth(p)
+	}
+
+	lanePicked := make(map[Priority]int64, len(laneOrder))
+	if w.metrics.LanePickedTotal != nil {
+		for k, v := range w.metrics.LanePickedTotal {
+			lanePicked[k] = v
+		}
 	}
 
 	return Metrics{
@@ -116,6 +143,9 @@ func (w *Worker) GetMetrics() Metrics {
 
 		QueueDepth: depth,
 		QueueLag:   queueLag,
+
+		LaneDepth:       laneDepth,
+		LanePickedTotal: lanePicked,
 	}
 }
 
@@ -168,9 +198,9 @@ func (w *Worker) schedulerLoop() {
 	}
 }
 
-// pollAndDispatch fetches pending jobs and dispatches them for execution
+// pollAndDispatch fetches pending jobs using the priority-aware scheduler and
+// dispatches them for execution with concurrency limiting.
 func (w *Worker) pollAndDispatch() {
-	// NEW: adaptive throttling based on queue depth
 	if w.store.QueueDepth() > w.config.MaxQueueDepth {
 		security.ProductionLogger().Warn("Backpressure triggered: queue too deep",
 			zap.Int("queue_depth", w.store.QueueDepth()))
@@ -182,15 +212,25 @@ func (w *Worker) pollAndDispatch() {
 	w.metrics.LastPollTime = time.Now()
 	w.metrics.mu.Unlock()
 
-	jobs, err := w.store.ListPending(w.config.BatchSize)
-	if err != nil {
-		security.ProductionLogger().Error("Error listing pending jobs",
-			zap.Error(err))
-		return
-	}
+	for i := 0; i < w.config.BatchSize; i++ {
+		job, err := w.scheduler.Next()
+		if err != nil {
+			security.ProductionLogger().Error("Error from scheduler.Next",
+				zap.Error(err))
+			return
+		}
+		if job == nil {
+			break // No more pending jobs
+		}
 
-	for _, job := range jobs {
-		// Try to acquire lock
+		// Track per-lane pick count.
+		w.metrics.mu.Lock()
+		if w.metrics.LanePickedTotal == nil {
+			w.metrics.LanePickedTotal = make(map[Priority]int64)
+		}
+		w.metrics.LanePickedTotal[job.Priority]++
+		w.metrics.mu.Unlock()
+
 		acquired, err := w.store.AcquireLock(job.ID, w.config.WorkerID, w.config.LockTTL)
 		if err != nil {
 			security.ProductionLogger().Error("Error acquiring lock",
@@ -200,17 +240,15 @@ func (w *Worker) pollAndDispatch() {
 		}
 
 		if !acquired {
-			// Another worker has this job
 			continue
 		}
 
-		// NEW: acquire concurrency slot (blocks if full)
 		w.sem <- struct{}{}
 
 		w.wg.Add(1)
 		go func(j *Job) {
 			defer func() {
-				<-w.sem // release slot
+				<-w.sem
 				w.wg.Done()
 			}()
 

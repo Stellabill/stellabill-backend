@@ -29,7 +29,7 @@ func ExampleCustomExecutor() {
 	
 	// Schedule billing jobs
 	scheduler := NewScheduler(store)
-	scheduler.ScheduleCharge("sub-123", time.Now(), 3)
+	scheduler.ScheduleCharge("sub-123", time.Now(), 3, PriorityHigh)
 	
 	// Stop worker
 	w.Stop()
@@ -54,7 +54,7 @@ func ExampleWorker() {
 	// Schedule jobs
 	scheduler := NewScheduler(store)
 	for i := 0; i < 10; i++ {
-		scheduler.ScheduleCharge("sub-"+fmt.Sprint(i), time.Now(), 3)
+		scheduler.ScheduleCharge("sub-"+fmt.Sprint(i), time.Now(), 3, PriorityNormal)
 	}
 	
 	// Stop workers

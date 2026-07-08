@@ -41,14 +41,15 @@ func main() {
     w.Start()
     defer w.Stop()
     
-    // Schedule a billing job
+    // Schedule a billing job with a priority lane
     scheduler := worker.NewScheduler(store)
-    job, _ := scheduler.ScheduleCharge("sub-123", time.Now(), 3)
+    job, _ := scheduler.ScheduleCharge("sub-123", time.Now(), 3, worker.PriorityHigh)
     
     // Job will be processed automatically
-    // Check metrics
+    // Check metrics (includes per-lane depth and pick totals)
     metrics := w.GetMetrics()
     println("Processed:", metrics.JobsProcessed)
+    println("High lane depth:", metrics.LaneDepth[worker.PriorityHigh])
 }
 ```
 
@@ -117,14 +118,14 @@ metrics := worker.GetMetrics()
 ### Schedule Immediate Job
 
 ```go
-scheduler.ScheduleCharge("sub-123", time.Now(), 3)
+scheduler.ScheduleCharge("sub-123", time.Now(), 3, worker.PriorityHigh)
 ```
 
 ### Schedule Future Job
 
 ```go
 nextBilling := time.Now().Add(30 * 24 * time.Hour)
-scheduler.ScheduleCharge("sub-123", nextBilling, 3)
+scheduler.ScheduleCharge("sub-123", nextBilling, 3, worker.PriorityHigh)
 ```
 
 ### Check Job Status

@@ -1,16 +1,20 @@
+package model
+
+import "time"
+
 type NotificationPreferences struct {
-    TenantID string
+	TenantID string
 
-    EmailEnabled bool
-    SlackEnabled bool
-    InAppEnabled bool
+	EmailEnabled bool
+	SlackEnabled bool
+	InAppEnabled bool
 
-    QuietHoursEnabled bool
-    QuietStart time.Time
-    QuietEnd time.Time
+	QuietHoursEnabled bool
+	QuietStart        time.Time
+	QuietEnd          time.Time
 
-    Timezone string
+	Timezone string
 
-    CreatedAt time.Time
-    UpdatedAt time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

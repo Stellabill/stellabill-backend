@@ -13,3 +13,5 @@ type NotificationRouter struct {
 
 	prefs PreferenceRepository
 }
+
+type PreferenceRepository interface{}

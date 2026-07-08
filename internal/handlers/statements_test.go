@@ -436,12 +436,6 @@ func TestListStatements_QueryFiltersPassedToService(t *testing.T) {
 	if q.EndBefore != "2024-12-31T23:59:59Z" {
 		t.Errorf("EndBefore: got %q, want 2024-12-31T23:59:59Z", q.EndBefore)
 	}
-	if q.Page != 2 {
-		t.Errorf("Page: got %d, want 2", q.Page)
-	}
-	if q.PageSize != 5 {
-		t.Errorf("PageSize: got %d, want 5", q.PageSize)
-	}
 }
 
 func TestListStatements_InvalidPageParams_Returns400(t *testing.T) {

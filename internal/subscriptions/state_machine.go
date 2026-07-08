@@ -20,6 +20,19 @@ var allowedTransitions = map[string][]string{
 	StatusExpired:   {},
 }
 
+var knownStatuses = map[string]bool{
+	StatusPending:   true,
+	StatusActive:    true,
+	StatusPaused:    true,
+	StatusCancelled: true,
+	StatusExpired:   true,
+}
+
+// IsKnownStatus checks whether a status string is a recognised subscription status.
+func IsKnownStatus(s string) bool {
+	return knownStatuses[s]
+}
+
 // CanTransition validates state change
 func CanTransition(from, to string) error {
 	if from == to {

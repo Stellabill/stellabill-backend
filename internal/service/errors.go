@@ -14,4 +14,16 @@ var (
 
 	// ErrBillingParse is returned when the subscription's amount cannot be parsed.
 	ErrBillingParse = errors.New("billing parse error")
+
+	// ErrExportInProgress is returned when an export is already in progress for this tenant.
+	ErrExportInProgress = errors.New("export already in progress for this tenant")
+
+	// ErrInvalidTransition is returned when a subscription status transition is not allowed.
+	ErrInvalidTransition = errors.New("invalid status transition")
+
+	// ErrUnknownCurrentState is returned when the current subscription status is not a known value.
+	ErrUnknownCurrentState = errors.New("unknown current state")
+
+	// ErrInvalidStatus is returned when the target status is not a known subscription status.
+	ErrInvalidStatus = errors.New("invalid status")
 )

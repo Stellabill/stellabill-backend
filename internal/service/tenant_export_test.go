@@ -56,6 +56,9 @@ type mockExportStmtRepo struct {
 func (m *mockExportStmtRepo) FindByID(_ context.Context, _ string) (*repository.StatementRow, error) {
 	return nil, nil
 }
+func (m *mockExportStmtRepo) Create(_ context.Context, _ *repository.StatementRow) error {
+	return nil
+}
 func (m *mockExportStmtRepo) ListByCustomerID(_ context.Context, _ string, _ repository.StatementQuery) ([]*repository.StatementRow, int, error) {
 	return m.rows, len(m.rows), m.err
 }

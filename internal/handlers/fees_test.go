@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -24,6 +25,99 @@ func (m *mockFeeService) GetFeeHistory(_ string, _, _ time.Time) (*service.FeeHi
 	return m.history, m.err
 }
 
+// mockFreshness implements service.FreshnessProvider for tests.
+type mockFreshness struct {
+	stale         bool
+	lastRefreshed time.Time
+	never         bool
+	err           error
+}
+
+func (m *mockFreshness) IsStale(_ context.Context, _ time.Time) (bool, time.Time, bool, error) {
+	return m.stale, m.lastRefreshed, m.never, m.err
+}
+
+// newHistoryRequest builds a GET /api/v1/fees/history test context.
+func newHistoryRequest() (*httptest.ResponseRecorder, *gin.Context) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest(http.MethodGet, "/api/v1/fees/history", nil)
+	return w, c
+}
+
+func TestGetFeeHistory_FreshnessFresh(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	refreshed := time.Now().UTC().Add(-10 * time.Minute)
+	h := NewFeesHandler(
+		&mockFeeService{history: &service.FeeHistory{Records: []service.FeeRecord{}, Trends: []service.FeeTrend{}}},
+		&mockFreshness{stale: false, lastRefreshed: refreshed},
+	)
+
+	w, c := newHistoryRequest()
+	h.GetFeeHistory(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp service.FeeHistory
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.LastRefreshedAt)
+	assert.WithinDuration(t, refreshed, *resp.LastRefreshedAt, time.Second)
+	assert.False(t, resp.Stale)
+}
+
+func TestGetFeeHistory_FreshnessStaleButServed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	refreshed := time.Now().UTC().Add(-5 * time.Hour)
+	h := NewFeesHandler(
+		&mockFeeService{history: &service.FeeHistory{Records: []service.FeeRecord{}, Trends: []service.FeeTrend{}}},
+		&mockFreshness{stale: true, lastRefreshed: refreshed},
+	)
+
+	w, c := newHistoryRequest()
+	h.GetFeeHistory(c)
+
+	// Stale data is still served (200), just flagged.
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp service.FeeHistory
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Stale)
+	require.NotNil(t, resp.LastRefreshedAt)
+}
+
+func TestGetFeeHistory_FreshnessNeverRefreshed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewFeesHandler(
+		&mockFeeService{history: &service.FeeHistory{Records: []service.FeeRecord{}, Trends: []service.FeeTrend{}}},
+		&mockFreshness{stale: true, never: true},
+	)
+
+	w, c := newHistoryRequest()
+	h.GetFeeHistory(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp service.FeeHistory
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Nil(t, resp.LastRefreshedAt, "never-refreshed view must not report a timestamp")
+	assert.True(t, resp.Stale)
+}
+
+func TestGetFeeHistory_FreshnessErrorStillServes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewFeesHandler(
+		&mockFeeService{history: &service.FeeHistory{Records: []service.FeeRecord{}, Trends: []service.FeeTrend{}}},
+		&mockFreshness{err: errors.New("freshness lookup failed")},
+	)
+
+	w, c := newHistoryRequest()
+	h.GetFeeHistory(c)
+
+	// A freshness lookup error must not fail the report.
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp service.FeeHistory
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Nil(t, resp.LastRefreshedAt)
+	assert.False(t, resp.Stale)
+}
+
 func TestGetFeeHistory_OK(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewFeesHandler(&mockFeeService{
@@ -31,7 +125,7 @@ func TestGetFeeHistory_OK(t *testing.T) {
 			Records: []service.FeeRecord{{ID: "fee-1", Type: "transaction", Amount: 1.5, Currency: "USD", CreatedAt: time.Now()}},
 			Trends:  []service.FeeTrend{{Type: "transaction", Count: 1, TotalAmount: 1.5}},
 		},
-	})
+	}, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -48,7 +142,7 @@ func TestGetFeeHistory_OK(t *testing.T) {
 
 func TestGetFeeHistory_InvalidFrom(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewFeesHandler(&mockFeeService{})
+	h := NewFeesHandler(&mockFeeService{}, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -61,7 +155,7 @@ func TestGetFeeHistory_InvalidFrom(t *testing.T) {
 
 func TestGetFeeHistory_ToBeforeFrom(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewFeesHandler(&mockFeeService{})
+	h := NewFeesHandler(&mockFeeService{}, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -79,7 +173,7 @@ func TestGetFeeHistory_ToBeforeFrom(t *testing.T) {
 
 func TestGetFeeHistory_ServiceError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewFeesHandler(&mockFeeService{err: errors.New("db error")})
+	h := NewFeesHandler(&mockFeeService{err: errors.New("db error")}, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

@@ -36,6 +36,28 @@ func (m *MockSubscriptionRepo) FindByIDAndTenant(_ context.Context, id string, t
 	return row, nil
 }
 
+func (m *MockSubscriptionRepo) ListByTenant(_ context.Context, tenantID string) ([]*SubscriptionRow, error) {
+	var result []*SubscriptionRow
+	for _, r := range m.records {
+		if r.TenantID == tenantID {
+			result = append(result, r)
+		}
+	}
+	return result, nil
+}
+
+func (m *MockSubscriptionRepo) UpdateStatus(_ context.Context, id string, tenantID string, status string) error {
+	row, ok := m.records[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.TenantID != tenantID {
+		return ErrNotFound
+	}
+	row.Status = status
+	return nil
+}
+
 // MockPlanRepo is an in-memory PlanRepository for testing.
 type MockPlanRepo struct {
 	records map[string]*PlanRow
@@ -70,9 +92,10 @@ func (m *MockPlanRepo) List(_ context.Context) ([]*PlanRow, error) {
 
 // MockStatementRepo is an in-memory StatementRepository for testing.
 type MockStatementRepo struct {
-	records map[string]*StatementRow
-	listErr error
-	findErr error
+	records   map[string]*StatementRow
+	listErr   error
+	findErr   error
+	createErr error
 }
 
 // NewMockStatementRepo creates a MockStatementRepo pre-populated with the given rows.
@@ -90,6 +113,10 @@ func (m *MockStatementRepo) SetListError(err error) {
 
 func (m *MockStatementRepo) SetFindError(err error) {
 	m.findErr = err
+}
+
+func (m *MockStatementRepo) SetCreateError(err error) {
+	m.createErr = err
 }
 
 // FindByID returns the StatementRow with the given ID, or ErrNotFound.
@@ -141,5 +168,22 @@ func (m *MockStatementRepo) ListByCustomerID(_ context.Context, customerID strin
 	if len(out) > limit {
 		out = out[:limit]
 	}
-	return out, totalCount, nil
+		return out, totalCount, nil
+}
+
+func (m *MockStatementRepo) Create(_ context.Context, stmt *StatementRow) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	copy := *stmt
+	m.records[copy.ID] = &copy
+	return nil
+}
+
+func (m *MockStatementRepo) UpdateArchivedData(_ context.Context, id string, stmt *StatementRow) error {
+	if row, ok := m.records[id]; ok {
+		*row = *stmt
+		return nil
+	}
+	return ErrNotFound
 }

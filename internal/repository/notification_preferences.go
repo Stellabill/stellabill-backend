@@ -1,7 +1,14 @@
-GetByTenant()
+package repository
 
-Create()
+import "context"
 
-Update()
+type NotificationPreferenceRepository interface {
+	GetByTenant(ctx context.Context, tenantID string) (*NotificationPreferenceRow, error)
+	Create(ctx context.Context, pref *NotificationPreferenceRow) error
+	Update(ctx context.Context, pref *NotificationPreferenceRow) error
+	Upsert(ctx context.Context, pref *NotificationPreferenceRow) error
+}
 
-Upsert()
+type NotificationPreferenceRow struct {
+	TenantID string
+}

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"math"
 	"time"
 )
@@ -17,19 +18,63 @@ type FeeRecord struct {
 
 // FeeTrend holds trend analysis for a fee type over a period.
 type FeeTrend struct {
-	Type           string  `json:"type"`
-	PeriodStart    string  `json:"period_start"`
-	PeriodEnd      string  `json:"period_end"`
-	TotalAmount    float64 `json:"total_amount"`
-	AverageAmount  float64 `json:"average_amount"`
-	Count          int     `json:"count"`
-	ChangePercent  float64 `json:"change_percent"`
+	Type          string  `json:"type"`
+	PeriodStart   string  `json:"period_start"`
+	PeriodEnd     string  `json:"period_end"`
+	TotalAmount   float64 `json:"total_amount"`
+	AverageAmount float64 `json:"average_amount"`
+	Count         int     `json:"count"`
+	ChangePercent float64 `json:"change_percent"`
 }
 
 // FeeHistory is the response for fee history with trend analysis.
 type FeeHistory struct {
 	Records []FeeRecord `json:"records"`
 	Trends  []FeeTrend  `json:"trends"`
+
+	// LastRefreshedAt is the time the underlying revenue aggregate
+	// (mv_fee_revenue_monthly) was last refreshed. It is nil when the aggregate
+	// has never been refreshed, or when the report is served from raw data
+	// rather than the materialized view.
+	LastRefreshedAt *time.Time `json:"last_refreshed_at,omitempty"`
+
+	// Stale indicates the materialized view's data is older than the freshness
+	// threshold but is being served anyway (stale-but-served). Clients can use
+	// this to surface a "data may be delayed" notice.
+	Stale bool `json:"stale,omitempty"`
+}
+
+// FreshnessProvider reports the freshness of the fee-revenue materialized view.
+// It is implemented by the refresh worker so the report handler can annotate
+// responses with last_refreshed_at and a stale-but-served flag without coupling
+// the HTTP layer to the database.
+type FreshnessProvider interface {
+	// IsStale reports whether the aggregate is older than the staleness
+	// threshold as of now. lastRefreshed is the recorded refresh time;
+	// never is true when the view has never been refreshed.
+	IsStale(ctx context.Context, now time.Time) (stale bool, lastRefreshed time.Time, never bool, err error)
+}
+
+// WithFreshness annotates a FeeHistory with freshness metadata from the
+// provider. A nil provider leaves the response unannotated (raw-data path).
+// Errors from the provider are returned so the caller can decide whether to
+// fail the request or serve without freshness metadata.
+func (h *FeeHistory) WithFreshness(ctx context.Context, p FreshnessProvider, now time.Time) error {
+	if h == nil || p == nil {
+		return nil
+	}
+	stale, lastRefreshed, never, err := p.IsStale(ctx, now)
+	if err != nil {
+		return err
+	}
+	h.Stale = stale
+	if never {
+		h.LastRefreshedAt = nil
+		return nil
+	}
+	lr := lastRefreshed
+	h.LastRefreshedAt = &lr
+	return nil
 }
 
 // FeeService defines the interface for fee operations.

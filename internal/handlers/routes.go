@@ -1,3 +1,5 @@
-GET /notification-preferences
+package handlers
 
-PUT /notification-preferences
+// Notification preferences routes (stub).
+// GET  /notification-preferences
+// PUT  /notification-preferences

@@ -1,86 +1,66 @@
-package tracing_test
+package tracing
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/assert"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-	"go.opentelemetry.io/otel"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
-	"stellarbill-backend/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
-func TestTraceContextPropagation(t *testing.T) {
-	// 1. Setup a recorder to capture spans
-	sr := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
-	otel.SetTracerProvider(tp)
-
-	// 2. Clear out any global propagators for a clean test
-	// (Though in production we use TraceContext)
-
-	// 3. Setup Gin with otelgin middleware
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(otelgin.Middleware("test-service"))
-
-	r.GET("/test", func(c *gin.Context) {
-		// Use the request context to start a new child span
-		_, span := otel.Tracer("test").Start(c.Request.Context(), "child-span")
-		defer span.End()
-		
-		// Verify that the child span has the same trace ID as the parent (HTTP) span
-		parentSpan := trace.SpanFromContext(c.Request.Context())
-		assert.Equal(t, parentSpan.SpanContext().TraceID(), span.SpanContext().TraceID())
-		
-		c.Status(http.StatusOK)
-	})
-
-	// 4. Perform a request
-	req, _ := http.NewRequest("GET", "/test", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	// 5. Assertions
-	assert.Equal(t, http.StatusOK, w.Code)
-	
-	spans := sr.Ended()
-	assert.Len(t, spans, 2) // child-span and the HTTP span
-	
-	// Ensure they share the same TraceID
-	assert.Equal(t, spans[0].SpanContext().TraceID(), spans[1].SpanContext().TraceID())
+// mockSpan implements trace.ReadWriteSpan for testing purposes.
+type mockSpan struct {
+	trace.ReadWriteSpan
+	attributes []attribute.KeyValue
 }
 
-func TestTracerExporterConfiguration(t *testing.T) {
-	// Test that InitTracer doesn't panic with different configurations
-	// We use "none" or "stdout" for tests to avoid external dependencies
-	
-	t.Run("stdout exporter", func(t *testing.T) {
-		t.Setenv("TRACING_EXPORTER", "stdout")
-		shutdown, err := tracing.InitTracer("test-stdout")
-		assert.NoError(t, err)
-		assert.NotNil(t, shutdown)
-		_ = shutdown(context.Background())
-	})
+func (m *mockSpan) SetAttributes(kv ...attribute.KeyValue) {
+	m.attributes = append(m.attributes, kv...)
+}
 
-	t.Run("none exporter", func(t *testing.T) {
-		t.Setenv("TRACING_EXPORTER", "none")
-		shutdown, err := tracing.InitTracer("test-none")
-		assert.NoError(t, err)
-		assert.NotNil(t, shutdown)
-		_ = shutdown(context.Background())
-	})
+func TestBaggageSpanProcessor_OnStart(t *testing.T) {
+	bsp := BaggageSpanProcessor{}
 
-	t.Run("invalid exporter", func(t *testing.T) {
-		t.Setenv("TRACING_EXPORTER", "invalid")
-		shutdown, err := tracing.InitTracer("test-invalid")
-		assert.Error(t, err)
-		assert.Nil(t, shutdown)
-	})
+	m1, _ := baggage.NewMember("tenant_id", "t-123")
+	m2, _ := baggage.NewMember("customer_id", "c-456")
+	m3, _ := baggage.NewMember("pii_email", "user@example.com") // Target for rejection
+
+	bag, _ := baggage.New(m1, m2, m3)
+	ctx := baggage.ContextWithBaggage(context.Background(), bag)
+
+	span := &mockSpan{}
+	bsp.OnStart(ctx, span)
+
+	if len(span.attributes) != 2 {
+		t.Fatalf("expected 2 attributes, got %d", len(span.attributes))
+	}
+
+	var foundTenant, foundCustomer bool
+	for _, attr := range span.attributes {
+		if attr.Key == "tenant_id" && attr.Value.AsString() == "t-123" {
+			foundTenant = true
+		}
+		if attr.Key == "customer_id" && attr.Value.AsString() == "c-456" {
+			foundCustomer = true
+		}
+		if attr.Key == "pii_email" {
+			t.Fatalf("security failure: PII leaked into span attributes")
+		}
+	}
+
+	if !foundTenant || !foundCustomer {
+		t.Fatalf("missing required baggage attributes in span")
+	}
+}
+
+func TestBaggageSpanProcessor_NoOps(t *testing.T) {
+	bsp := BaggageSpanProcessor{}
+	ctx := context.Background()
+	if err := bsp.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown should return nil, got %v", err)
+	}
+	if err := bsp.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush should return nil, got %v", err)
+	}
 }

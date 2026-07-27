@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"stellarbill-backend/internal/cache"
+	"stellarbill-backend/internal/metrics"
 )
 
 // cacheEnvelope wraps the actual data with a stored timestamp so the decorator
@@ -43,6 +44,15 @@ func NewCachedPlanRepo(backend PlanRepository, c cache.Cache, ttl time.Duration)
 	}
 }
 
+func (cpr *CachedPlanRepo) cacheLayer() string {
+	switch cpr.cache.(type) {
+	case *cache.Redis:
+		return "redis"
+	default:
+		return "inmemory"
+	}
+}
+
 func (cpr *CachedPlanRepo) cacheKey(id string) string {
 	return "plan:byid:" + id
 }
@@ -62,6 +72,9 @@ func (cpr *CachedPlanRepo) isStale(key string, env cacheEnvelope) bool {
 // readEnvelope attempts to load and unmarshal a cacheEnvelope for key.
 // It returns (nil, false) on cache miss or error.
 func (cpr *CachedPlanRepo) readEnvelope(ctx context.Context, key string) (*cacheEnvelope, bool) {
+	if cpr.cache == nil {
+		return nil, false
+	}
 	val, err := cpr.cache.Get(ctx, key)
 	if err != nil || val == nil {
 		return nil, false
@@ -83,8 +96,10 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 		var pr PlanRow
 		if err := json.Unmarshal(env.Data, &pr); err == nil {
 			atomic.AddUint64(&cpr.hits, 1)
+			cpr.recordCacheMetrics("get", "hit")
 			return &pr, nil
 		}
+		cpr.recordCacheMetrics("get", "error")
 		// Inner data corrupt; purge so GetOrLoad refreshes
 		_ = cpr.cache.Delete(ctx, key)
 	}
@@ -92,11 +107,13 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 	// Stale path: cached but invalidated — purge so GetOrLoad loads fresh
 	if env, ok := cpr.readEnvelope(ctx, key); ok && cpr.isStale(key, *env) {
 		atomic.AddUint64(&cpr.stales, 1)
+		cpr.recordCacheMetrics("get", "stale")
 		_ = cpr.cache.Delete(ctx, key)
 	}
 
 	// Miss or stale-removed path: guarded load from backend
 	atomic.AddUint64(&cpr.misses, 1)
+	cpr.recordCacheMetrics("get", "miss")
 	envelopeBytes, err := cpr.guard.GetOrLoad(ctx, key, cpr.ttl, func() ([]byte, error) {
 		pr, err := cpr.backend.FindByID(ctx, id)
 		if err != nil {
@@ -133,8 +150,10 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 		var out []*PlanRow
 		if err := json.Unmarshal(env.Data, &out); err == nil {
 			atomic.AddUint64(&cpr.hits, 1)
+			cpr.recordCacheMetrics("get", "hit")
 			return out, nil
 		}
+		cpr.recordCacheMetrics("get", "error")
 		// Inner data corrupt; purge so GetOrLoad refreshes
 		_ = cpr.cache.Delete(ctx, key)
 	}
@@ -142,11 +161,13 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	// Stale path: cached but invalidated — purge so GetOrLoad loads fresh
 	if env, ok := cpr.readEnvelope(ctx, key); ok && cpr.isStale(key, *env) {
 		atomic.AddUint64(&cpr.stales, 1)
+		cpr.recordCacheMetrics("get", "stale")
 		_ = cpr.cache.Delete(ctx, key)
 	}
 
 	// Miss or stale-removed path: guarded load from backend
 	atomic.AddUint64(&cpr.misses, 1)
+	cpr.recordCacheMetrics("get", "miss")
 	envelopeBytes, err := cpr.guard.GetOrLoad(ctx, key, cpr.ttl, func() ([]byte, error) {
 		out, err := cpr.backend.List(ctx)
 		if err != nil {
@@ -184,6 +205,7 @@ func (cpr *CachedPlanRepo) Delete(ctx context.Context, id string) error {
 
 	_ = cpr.guard.Delete(ctx, key)
 	_ = cpr.guard.Delete(ctx, listKey)
+	cpr.recordCacheMetrics("delete", "hit")
 
 	now := time.Now()
 	cpr.invalidatedMu.Lock()
@@ -193,9 +215,52 @@ func (cpr *CachedPlanRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// Flush implements cache.Purgeable. It evicts all known cached entries from
+// the underlying cache and marks them as invalidated so subsequent reads
+// bypass stale data and reload from the backend.
+func (cpr *CachedPlanRepo) Flush(ctx context.Context) (int, error) {
+	cpr.invalidatedMu.Lock()
+	count := len(cpr.invalidatedAt)
+	now := time.Now()
+
+	// Delete from underlying cache first; errors are non-fatal since the
+	// stale-read detection will catch any remaining entries.
+	if cpr.cache != nil {
+		for k := range cpr.invalidatedAt {
+			_ = cpr.cache.Delete(ctx, k)
+		}
+	}
+
+	// Update invalidation timestamps after deletion to minimize the window
+	// where a concurrent read could see a stale entry as fresh.
+	for k := range cpr.invalidatedAt {
+		cpr.invalidatedAt[k] = now
+	}
+	cpr.invalidatedMu.Unlock()
+	cpr.recordCacheMetrics("flush", "hit")
+	return count, nil
+}
+
+// ResetMetrics implements cache.Purgeable.
+func (cpr *CachedPlanRepo) ResetMetrics() {
+	atomic.StoreUint64(&cpr.hits, 0)
+	atomic.StoreUint64(&cpr.misses, 0)
+	atomic.StoreUint64(&cpr.stales, 0)
+}
+
+// Namespace implements cache.Purgeable.
+func (cpr *CachedPlanRepo) Namespace() string {
+	return "plans"
+}
+
 // Metrics returns hit/miss/stale counters for testing/monitoring.
 func (cpr *CachedPlanRepo) Metrics() (hits uint64, misses uint64, stales uint64) {
 	return atomic.LoadUint64(&cpr.hits),
 		atomic.LoadUint64(&cpr.misses),
 		atomic.LoadUint64(&cpr.stales)
+}
+
+// recordCacheMetrics records a cache operation to Prometheus.
+func (cpr *CachedPlanRepo) recordCacheMetrics(op, result string) {
+	metrics.CacheHitsTotal.WithLabelValues(cpr.cacheLayer(), op, result).Inc()
 }

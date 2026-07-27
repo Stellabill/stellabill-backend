@@ -29,6 +29,7 @@ var exemptedRoutes = map[string]map[string]string{
 		"/api/admin/reports":      "Internal reconciliation reports, operational use only",
 		"/api/admin/feature-flags": "Internal feature flags endpoint",
 		"/api/metrics":            "Metrics endpoint",
+		"/internal/buildinfo":       "Internal build info endpoint for incident triage",
 	},
 	"POST": {
 		"/api/subscriptions/{id}/status":    "Legacy status transition endpoint, not yet exposed in public spec",

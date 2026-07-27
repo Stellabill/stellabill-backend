@@ -4,6 +4,8 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,45 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// tailConfig holds configuration for the tail sampling processor.
+type tailConfig struct {
+	maxTraces      int
+	maxSpans       int
+	decisionWindow time.Duration
+	latency        time.Duration
+}
+
+// tailConfigFromEnv reads tail sampling configuration from environment variables.
+func tailConfigFromEnv() (tailConfig, error) {
+	cfg := tailConfig{
+		maxTraces:      10000,
+		maxSpans:       500,
+		decisionWindow: 10 * time.Second,
+		latency:        500 * time.Millisecond,
+	}
+	if v := os.Getenv("TAIL_MAX_TRACES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.maxTraces = n
+		}
+	}
+	if v := os.Getenv("TAIL_MAX_SPANS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.maxSpans = n
+		}
+	}
+	if v := os.Getenv("TAIL_DECISION_WINDOW"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.decisionWindow = d
+		}
+	}
+	if v := os.Getenv("TAIL_LATENCY_THRESHOLD"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.latency = d
+		}
+	}
+	return cfg, nil
+}
 
 const (
 	headSampledAttribute  = "tracing.tail.head_sampled"

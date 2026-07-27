@@ -275,6 +275,7 @@ Declare recovery when:
 
 ## 10. Post-Incident Checklist
 
+- [ ] Blameless postmortem filed using [`postmortem-template.md`](./postmortem-template.md) and indexed in [`postmortems/README.md`](./postmortems/README.md)
 - [ ] Root cause documented in incident tracker
 - [ ] Deployment pipeline reviewed — is there a canary/progressive rollout?
 - [ ] Alert thresholds calibrated against measured baseline (§2)

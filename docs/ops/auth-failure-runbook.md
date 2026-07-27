@@ -191,10 +191,10 @@ Declare recovery when the 401 rate drops below **1 %** and stays there for **10 
 
 ## 9. Post-Incident Checklist
 
+- [ ] Blameless postmortem filed using [`postmortem-template.md`](./postmortem-template.md) and indexed in [`postmortems/README.md`](./postmortems/README.md)
 - [ ] Root cause documented in incident tracker
 - [ ] JWT rotation procedure reviewed — is it fully automated with zero-downtime rolling?
 - [ ] Alert thresholds calibrated against actual baseline (§2)
 - [ ] Confirm no secrets were written to logs during investigation (audit log review)
 - [ ] Update `docs/security-notes.md` if new security finding discovered
-- [ ] Add/update multi-tenant auth tests covering the failure mode</content>
-<parameter name="filePath">/workspaces/stellabill-backend/docs/ops/auth-failure-runbook.md
+- [ ] Add/update multi-tenant auth tests covering the failure mode

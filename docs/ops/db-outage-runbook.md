@@ -255,6 +255,7 @@ Declare recovery when:
 
 ## 10. Post-Incident Checklist
 
+- [ ] Blameless postmortem filed using [`postmortem-template.md`](./postmortem-template.md) and indexed in [`postmortems/README.md`](./postmortems/README.md)
 - [ ] Root cause documented in incident tracker
 - [ ] `DB_MAX_OPEN_CONNS` and `DB_MAX_IDLE_CONNS` tuning reviewed
 - [ ] Migration process reviewed — are long-running migrations run with lock timeouts?

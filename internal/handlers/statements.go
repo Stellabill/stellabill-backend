@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -44,6 +46,10 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// nil-svc guard: keeps legacy/coverage tests that pass nil working.
 		if svc == nil {
+			if wantsCSV(c) {
+				streamStatementsCSV(c, []*service.StatementDetail{})
+				return
+			}
 			c.JSON(http.StatusOK, gin.H{"statements": []interface{}{}})
 			return
 		}
@@ -92,6 +98,11 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		}
 		if statements == nil {
 			statements = []*service.StatementDetail{}
+		}
+
+		if wantsCSV(c) {
+			streamStatementsCSV(c, statements)
+			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -230,4 +241,81 @@ func buildStatementQuery(c *gin.Context) (repository.StatementQuery, error) {
 	}
 
 	return q, nil
+}
+
+// ---------------- CSV STREAMING HELPERS ----------------
+
+// wantsCSV checks if the client request prefers CSV formatting.
+func wantsCSV(c *gin.Context) bool {
+	return strings.Contains(strings.ToLower(c.GetHeader("Accept")), "text/csv")
+}
+
+// streamStatementsCSV formats and streams the statements as a CSV attachment.
+// It directly writes to the HTTP response writer to avoid intermediate memory
+// buffering, supporting efficient spreadsheet workflows for tenant operators.
+func streamStatementsCSV(c *gin.Context, statements []*service.StatementDetail) {
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", `attachment; filename="statements.csv"`)
+	c.Status(http.StatusOK)
+
+	w := csv.NewWriter(c.Writer)
+	header := []string{
+		"id",
+		"subscription_id",
+		"customer_id",
+		"period_start",
+		"period_end",
+		"issued_at",
+		"total_amount",
+		"currency",
+		"kind",
+		"status",
+	}
+	_ = w.Write(header)
+	w.Flush()
+
+	for _, stmt := range statements {
+		if stmt == nil {
+			continue
+		}
+		row := []string{
+			escapeCSVField(stmt.ID),
+			escapeCSVField(stmt.SubscriptionID),
+			escapeCSVField(stmt.Customer),
+			escapeCSVField(stmt.PeriodStart),
+			escapeCSVField(stmt.PeriodEnd),
+			escapeCSVField(stmt.IssuedAt),
+			escapeCSVField(stmt.TotalAmount),
+			escapeCSVField(stmt.Currency),
+			escapeCSVField(stmt.Kind),
+			escapeCSVField(stmt.Status),
+		}
+		_ = w.Write(row)
+	}
+	w.Flush()
+}
+
+// escapeCSVField mitigates CSV injection (formula injection) per OWASP guidance.
+// Spreadsheet software (Excel, LibreOffice Calc, Google Sheets) evaluates cells
+// beginning with '=', '+', '-', '@', '\t', or '\r' as formulas or commands.
+// Prepending a single quote (') instructs spreadsheet parsers to treat the value
+// as literal text, preventing execution of arbitrary commands or formulas.
+func escapeCSVField(val string) string {
+	if len(val) == 0 {
+		return val
+	}
+	// Check trimmed string first to catch formula characters preceded by whitespace.
+	trimmed := strings.TrimSpace(val)
+	if len(trimmed) > 0 {
+		switch trimmed[0] {
+		case '=', '+', '-', '@', '\t', '\r':
+			return "'" + val
+		}
+	}
+	// Check raw first character to catch raw tab or carriage return.
+	switch val[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + val
+	}
+	return val
 }

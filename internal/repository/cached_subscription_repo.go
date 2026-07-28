@@ -203,6 +203,37 @@ func (csr *CachedSubscriptionRepo) Delete(ctx context.Context, id string, tenant
 	return nil
 }
 
+// Flush implements cache.Purgeable.
+func (csr *CachedSubscriptionRepo) Flush(ctx context.Context) (int, error) {
+	csr.invalidatedMu.Lock()
+	count := len(csr.invalidatedAt)
+	now := time.Now()
+
+	if csr.cache != nil {
+		for k := range csr.invalidatedAt {
+			_ = csr.cache.Delete(ctx, k)
+		}
+	}
+
+	for k := range csr.invalidatedAt {
+		csr.invalidatedAt[k] = now
+	}
+	csr.invalidatedMu.Unlock()
+	return count, nil
+}
+
+// ResetMetrics implements cache.Purgeable.
+func (csr *CachedSubscriptionRepo) ResetMetrics() {
+	atomic.StoreUint64(&csr.hits, 0)
+	atomic.StoreUint64(&csr.misses, 0)
+	atomic.StoreUint64(&csr.stales, 0)
+}
+
+// Namespace implements cache.Purgeable.
+func (csr *CachedSubscriptionRepo) Namespace() string {
+	return "subscriptions"
+}
+
 // Metrics returns hit/miss/stale counters for testing/monitoring.
 func (csr *CachedSubscriptionRepo) Metrics() (hits uint64, misses uint64, stales uint64) {
 	return atomic.LoadUint64(&csr.hits),

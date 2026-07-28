@@ -63,6 +63,8 @@ type Config struct {
 	TracingExporter    string
 	TracingServiceName string
 	SecurityFrameAncestors string
+	SpiffeSocketPath   string
+	SpiffeTrustDomain  string
 	MaxRequestSize         int64
 	MaxGzipUncompressed    int64
 	MaxGzipRatio           float64
@@ -194,6 +196,8 @@ func Load(opts ...Option) (Config, error) {
 		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		SpiffeSocketPath:   getEnv("SPIFFE_ENDPOINT_SOCKET", ""),
+		SpiffeTrustDomain:  getEnv("SPIFFE_TRUST_DOMAIN", "example.org"),
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10), // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),

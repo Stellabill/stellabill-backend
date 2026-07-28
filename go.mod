@@ -28,6 +28,7 @@ require (
 	golang.org/x/text v0.34.0
 	golang.org/x/time v0.0.0-20220210224613-90d013bbcef8
 	gopkg.in/yaml.v3 v3.0.1
+	github.com/spiffe/go-spiffe/v2 v2.4.0
 )
 
 require (

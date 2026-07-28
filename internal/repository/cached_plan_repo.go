@@ -175,6 +175,26 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 }
 
 // Delete invalidates a cached plan entry and records the invalidation time.
+func (cpr *CachedPlanRepo) Flush(ctx context.Context) (int, error) {
+	if cpr.cache == nil {
+		return 0, nil
+	}
+	if err := cpr.cache.Delete(ctx, cpr.listKey()); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+
+func (cpr *CachedPlanRepo) ResetMetrics() {
+	atomic.StoreUint64(&cpr.hits, 0)
+	atomic.StoreUint64(&cpr.misses, 0)
+	atomic.StoreUint64(&cpr.stales, 0)
+}
+
+func (cpr *CachedPlanRepo) Namespace() string {
+	return "plans"
+}
+
 func (cpr *CachedPlanRepo) Delete(ctx context.Context, id string) error {
 	if cpr.cache == nil {
 		return nil

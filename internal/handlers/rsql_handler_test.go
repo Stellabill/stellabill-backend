@@ -7,6 +7,7 @@ import (
 
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/storage/s3"
 )
 
 type captureStatementService struct {
@@ -31,6 +32,16 @@ func (s *captureStatementService) GetDetail(
 	statementID string,
 ) (*service.StatementDetail, []string, error) {
 	return nil, nil, nil
+}
+
+func (s *captureStatementService) ExportStatements(
+	_ context.Context,
+	_ string,
+	_ []string,
+	_, _ string,
+	_ s3.S3Uploader,
+) (*service.ExportResult, error) {
+	return &service.ExportResult{ObjectKey: "stub", URL: "https://example.invalid/export"}, nil
 }
 
 func TestListStatements_RSQLFilterRejectedWhenInvalid(t *testing.T) {

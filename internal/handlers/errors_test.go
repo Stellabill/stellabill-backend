@@ -32,6 +32,10 @@ func (m *mockErrorService) ChangeStatus(ctx context.Context, tenantID string, ac
 	return nil, nil
 }
 
+func (m *mockErrorService) BatchChangeStatus(ctx context.Context, tenantID string, actorID string, operations []service.BatchSubscriptionOperation) ([]service.BatchSubscriptionResult, error) {
+	return nil, nil
+}
+
 // setupErrorTestRouter builds a test router with trace ID middleware
 func setupErrorTestRouter(svc service.SubscriptionService, setCallerID bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -336,7 +340,7 @@ func TestErrorEnvelope_PIIRedaction(t *testing.T) {
 			"amount":      1234.56,
 			"safe_field":  "ok",
 		}
-		RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeBadRequest, 
+		RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeBadRequest,
 			"Failed processing customer_cust_sensitive123 with amount 1234.56", details)
 	})
 

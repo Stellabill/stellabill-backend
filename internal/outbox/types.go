@@ -61,6 +61,7 @@ type Publisher interface {
 // Repository interface for outbox operations
 type Repository interface {
 	Store(event *Event) error
+	BulkInsert(ctx context.Context, events []*Event) error
 	GetPendingEvents(limit int) ([]*Event, error)
 	GetByID(id uuid.UUID) (*Event, error)
 	UpdateStatus(id uuid.UUID, status Status, errorMessage *string) error

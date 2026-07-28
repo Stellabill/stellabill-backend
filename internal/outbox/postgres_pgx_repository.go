@@ -19,6 +19,7 @@ type pgxPool interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
 	Begin(ctx context.Context) (pgx.Tx, error)
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
 }
 
 // PostgresPgxRepository implements Repository using pgx
@@ -50,6 +51,47 @@ func (r *PostgresPgxRepository) Store(event *Event) error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to store outbox event: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresPgxRepository) BulkInsert(ctx context.Context, events []*Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	if len(events) == 1 {
+		return r.Store(events[0])
+	}
+
+	tenantID := events[0].TenantID
+	for _, e := range events[1:] {
+		if e.TenantID != tenantID {
+			tenantID = ""
+			break
+		}
+	}
+	if tenantID != "" {
+		ctx = db.ContextWithTenantID(ctx, tenantID)
+	}
+
+	columnNames := []string{
+		"id", "tenant_id", "event_type", "event_data", "aggregate_id", "aggregate_type",
+		"occurred_at", "status", "retry_count", "max_retries", "next_retry_at",
+		"error_message", "created_at", "updated_at", "version", "deduplication_id",
+	}
+
+	rows := make([][]any, len(events))
+	for i, e := range events {
+		rows[i] = []any{
+			e.ID, e.TenantID, e.EventType, e.EventData, e.AggregateID, e.AggregateType,
+			e.OccurredAt, e.Status, e.RetryCount, e.MaxRetries, e.NextRetryAt,
+			e.ErrorMessage, e.CreatedAt, e.UpdatedAt, e.Version, e.DeduplicationID,
+		}
+	}
+
+	_, err := r.pool.CopyFrom(ctx, pgx.Identifier{"outbox_events"}, columnNames, pgx.CopyFromRows(rows))
+	if err != nil {
+		return fmt.Errorf("failed to bulk insert outbox events: %w", err)
 	}
 	return nil
 }

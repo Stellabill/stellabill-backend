@@ -33,6 +33,16 @@ func (m *memoryRepository) Store(event *Event) error {
 	return nil
 }
 
+func (m *memoryRepository) BulkInsert(ctx context.Context, events []*Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range events {
+		copy := *e
+		m.events[e.ID] = &copy
+	}
+	return nil
+}
+
 func (m *memoryRepository) GetPendingEvents(limit int) ([]*Event, error) {
 	return m.GetPendingEventsForPublisher("default", limit)
 }

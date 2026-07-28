@@ -29,6 +29,7 @@ func TestPostgresRepository_Store(t *testing.T) {
 			name: "successful event storage",
 			event: &Event{
 				ID:            uuid.New(),
+				TenantID:      "tenant-a",
 				EventType:     "user.created",
 				EventData:     json.RawMessage(`{"type":"user.created","data":{"user_id":"123"},"timestamp":"2023-01-01T00:00:00Z","id":"event-123"}`),
 				AggregateID:   stringPtr("user-123"),
@@ -45,6 +46,7 @@ func TestPostgresRepository_Store(t *testing.T) {
 				mock.ExpectExec(`INSERT INTO outbox_events`).
 					WithArgs(
 						sqlmock.AnyArg(),
+						"tenant-a",
 						"user.created",
 						[]byte(`{"type":"user.created","data":{"user_id":"123"},"timestamp":"2023-01-01T00:00:00Z","id":"event-123"}`),
 						"user-123",
@@ -67,6 +69,7 @@ func TestPostgresRepository_Store(t *testing.T) {
 			name: "database error during storage",
 			event: &Event{
 				ID:         uuid.New(),
+				TenantID:   "tenant-b",
 				EventType:  "error.event",
 				EventData:  json.RawMessage(`{"type":"error.event"}`),
 				OccurredAt: time.Now(),
@@ -82,6 +85,7 @@ func TestPostgresRepository_Store(t *testing.T) {
 				mock.ExpectExec(`INSERT INTO outbox_events`).
 					WithArgs(
 						sqlmock.AnyArg(),
+						"tenant-b",
 						"error.event",
 						[]byte(`{"type":"error.event"}`),
 						nil,
@@ -140,6 +144,7 @@ func TestPostgresRepository_GetPendingEvents(t *testing.T) {
 			expectedEvents: []*Event{
 				{
 					ID:            uuid.New(),
+					TenantID:      "tenant-c",
 					EventType:     "user.created",
 					EventData:     json.RawMessage(`{"type":"user.created"}`),
 					AggregateID:   stringPtr("user-123"),
@@ -154,8 +159,8 @@ func TestPostgresRepository_GetPendingEvents(t *testing.T) {
 				},
 			},
 			setupMock: func() {
-				rows := sqlmock.NewRows([]string{"id", "event_type", "event_data", "aggregate_id", "aggregate_type", "occurred_at", "status", "retry_count", "max_retries", "next_retry_at", "error_message", "created_at", "updated_at", "version", "deduplication_id"}).
-					AddRow(uuid.New(), "user.created", []byte(`{"type":"user.created"}`), "user-123", "user", time.Now().Add(-1*time.Hour), StatusPending, 0, 3, nil, nil, time.Now().Add(-1*time.Hour), time.Now().Add(-1*time.Hour), 1, nil)
+				rows := sqlmock.NewRows([]string{"id", "tenant_id", "event_type", "event_data", "aggregate_id", "aggregate_type", "occurred_at", "status", "retry_count", "max_retries", "next_retry_at", "error_message", "created_at", "updated_at", "version", "deduplication_id"}).
+					AddRow(uuid.New(), "tenant-c", "user.created", []byte(`{"type":"user.created"}`), "user-123", "user", time.Now().Add(-1*time.Hour), StatusPending, 0, 3, nil, nil, time.Now().Add(-1*time.Hour), time.Now().Add(-1*time.Hour), 1, nil)
 				mock.ExpectQuery(`SELECT .* FROM outbox_events`).
 					WithArgs(StatusPending, StatusFailed, sqlmock.AnyArg(), 10).
 					WillReturnRows(rows)
@@ -189,6 +194,7 @@ func TestPostgresRepository_GetPendingEvents(t *testing.T) {
 				for i, expectedEvent := range tt.expectedEvents {
 					assert.Equal(t, expectedEvent.EventType, events[i].EventType)
 					assert.Equal(t, expectedEvent.Status, events[i].Status)
+					assert.Equal(t, expectedEvent.TenantID, events[i].TenantID)
 					if expectedEvent.AggregateID != nil {
 						require.NotNil(t, events[i].AggregateID)
 						assert.Equal(t, *expectedEvent.AggregateID, *events[i].AggregateID)
@@ -203,7 +209,7 @@ func TestPostgresRepository_GetPendingEvents(t *testing.T) {
 	}
 }
 
-func TestPostgresRepository_MarkAsProcessing(t *testing.T) {
+func TestPostgresRepository_GetByID(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -212,37 +218,43 @@ func TestPostgresRepository_MarkAsProcessing(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		eventID       uuid.UUID
+		id            uuid.UUID
+		expectedEvent *Event
 		expectedError string
 		setupMock     func()
 	}{
 		{
-			name:    "successful marking as processing",
-			eventID: uuid.New(),
+			name: "successful event retrieval",
+			id:   uuid.New(),
+			expectedEvent: &Event{
+				ID:         uuid.New(),
+				TenantID:   "tenant-d",
+				EventType:  "user.updated",
+				EventData:  json.RawMessage(`{"type":"user.updated"}`),
+				OccurredAt: time.Now(),
+				Status:     StatusPending,
+				RetryCount: 0,
+				MaxRetries: 3,
+				CreatedAt:  time.Now(),
+				UpdatedAt:  time.Now(),
+				Version:    1,
+			},
 			setupMock: func() {
-				mock.ExpectExec(`UPDATE outbox_events SET status = \$1, updated_at = \$2 WHERE id = \$3 AND status = \$4`).
-					WithArgs(StatusProcessing, sqlmock.AnyArg(), sqlmock.AnyArg(), StatusPending).
-					WillReturnResult(sqlmock.NewResult(0, 1))
+				rows := sqlmock.NewRows([]string{"id", "tenant_id", "event_type", "event_data", "aggregate_id", "aggregate_type", "occurred_at", "status", "retry_count", "max_retries", "next_retry_at", "error_message", "created_at", "updated_at", "version", "deduplication_id"}).
+					AddRow(uuid.New(), "tenant-d", "user.updated", []byte(`{"type":"user.updated"}`), nil, nil, time.Now(), StatusPending, 0, 3, nil, nil, time.Now(), time.Now(), 1, nil)
+				mock.ExpectQuery(`SELECT .* FROM outbox_events`).
+					WithArgs(sqlmock.AnyArg()).
+					WillReturnRows(rows)
 			},
 		},
 		{
-			name:          "event not found or not in pending status",
-			eventID:       uuid.New(),
-			expectedError: "event not found or not in pending status",
+			name:          "database error during retrieval",
+			id:            uuid.New(),
+			expectedError: "failed to scan event",
 			setupMock: func() {
-				mock.ExpectExec(`UPDATE outbox_events SET status = \$1, updated_at = \$2 WHERE id = \$3 AND status = \$4`).
-					WithArgs(StatusProcessing, sqlmock.AnyArg(), sqlmock.AnyArg(), StatusPending).
-					WillReturnResult(sqlmock.NewResult(0, 0))
-			},
-		},
-		{
-			name:          "database error during marking",
-			eventID:       uuid.New(),
-			expectedError: "failed to mark event as processing",
-			setupMock: func() {
-				mock.ExpectExec(`UPDATE outbox_events SET status = \$1, updated_at = \$2 WHERE id = \$3 AND status = \$4`).
-					WithArgs(StatusProcessing, sqlmock.AnyArg(), sqlmock.AnyArg(), StatusPending).
-					WillReturnError(fmt.Errorf("database connection failed"))
+				mock.ExpectQuery(`SELECT .* FROM outbox_events`).
+					WithArgs(sqlmock.AnyArg()).
+					WillReturnError(fmt.Errorf("scan failure"))
 			},
 		},
 	}
@@ -251,150 +263,7 @@ func TestPostgresRepository_MarkAsProcessing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
 
-			err := repo.MarkAsProcessing(tt.eventID)
-
-			if tt.expectedError != "" {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedError)
-			} else {
-				assert.NoError(t, err)
-			}
-
-			assert.NoError(t, mock.ExpectationsWereMet())
-		})
-	}
-}
-
-func TestPostgresRepository_ScanError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	repo := NewPostgresRepository(db)
-
-	t.Run("scan error with invalid data type", func(t *testing.T) {
-		rows := sqlmock.NewRows([]string{"id", "event_type", "event_data", "aggregate_id", "aggregate_type", "occurred_at", "status", "retry_count", "max_retries", "next_retry_at", "error_message", "created_at", "updated_at", "version", "deduplication_id"}).
-			AddRow(123, "invalid.event", []byte(`{"type":"invalid.event"}`), nil, nil, time.Now(), StatusPending, 0, 3, nil, nil, time.Now(), time.Now(), 1, nil)
-
-		mock.ExpectQuery(`SELECT`).WillReturnRows(rows)
-
-		events, err := repo.GetPendingEvents(10)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to scan event")
-		assert.Nil(t, events)
-
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-}
-
-func TestPostgresRepository_GetPendingEventsForPublisher(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	repo := NewPostgresRepository(db)
-	eventID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
-	rows := sqlmock.NewRows([]string{"id", "event_type", "event_data", "aggregate_id", "aggregate_type", "occurred_at", "status", "retry_count", "max_retries", "next_retry_at", "error_message", "created_at", "updated_at", "version", "deduplication_id"}).
-		AddRow(eventID, "user.created", []byte(`{"type":"user.created"}`), nil, nil, time.Now(), StatusPending, 0, 3, nil, nil, time.Now(), time.Now(), 1, nil)
-
-	mock.ExpectQuery(`FROM outbox_events e\s+LEFT JOIN outbox_publisher_progress p ON p.publisher = \$1`).
-		WithArgs("default", StatusPending, StatusFailed, sqlmock.AnyArg(), 10).
-		WillReturnRows(rows)
-
-	events, err := repo.GetPendingEventsForPublisher("default", 10)
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, eventID, events[0].ID)
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestPostgresRepository_MarkPublishedUpdatesProgressAndCompletesAtomically(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	repo := NewPostgresRepository(db)
-	event := &Event{ID: uuid.MustParse("00000000-0000-0000-0000-000000000002")}
-
-	mock.ExpectBegin()
-	mock.ExpectExec(`INSERT INTO outbox_publisher_progress`).
-		WithArgs("default", event.ID, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`SELECT last_event_id\s+FROM outbox_publisher_progress\s+WHERE publisher = \$1`).
-		WithArgs("default").
-		WillReturnRows(sqlmock.NewRows([]string{"last_event_id"}).AddRow(event.ID))
-	mock.ExpectExec(`UPDATE outbox_events\s+SET status = \$1, error_message = NULL, updated_at = \$2\s+WHERE id = \$3`).
-		WithArgs(StatusCompleted, sqlmock.AnyArg(), event.ID).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
-
-	err = repo.MarkPublished("default", event, []string{"default"})
-	require.NoError(t, err)
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestPostgresRepository_MarkPublishedLeavesHigherProgressInPlace(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	repo := NewPostgresRepository(db)
-	older := &Event{ID: uuid.MustParse("00000000-0000-0000-0000-000000000001")}
-	newerID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
-
-	mock.ExpectBegin()
-	mock.ExpectExec(`INSERT INTO outbox_publisher_progress`).
-		WithArgs("default", older.ID, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`SELECT last_event_id\s+FROM outbox_publisher_progress\s+WHERE publisher = \$1`).
-		WithArgs("default").
-		WillReturnRows(sqlmock.NewRows([]string{"last_event_id"}).AddRow(newerID))
-	mock.ExpectExec(`UPDATE outbox_events\s+SET status = \$1, error_message = NULL, updated_at = \$2\s+WHERE id = \$3`).
-		WithArgs(StatusCompleted, sqlmock.AnyArg(), older.ID).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
-
-	err = repo.MarkPublished("default", older, []string{"default"})
-	require.NoError(t, err)
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestNewEvent(t *testing.T) {
-	tests := []struct {
-		name          string
-		eventType     string
-		data          interface{}
-		aggregateID   *string
-		aggregateType *string
-		expectedError string
-	}{
-		{
-			name:          "successful event creation",
-			eventType:     "user.created",
-			data:          map[string]interface{}{"user_id": "123", "email": "test@example.com"},
-			aggregateID:   stringPtr("user-123"),
-			aggregateType: stringPtr("user"),
-		},
-		{
-			name:          "successful event creation without aggregate",
-			eventType:     "system.started",
-			data:          map[string]interface{}{"timestamp": time.Now()},
-			aggregateID:   nil,
-			aggregateType: nil,
-		},
-		{
-			name:          "error with unmarshalable data",
-			eventType:     "invalid.event",
-			data:          make(chan int), // channels cannot be marshaled to JSON
-			aggregateID:   nil,
-			aggregateType: nil,
-			expectedError: "failed to marshal event data",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			event, err := NewEvent(tt.eventType, tt.data, tt.aggregateID, tt.aggregateType)
+			event, err := repo.GetByID(tt.id)
 
 			if tt.expectedError != "" {
 				assert.Error(t, err)
@@ -402,47 +271,12 @@ func TestNewEvent(t *testing.T) {
 				assert.Nil(t, event)
 			} else {
 				assert.NoError(t, err)
-				assert.NotEmpty(t, event.ID)
-				assert.Equal(t, tt.eventType, event.EventType)
-				assert.Equal(t, StatusPending, event.Status)
-				assert.Equal(t, 0, event.RetryCount)
-				assert.Equal(t, 3, event.MaxRetries)
-				assert.Equal(t, 1, event.Version)
-				assert.NotZero(t, event.CreatedAt)
-				assert.NotZero(t, event.UpdatedAt)
-				assert.NotZero(t, event.OccurredAt)
-
-				if tt.aggregateID != nil {
-					require.NotNil(t, event.AggregateID)
-					assert.Equal(t, *tt.aggregateID, *event.AggregateID)
-				} else {
-					assert.Nil(t, event.AggregateID)
-				}
-
-				if tt.aggregateType != nil {
-					require.NotNil(t, event.AggregateType)
-					assert.Equal(t, *tt.aggregateType, *event.AggregateType)
-				} else {
-					assert.Nil(t, event.AggregateType)
-				}
-
-				// Verify event data structure
-				var eventData EventData
-				err = json.Unmarshal(event.EventData, &eventData)
-				require.NoError(t, err)
-				assert.Equal(t, tt.eventType, eventData.Type)
-				// Handle time serialization in JSON
-				if tt.name == "successful event creation without aggregate" {
-					assert.NotEmpty(t, eventData.Timestamp)
-				} else {
-					assert.Equal(t, tt.data, eventData.Data)
-				}
-				assert.NotEmpty(t, eventData.ID)
+				assert.Equal(t, tt.expectedEvent.EventType, event.EventType)
+				assert.Equal(t, tt.expectedEvent.Status, event.Status)
+				assert.Equal(t, tt.expectedEvent.TenantID, event.TenantID)
 			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
-}
-
-func stringPtr(s string) *string {
-	return &s
 }

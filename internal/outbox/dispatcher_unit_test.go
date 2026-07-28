@@ -174,6 +174,22 @@ func (m *memoryRepository) MarkPublished(publisher string, event *Event, publish
 	return nil
 }
 
+func (m *memoryRepository) GetPendingEventsForShards(shards []int, limit int) ([]*Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var pending []*Event
+	for _, event := range m.events {
+		if event.Status != StatusPending {
+			continue
+		}
+		pending = append(pending, event)
+		if len(pending) >= limit {
+			break
+		}
+	}
+	return pending, nil
+}
+
 func (m *memoryRepository) GetPendingEventsSince(since *time.Time, lastID *uuid.UUID, limit int) ([]*Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

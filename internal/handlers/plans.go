@@ -44,6 +44,7 @@ func (h *Handler) ListPlans(c *gin.Context) {
 
 	// Paginate the slice. In a real DB repo, this would be in the query.
 	page := pagination.PaginateSlice(allPlans, cursor, limit)
+	setPaginationLinkHeader(c, page, cursorStr != "")
 
 	c.JSON(http.StatusOK, gin.H{
 		"plans":       page.Items,

@@ -50,6 +50,7 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 	}
 
 	page := pagination.PaginateSlice(allSubs, cursor, limit)
+	setPaginationLinkHeader(c, page, cursorStr != "")
 
 	c.JSON(http.StatusOK, gin.H{
 		"subscriptions": page.Items,

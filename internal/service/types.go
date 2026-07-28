@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"time"
 )
 
 // PlanMetadata is the plan subset embedded in the response.
@@ -91,5 +92,12 @@ type SubscriptionStatusChange struct {
 	Status         string `json:"status"`
 	PreviousStatus string `json:"previous_status"`
 	Changed        bool   `json:"changed"`
+}
+
+// ExportResult holds the result of a statement export operation.
+type ExportResult struct {
+	ObjectKey string
+	URL       string
+	ExpiresAt time.Time
 }
 

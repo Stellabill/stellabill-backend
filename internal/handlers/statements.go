@@ -53,7 +53,7 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		// Extract auth context set by middleware.
 		callerID, roles, ok := getAuthContext(c)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RenderProblem(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "unauthorized")
 			return
 		}
 
@@ -61,14 +61,14 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		// they are requesting (RBAC enforcement happens in the service).
 		customerID := c.Query("customer_id")
 		if customerID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "customer_id is required"})
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, "customer_id is required")
 			return
 		}
 
 		// Parse remaining filter / pagination params.
 		q, err := buildStatementQuery(c)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
 			return
 		}
 
@@ -81,10 +81,10 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		)
 		if err != nil {
 			if errors.Is(err, service.ErrForbidden) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				RenderProblem(c, http.StatusForbidden, ErrorCodeForbidden, "forbidden")
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list statements"})
+			RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "failed to list statements")
 			return
 		}
 
@@ -136,13 +136,13 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 		// Extract auth context set by middleware.
 		callerID, roles, ok := getAuthContext(c)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RenderProblem(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "unauthorized")
 			return
 		}
 
 		id := c.Param("id")
 		if id == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, "id is required")
 			return
 		}
 
@@ -154,14 +154,14 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 		)
 		if err != nil {
 			if errors.Is(err, service.ErrNotFound) || errors.Is(err, service.ErrDeleted) {
-				c.JSON(http.StatusNotFound, gin.H{"error": "statement not found"})
+				RenderProblem(c, http.StatusNotFound, ErrorCodeNotFound, "statement not found")
 				return
 			}
 			if errors.Is(err, service.ErrForbidden) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				RenderProblem(c, http.StatusForbidden, ErrorCodeForbidden, "forbidden")
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch statement"})
+			RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "failed to fetch statement")
 			return
 		}
 

@@ -38,6 +38,18 @@ type ErrorEnvelope struct {
 	Details map[string]interface{} `json:"details,omitempty"`
 }
 
+// ProblemDetails represents an RFC 7807 problem+json error envelope
+type ProblemDetails struct {
+	Type     string                 `json:"type,omitempty"`
+	Title    string                 `json:"title,omitempty"`
+	Status   int                    `json:"status"`
+	Detail   string                 `json:"detail,omitempty"`
+	Instance string                 `json:"instance,omitempty"`
+	Code     string                 `json:"code,omitempty"`
+	TraceID  string                 `json:"trace_id,omitempty"`
+	Details  map[string]interface{} `json:"details,omitempty"`
+}
+
 // RespondWithError sends a standardized error response
 func RespondWithError(c *gin.Context, statusCode int, code ErrorCode, message string) {
 	RespondWithErrorDetails(c, statusCode, code, message, nil)
@@ -67,6 +79,36 @@ func RespondWithErrorDetails(c *gin.Context, statusCode int, code ErrorCode, mes
 	}
 
 	c.JSON(statusCode, envelope)
+}
+
+// RenderProblem returns an RFC 7807 problem+json response.
+// It sets Content-Type to application/problem+json unless Accept is application/json.
+func RenderProblem(c *gin.Context, status int, code ErrorCode, detail string) {
+	traceID := c.GetString("traceID")
+	if traceID == "" {
+		traceID = generateTraceID()
+	}
+
+	redactedDetail := security.MaskPII(detail)
+
+	problem := ProblemDetails{
+		Type:     "about:blank",
+		Title:    string(code),
+		Status:   status,
+		Detail:   redactedDetail,
+		Instance: c.Request.URL.Path,
+		Code:     string(code),
+		TraceID:  traceID,
+	}
+
+	accept := c.GetHeader("Accept")
+	contentType := "application/problem+json; charset=utf-8"
+	if accept == "application/json" {
+		contentType = "application/json; charset=utf-8"
+	}
+
+	c.Header("Content-Type", contentType)
+	c.JSON(status, problem)
 }
 
 // generateTraceID generates a unique trace ID for request tracking

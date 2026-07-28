@@ -1,0 +1,64 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# Worker Tier NetworkPolicy
+# Allows egress from Worker pods to:
+# 1. Database (PostgreSQL) - for reading/writing job state and outbox events
+# 2. Kafka - for publishing events
+# 3. DNS for name resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-worker-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    policy-type: allowlist
+    tier: worker
+spec:
+  # Apply only to Worker pods
+  podSelector:
+    matchLabels:
+      tier: {{ .Values.worker.labels.tier }}
+      component: {{ .Values.worker.labels.component }}
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS resolution
+    {{- if .Values.networkPolicy.allowDNS }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.dnsNamespace }}
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: {{ .Values.networkPolicy.dnsPort }}
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.dnsPort }}
+    {{- end }}
+    
+    # Allow egress to Database
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.database.labels.tier }}
+              component: {{ .Values.database.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+    
+    # Allow egress to Kafka
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.kafka.labels.tier }}
+              component: {{ .Values.kafka.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.kafka.port }}
+{{- end }}

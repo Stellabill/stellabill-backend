@@ -1,0 +1,118 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# Database Ingress NetworkPolicy
+# Allows ingress to Database pods only from:
+# 1. API tier
+# 2. Worker tier
+# This prevents unauthorized pods from accessing the database.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-database-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    policy-type: allowlist
+    tier: database
+spec:
+  # Apply only to Database pods
+  podSelector:
+    matchLabels:
+      tier: {{ .Values.database.labels.tier }}
+      component: {{ .Values.database.labels.component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow ingress from API tier
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.api.labels.tier }}
+              component: {{ .Values.api.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+    
+    # Allow ingress from Worker tier
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.worker.labels.tier }}
+              component: {{ .Values.worker.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+
+---
+# Redis Ingress NetworkPolicy
+# Allows ingress to Redis pods only from:
+# 1. API tier
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-redis-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    policy-type: allowlist
+    tier: cache
+spec:
+  # Apply only to Redis pods
+  podSelector:
+    matchLabels:
+      tier: {{ .Values.redis.labels.tier }}
+      component: {{ .Values.redis.labels.component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow ingress from API tier
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.api.labels.tier }}
+              component: {{ .Values.api.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+
+---
+# Kafka Ingress NetworkPolicy
+# Allows ingress to Kafka pods only from:
+# 1. Worker tier
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-kafka-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    policy-type: allowlist
+    tier: messaging
+spec:
+  # Apply only to Kafka pods
+  podSelector:
+    matchLabels:
+      tier: {{ .Values.kafka.labels.tier }}
+      component: {{ .Values.kafka.labels.component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow ingress from Worker tier
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.worker.labels.tier }}
+              component: {{ .Values.worker.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.kafka.port }}
+{{- end }}

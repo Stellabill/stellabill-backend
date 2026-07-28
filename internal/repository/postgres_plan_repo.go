@@ -9,12 +9,12 @@ import (
 )
 
 const findPlanByIDQuery = `
-	SELECT id, name, amount_cents::text, currency, interval, description, updated_at, version
+	SELECT id, tenant_id, name, amount_cents::text, currency, interval, description, updated_at, version
 	FROM plans
 	WHERE id = $1`
 
 const listPlansQuery = `
-	SELECT id, name, amount_cents::text, currency, interval, description, updated_at, version
+	SELECT id, tenant_id, name, amount_cents::text, currency, interval, description, updated_at, version
 	FROM plans
 	ORDER BY name, id`
 
@@ -55,6 +55,7 @@ func (r *PostgresPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 
 	err := r.db.QueryRowContext(ctx, findPlanByIDQuery, id).Scan(
 		&row.ID,
+		&row.TenantID,
 		&row.Name,
 		&row.Amount,
 		&row.Currency,
@@ -142,6 +143,7 @@ func scanPlanRow(scanner interface{ Scan(dest ...any) error }) (*PlanRow, error)
 
 	if err := scanner.Scan(
 		&row.ID,
+		&row.TenantID,
 		&row.Name,
 		&row.Amount,
 		&row.Currency,

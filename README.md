@@ -159,6 +159,26 @@ curl -X POST http://localhost:8080/api/outbox/test
 
 ---
 
+## Docker
+
+The Dockerfile uses a **multi-stage build** with
+`gcr.io/distroless/static-debian12:nonroot` as the runtime base. The final
+image contains only the statically-linked binary — no shell, no package manager,
+minimal CVE surface.
+
+```bash
+# Build
+docker build -t stellabill-backend .
+
+# Run
+docker run --rm -e DATABASE_URL=... -p 8080:8080 stellabill-backend
+```
+
+The image runs as the `nonroot` user (UID 65534) by default. The binary is
+compiled with `CGO_ENABLED=0` for a fully static executable.
+
+---
+
 ## Configuration
 
 > **Quick start:** copy [`.env.example`](.env.example) to `.env`, fill in the

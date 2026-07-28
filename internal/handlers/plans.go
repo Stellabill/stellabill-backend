@@ -45,7 +45,7 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	cursorStr := c.Query("cursor")
 	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
-		RespondWithInternalError(c, "Failed to retrieve plans")
+		RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "Failed to retrieve plans")
 		return
 	}
 
@@ -59,7 +59,7 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	// Fetch plans from the service/repository
 	allPlans, err := h.Plans.ListPlans(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load plans"})
+		RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "failed to load plans")
 		return
 	}
 

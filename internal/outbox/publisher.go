@@ -20,6 +20,7 @@ import (
 type HTTPPublisher struct {
 	endpoint string
 	client   HTTPClient
+	limiter  Limiter
 }
 
 // HTTPClient interface for HTTP operations (allows for mocking)
@@ -87,11 +88,20 @@ func NewHTTPPublisher(endpoint string, client HTTPClient) Publisher {
 	return &HTTPPublisher{
 		endpoint: endpoint,
 		client:   client,
+		limiter:  NewGradient2Limiter(DefaultLimiterConfig()),
 	}
 }
 
 // Publish publishes an event via HTTP
-func (p *HTTPPublisher) Publish(ctx context.Context, event *Event) error {
+func (p *HTTPPublisher) Publish(ctx context.Context, event *Event) (err error) {
+	release, acquireErr := p.limiter.Acquire(ctx)
+	if acquireErr != nil {
+		return fmt.Errorf("concurrency limit acquire failed: %w", acquireErr)
+	}
+	defer func() {
+		release(err)
+	}()
+
 	var eventData EventData
 	if err := json.Unmarshal(event.EventData, &eventData); err != nil {
 		return fmt.Errorf("failed to unmarshal event data: %w", err)

@@ -2,8 +2,8 @@ package outbox
 
 import "context"
 
-// OutboxEvent is a generic outbox event payload.
-type OutboxEvent struct {
+// RouterEvent is a generic outbox event payload used by the notification router.
+type RouterEvent struct {
 	ID      string
 	Type    string
 	Payload []byte

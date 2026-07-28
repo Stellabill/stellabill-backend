@@ -14,6 +14,7 @@ func validPoolEnv() map[string]string {
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
 		"JWT_SECRET":   "Test1!JwtSecret-MixedAlphaNumeric@123",
 		"ADMIN_TOKEN":  "Admin1!Token-MixedAlphaNumeric@123",
+		"REDIS_URL":    "redis://localhost:6379",
 		"PORT":         "8080",
 		"ENV":          "development",
 	}

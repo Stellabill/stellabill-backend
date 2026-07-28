@@ -18,9 +18,15 @@ type DBTX interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
+// DBForTx defines the minimal interface needed for RunInTransaction.
+// Both *sql.DB and *RLSDB satisfy this.
+type DBForTx interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
 // RunInTransaction wraps the provided function in a database transaction.
 // It handles beginning the transaction, committing on success, and rolling back on error.
-func RunInTransaction(ctx context.Context, db *sql.DB, fn func(tx *sql.Tx) error) error {
+func RunInTransaction(ctx context.Context, db DBForTx, fn func(tx *sql.Tx) error) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)

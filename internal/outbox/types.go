@@ -11,6 +11,7 @@ import (
 // Event represents an outbox event
 type Event struct {
 	ID              uuid.UUID       `json:"id" db:"id"`
+	TenantID        string          `json:"tenant_id" db:"tenant_id"`
 	EventType       string          `json:"event_type" db:"event_type"`
 	EventData       json.RawMessage `json:"event_data" db:"event_data"`
 	AggregateID     *string         `json:"aggregate_id,omitempty" db:"aggregate_id"`

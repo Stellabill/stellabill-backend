@@ -15,11 +15,6 @@ type PostgresPlanRepo struct {
 	db      *sql.DB
 }
 
-// PostgresPlanRepo implements PlanRepository using PostgreSQL via database/sql.
-type PostgresPlanRepo struct {
-	db planDB
-}
-
 var _ PlanRepository = (*PostgresPlanRepo)(nil)
 
 // NewPostgresPlanRepo returns a PostgreSQL-backed PlanRepository.

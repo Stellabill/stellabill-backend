@@ -1,0 +1,141 @@
+name: release-sdk
+
+# Publish the @stellabill/sdk TypeScript SDK to npm whenever a GitHub
+# release is published. The release workflow:
+#   1. Generates TypeScript types from openapi/openapi.yaml
+#   2. Builds ESM + CJS + .d.ts bundles via tsup
+#   3. Runs the full vitest suite with the >=95% coverage gate
+#   4. Bumps the SDK package version to the release tag
+#   5. Publishes to npm with provenance under the trusted-publisher OIDC
+#
+# Manual dispatch is supported with a `tag` input for back-filling.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.0). Defaults to the latest release tag."
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  id-token: write  # Required for npm OIDC trusted publishing (provenance)
+  contents: read
+
+jobs:
+  test-sdk:
+    name: Test (generate, build, vitest >=95% coverage)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/ts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Checkout release tag
+        if: github.event_name == 'release'
+        run: git checkout ${{ github.event.release.tag_name }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Install dependencies
+        run: pnpm install
+      - name: Generate types from openapi.yaml
+        run: pnpm run generate
+      - name: Build (tsup)
+        run: pnpm run build
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Test + coverage gate (>=95%)
+        run: |
+          set -euo pipefail
+          pnpm run test
+      - name: Upload SDK dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-dist
+          path: |
+            sdks/ts/dist
+            sdks/ts/package.json
+          retention-days: 14
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-coverage
+          path: sdks/ts/coverage
+          retention-days: 14
+
+  publish-sdk:
+    name: Publish to npm
+    needs: test-sdk
+    runs-on: ubuntu-latest
+    # Publish only on real GitHub releases (or explicit dispatch with a tag)
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: sdks/ts
+    steps:
+      - name: Download SDK dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-dist
+          path: sdks/ts/dist
+      - name: Checkout source matching the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          # Trust the OIDC publisher declared in sdks/ts/package.json
+      - name: Set SDK version to release tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          if [ -z "${TAG:-}" ] || [ "${TAG}" = " " ]; then
+            echo "::error::No release tag available. Pass a 'tag' input when using workflow_dispatch."
+            exit 1
+          fi
+          # Strip leading 'v' from the tag (e.g. v0.2.0 -> 0.2.0)
+          VERSION="${TAG#v}"
+          echo "Publishing @stellabill/sdk@${VERSION}"
+          npm pkg set "version=${VERSION}"
+      - name: Validate package.json
+        run: |
+          set -euo pipefail
+          node -e "const p=require('./package.json'); \
+            if(!p.name || !p.version){throw new Error('missing name/version')}; \
+            if(!p.exports?.['.']?.types){throw new Error('missing types export')}; \
+            if(!p.dependencies?.['openapi-fetch']){throw new Error('missing openapi-fetch dep')}; \
+            console.log('package.json OK')"
+      - name: Sanity-check that dist is built and types exist
+        run: |
+          set -euo pipefail
+          test -f dist/index.js
+          test -f dist/index.cjs
+          test -f dist/index.d.ts
+          echo "dist OK"
+      - name: Publish (trusted publishing via OIDC)
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # OIDC trusted publishing replaces NODE_AUTH_TOKEN when configured at
+          # https://docs.npmjs.com/generating-provenance-statements; we still
+          # fall back to NPM_TOKEN to remain compatible with non-OIDC setups.

@@ -11,33 +11,45 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"stellarbill-backend/internal/db"
 )
+
+type pgxPool interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
+	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+}
 
 // PostgresPgxRepository implements Repository using pgx
 type PostgresPgxRepository struct {
-	pool *pgxpool.Pool
+	pool pgxPool
 }
 
 // NewPostgresPgxRepository creates a new PostgresPgxRepository
-func NewPostgresPgxRepository(pool *pgxpool.Pool) Repository {
+func NewPostgresPgxRepository(pool pgxPool) Repository {
 	return &PostgresPgxRepository{pool: pool}
 }
 
 func (r *PostgresPgxRepository) Store(event *Event) error {
 	ctx := context.Background()
+	if event.TenantID != "" {
+		ctx = db.ContextWithTenantID(ctx, event.TenantID)
+	}
 	query := `
 		INSERT INTO outbox_events (
-			id, event_type, event_data, aggregate_id, aggregate_type,
+			id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			occurred_at, status, retry_count, max_retries, next_retry_at,
 			error_message, created_at, updated_at, version, deduplication_id,
-			tenant_id, partition
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
+			partition
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 
 	_, err := r.pool.Exec(ctx, query,
-		event.ID, event.EventType, event.EventData, event.AggregateID, event.AggregateType,
+		event.ID, event.TenantID, event.EventType, event.EventData, event.AggregateID, event.AggregateType,
 		event.OccurredAt, event.Status, event.RetryCount, event.MaxRetries, event.NextRetryAt,
 		event.ErrorMessage, event.CreatedAt, event.UpdatedAt, event.Version, event.DeduplicationID,
-		event.TenantID, event.Partition,
+		event.Partition,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to store outbox event: %w", err)
@@ -48,7 +60,7 @@ func (r *PostgresPgxRepository) Store(event *Event) error {
 func (r *PostgresPgxRepository) GetPendingEvents(limit int) ([]*Event, error) {
 	ctx := context.Background()
 	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+		SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
 			   error_message, created_at, updated_at, version, deduplication_id,
 			   tenant_id, partition
@@ -77,7 +89,7 @@ func (r *PostgresPgxRepository) GetPendingEvents(limit int) ([]*Event, error) {
 func (r *PostgresPgxRepository) GetByID(id uuid.UUID) (*Event, error) {
 	ctx := context.Background()
 	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+		SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
 			   error_message, created_at, updated_at, version, deduplication_id,
 			   tenant_id, partition
@@ -128,7 +140,7 @@ func (r *PostgresPgxRepository) DeleteCompletedEvents(olderThan time.Time) (int6
 func (r *PostgresPgxRepository) ListDeadLetteredEvents(limit int) ([]*Event, error) {
 	ctx := context.Background()
 	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+		SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
 			   error_message, created_at, updated_at, version, deduplication_id
 		FROM dead_letter_events LIMIT $1`
@@ -212,7 +224,7 @@ func (r *PostgresPgxRepository) GetPendingEventsSince(since *time.Time, lastID *
 	var err error
 	if since != nil && lastID != nil {
 		rows, err = r.pool.Query(ctx, `
-			SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 				   occurred_at, status, retry_count, max_retries, next_retry_at,
 				   error_message, created_at, updated_at, version, deduplication_id,
 				   tenant_id, partition
@@ -222,7 +234,7 @@ func (r *PostgresPgxRepository) GetPendingEventsSince(since *time.Time, lastID *
 			StatusPending, since, lastID, limit)
 	} else {
 		rows, err = r.pool.Query(ctx, `
-			SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 				   occurred_at, status, retry_count, max_retries, next_retry_at,
 				   error_message, created_at, updated_at, version, deduplication_id,
 				   tenant_id, partition
@@ -251,7 +263,7 @@ func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 	var nextRetryAt sql.NullTime
 
 	err := row.Scan(
-		&event.ID, &event.EventType, &event.EventData,
+		&event.ID, &tenantID, &event.EventType, &event.EventData,
 		&aggregateID, &aggregateType,
 		&event.OccurredAt, &event.Status, &event.RetryCount, &event.MaxRetries,
 		&nextRetryAt, &errorMessage,
@@ -260,6 +272,9 @@ func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan event: %w", err)
+	}
+	if tenantID.Valid {
+		event.TenantID = tenantID.String
 	}
 	if deduplicationID.Valid {
 		event.DeduplicationID = &deduplicationID.String
@@ -275,9 +290,6 @@ func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 	}
 	if errorMessage.Valid {
 		event.ErrorMessage = &errorMessage.String
-	}
-	if tenantID.Valid {
-		event.TenantID = &tenantID.String
 	}
 	return &event, nil
 }
@@ -354,6 +366,9 @@ func (r *PostgresPgxRepository) scanEventPgxRows(rows pgx.Rows) (*Event, error) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan event: %w", err)
 	}
+	if tenantID.Valid {
+		event.TenantID = tenantID.String
+	}
 	if deduplicationID.Valid {
 		event.DeduplicationID = &deduplicationID.String
 	}
@@ -368,9 +383,6 @@ func (r *PostgresPgxRepository) scanEventPgxRows(rows pgx.Rows) (*Event, error) 
 	}
 	if errorMessage.Valid {
 		event.ErrorMessage = &errorMessage.String
-	}
-	if tenantID.Valid {
-		event.TenantID = &tenantID.String
 	}
 	return &event, nil
 }

@@ -112,10 +112,48 @@ This approach properly handles requests through proxies and load balancers.
 
 The middleware adds rate limit information to response headers:
 
-- `X-RateLimit-Limit`: Maximum requests allowed in the current window
+- `X-RateLimit-Limit`: Maximum requests allowed in the current window (burst capacity)
 - `X-RateLimit-Remaining`: Number of requests remaining in the current window
-- `X-RateLimit-Reset`: Time when the rate limit window resets (RFC3339 format)
-- `Retry-After`: Seconds to wait before retrying (only on rate-limited responses)
+- `X-RateLimit-Reset`: Unix timestamp when the rate limit window resets (unix-seconds format)
+- `Retry-After`: Seconds to wait before retrying (only on rate-limited responses, spec-compliant)
+
+#### Header Format
+
+All rate limit headers follow industry-standard formats:
+
+- **X-RateLimit-Reset**: Uses unix-seconds format (integer timestamp) for easy client-side parsing
+- **Retry-After**: Calculated dynamically based on the token refill rate, minimum 1 second
+- **Value Safety**: Header values are never negative - clamped to zero if needed
+
+#### Header Behavior
+
+**Successful Requests (2xx):**
+- All three rate limit headers are present
+- `Retry-After` is NOT included
+- `X-RateLimit-Remaining` reflects current available tokens
+
+**Rate-Limited Requests (429):**
+- All four headers are present
+- `X-RateLimit-Remaining` is always `0`
+- `Retry-After` indicates seconds until tokens refill
+- `X-RateLimit-Reset` provides the exact reset timestamp
+
+#### Example Headers
+
+```http
+# Successful response
+HTTP/1.1 200 OK
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1722172800
+
+# Rate-limited response
+HTTP/1.1 429 Too Many Requests
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1722172830
+Retry-After: 30
+```
 
 ### Logging and Observability
 

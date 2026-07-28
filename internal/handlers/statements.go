@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 	"strconv"
@@ -93,6 +94,16 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		}
 		if statements == nil {
 			statements = []*service.StatementDetail{}
+		}
+
+		// NOTE: repository.StatementQuery.StartingAfter/EndingBefore are not
+		// yet wired through to a repository implementation (no server-side
+		// keyset pagination exists for statements today), so only rel="first"
+		// can be emitted correctly here. Emitting rel="next"/"prev" would
+		// require query parameters this endpoint does not yet accept, and
+		// would produce a link that doesn't actually advance the collection.
+		if header := pagination.LinkHeader(requestBaseURL(c), pagination.LinkParams{}); header != "" {
+			c.Header("Link", header)
 		}
 
 		c.JSON(http.StatusOK, gin.H{

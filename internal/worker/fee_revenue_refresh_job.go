@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"stellarbill-backend/internal/timeutil"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,6 +101,7 @@ type FeeRevenueRefreshJob struct {
 	store  feeRevenueStore
 	config FeeRevenueRefreshConfig
 	logger feeRevenueLogger
+	clock  timeutil.Clock
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -131,7 +133,15 @@ func newFeeRevenueRefreshJob(store feeRevenueStore, config FeeRevenueRefreshConf
 		store:  store,
 		config: config.withDefaults(),
 		logger: l,
+		clock:  timeutil.SystemClock,
 	}
+}
+
+// SetClock overrides the job's time source, so freshness/staleness behavior
+// can be tested deterministically. Call before Start(); production callers
+// should leave the default SystemClock in place.
+func (j *FeeRevenueRefreshJob) SetClock(c timeutil.Clock) {
+	j.clock = c
 }
 
 // Start begins the refresh loop. It is safe to call Start only once.
@@ -254,7 +264,7 @@ func (j *FeeRevenueRefreshJob) refreshOnce() {
 		return
 	}
 
-	now := time.Now().UTC()
+	now := j.clock.Now()
 	if err := j.store.MarkRefreshed(ctx, now); err != nil {
 		// The view is fresh but we failed to persist the timestamp; surface it
 		// so the report does not silently report stale data.

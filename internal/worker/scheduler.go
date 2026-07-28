@@ -16,6 +16,7 @@ type Scheduler struct {
 	store   JobStore
 	counter int64
 	mu      sync.Mutex
+	clock   timeutil.Clock
 
 	weights     map[Priority]int
 	totalWeight int
@@ -29,6 +30,7 @@ type Scheduler struct {
 func NewScheduler(store JobStore) *Scheduler {
 	s := &Scheduler{
 		store:           store,
+		clock:           timeutil.SystemClock,
 		weights:         make(map[Priority]int),
 		starvationLimit: 10,
 	}
@@ -37,6 +39,15 @@ func NewScheduler(store JobStore) *Scheduler {
 	}
 	s.recalcWeight()
 	return s
+}
+
+// SetClock overrides the Scheduler's time source. Intended for deterministic
+// tests (e.g. verifying job timestamps or TTL-adjacent behavior); production
+// callers should leave the default SystemClock in place.
+func (s *Scheduler) SetClock(c timeutil.Clock) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clock = c
 }
 
 // SetWeights replaces the lane weights. The caller should ensure each lane
@@ -144,8 +155,13 @@ func (s *Scheduler) laneForIdx(idx int, forceLow bool) Priority {
 
 // jobBase returns fields common to every scheduled job.
 func (s *Scheduler) jobBase(jobType, subscriptionID string, scheduledAt time.Time, maxAttempts int, priority Priority) *Job {
+	s.mu.Lock()
+	clock := s.clock
+	s.mu.Unlock()
+
+	now := clock.Now()
 	return &Job{
-		ID:             generateJobID(jobType),
+		ID:             generateJobID(jobType, now),
 		SubscriptionID: subscriptionID,
 		Type:           jobType,
 		Status:         JobStatusPending,
@@ -153,8 +169,8 @@ func (s *Scheduler) jobBase(jobType, subscriptionID string, scheduledAt time.Tim
 		ScheduledAt:    timeutil.NormalizeUTC(scheduledAt),
 		MaxAttempts:    maxAttempts,
 		Attempts:       0,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }
 
@@ -191,8 +207,8 @@ func (s *Scheduler) ScheduleReminder(subscriptionID string, scheduledAt time.Tim
 	return job, nil
 }
 
-func generateJobID(jobType string) string {
-	return fmt.Sprintf("%s-%d", jobType, timeutil.NowUTC().UnixNano())
+func generateJobID(jobType string, now time.Time) string {
+	return fmt.Sprintf("%s-%d", jobType, now.UnixNano())
 }
 
 // IdempotencyCleanupJob periodically cleans up expired idempotency keys.

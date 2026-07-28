@@ -8,6 +8,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+var subTestBaseTime = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
 func TestPostgresSubscriptionRepo_FindByID_HappyPath(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -24,7 +26,7 @@ func TestPostgresSubscriptionRepo_FindByID_HappyPath(t *testing.T) {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "plan_id", "tenant_id", "customer_id", "status",
-		"amount", "currency", "interval", "next_billing", "deleted_at",
+		"amount", "currency", "interval", "next_billing", "updated_at", "version", "deleted_at",
 	}).AddRow(
 		id,
 		"plan-a",
@@ -35,6 +37,8 @@ func TestPostgresSubscriptionRepo_FindByID_HappyPath(t *testing.T) {
 		"usd",
 		"monthly",
 		nextBilling,
+		subTestBaseTime,
+		int64(1),
 		deletedAt,
 	)
 
@@ -46,6 +50,9 @@ func TestPostgresSubscriptionRepo_FindByID_HappyPath(t *testing.T) {
 	}
 	if got.ID != id || got.PlanID != "plan-a" || got.TenantID != tenantID || got.CustomerID != customerID {
 		t.Fatalf("unexpected row: %+v", got)
+	}
+	if got.Version != 1 {
+		t.Fatalf("expected version 1, got %d", got.Version)
 	}
 	if got.NextBilling != nextBilling.Format(time.RFC3339) {
 		t.Fatalf("expected next billing %q, got %q", nextBilling.Format(time.RFC3339), got.NextBilling)
@@ -72,7 +79,7 @@ func TestPostgresSubscriptionRepo_FindByIDAndTenant_HappyPath(t *testing.T) {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "plan_id", "tenant_id", "customer_id", "status",
-		"amount", "currency", "interval", "next_billing", "deleted_at",
+		"amount", "currency", "interval", "next_billing", "updated_at", "version", "deleted_at",
 	}).AddRow(
 		id,
 		"plan-b",
@@ -83,6 +90,8 @@ func TestPostgresSubscriptionRepo_FindByIDAndTenant_HappyPath(t *testing.T) {
 		"eur",
 		"yearly",
 		nextBilling,
+		subTestBaseTime,
+		int64(3),
 		nil,
 	)
 
@@ -94,6 +103,9 @@ func TestPostgresSubscriptionRepo_FindByIDAndTenant_HappyPath(t *testing.T) {
 	}
 	if got.TenantID != tenantID || got.ID != id || got.DeletedAt != nil {
 		t.Fatalf("unexpected row mismatch: %+v", got)
+	}
+	if got.Version != 3 {
+		t.Fatalf("expected version 3, got %d", got.Version)
 	}
 	if got.NextBilling != nextBilling.Format(time.RFC3339) {
 		t.Fatalf("expected next billing string, got %q", got.NextBilling)
@@ -116,7 +128,7 @@ func TestPostgresSubscriptionRepo_FindByIDAndTenant_CrossTenantReturnsNotFound(t
 
 	rows := sqlmock.NewRows([]string{
 		"id", "plan_id", "tenant_id", "customer_id", "status",
-		"amount", "currency", "interval", "next_billing", "deleted_at",
+		"amount", "currency", "interval", "next_billing", "updated_at", "version", "deleted_at",
 	})
 
 	mock.ExpectQuery(`SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,.*FROM subscriptions.*WHERE id = \$1 AND tenant_id = \$2`).WithArgs(id, tenantID).WillReturnRows(rows)
@@ -142,7 +154,7 @@ func TestPostgresSubscriptionRepo_FindByID_NullNextBillingAndNoDeletedAt(t *test
 
 	rows := sqlmock.NewRows([]string{
 		"id", "plan_id", "tenant_id", "customer_id", "status",
-		"amount", "currency", "interval", "next_billing", "deleted_at",
+		"amount", "currency", "interval", "next_billing", "updated_at", "version", "deleted_at",
 	}).AddRow(
 		id,
 		"plan-c",
@@ -153,6 +165,8 @@ func TestPostgresSubscriptionRepo_FindByID_NullNextBillingAndNoDeletedAt(t *test
 		"gbp",
 		"monthly",
 		nil,
+		subTestBaseTime,
+		int64(2),
 		nil,
 	)
 
@@ -167,6 +181,9 @@ func TestPostgresSubscriptionRepo_FindByID_NullNextBillingAndNoDeletedAt(t *test
 	}
 	if got.DeletedAt != nil {
 		t.Fatalf("expected nil DeletedAt, got %v", got.DeletedAt)
+	}
+	if got.Version != 2 {
+		t.Fatalf("expected version 2, got %d", got.Version)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
@@ -185,7 +202,7 @@ func TestPostgresSubscriptionRepo_FindByID_NoRowsReturnsNotFound(t *testing.T) {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "plan_id", "tenant_id", "customer_id", "status",
-		"amount", "currency", "interval", "next_billing", "deleted_at",
+		"amount", "currency", "interval", "next_billing", "updated_at", "version", "deleted_at",
 	})
 
 	mock.ExpectQuery(`SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval,.*FROM subscriptions.*WHERE id = \$1`).WithArgs(id).WillReturnRows(rows)

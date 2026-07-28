@@ -7,9 +7,12 @@ import (
 	"regexp"
 	"stellarbill-backend/internal/config"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+var testBaseTime = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func TestPostgresPlanRepoFindByID(t *testing.T) {
 	db, mock := newPlanSQLMock(t)
@@ -18,7 +21,7 @@ func TestPostgresPlanRepoFindByID(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(findPlanByIDQuery)).
 		WithArgs("plan_basic").
 		WillReturnRows(sqlmock.NewRows(planColumns()).
-			AddRow("plan_basic", "Basic", "999", "USD", "month", "Starter plan"))
+			AddRow("plan_basic", "tenant-1", "Basic", "999", "USD", "month", "Starter plan", testBaseTime, int64(1)))
 
 	got, err := repo.FindByID(context.Background(), "plan_basic")
 	if err != nil {
@@ -26,11 +29,13 @@ func TestPostgresPlanRepoFindByID(t *testing.T) {
 	}
 
 	if got.ID != "plan_basic" ||
+		got.TenantID != "tenant-1" ||
 		got.Name != "Basic" ||
 		got.Amount != "999" ||
 		got.Currency != "USD" ||
 		got.Interval != "month" ||
-		got.Description != "Starter plan" {
+		got.Description != "Starter plan" ||
+		got.Version != 1 {
 		t.Fatalf("unexpected plan row: %#v", got)
 	}
 
@@ -76,8 +81,8 @@ func TestPostgresPlanRepoList(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(listPlansQuery)).
 		WillReturnRows(sqlmock.NewRows(planColumns()).
-			AddRow("plan_basic", "Basic", "999", "USD", "month", nil).
-			AddRow("plan_pro", "Pro", "2999", "USD", "month", "For growing teams"))
+			AddRow("plan_basic", "t1", "Basic", "999", "USD", "month", nil, testBaseTime, int64(1)).
+			AddRow("plan_pro", "t1", "Pro", "2999", "USD", "month", "For growing teams", testBaseTime, int64(2)))
 
 	got, err := repo.List(context.Background())
 	if err != nil {
@@ -86,6 +91,9 @@ func TestPostgresPlanRepoList(t *testing.T) {
 
 	if len(got) != 2 {
 		t.Fatalf("expected 2 plans, got %d", len(got))
+	}
+	if got[0].TenantID != "t1" || got[1].TenantID != "t1" {
+		t.Fatalf("expected tenant_id to propagate")
 	}
 	if got[0].Description != "" {
 		t.Fatalf("expected NULL description to map to empty string, got %q", got[0].Description)
@@ -137,7 +145,7 @@ func TestPostgresPlanRepoListRowsError(t *testing.T) {
 	wantErr := errors.New("row iteration failed")
 
 	rows := sqlmock.NewRows(planColumns()).
-		AddRow("plan_basic", "Basic", "999", "USD", "month", nil).
+		AddRow("plan_basic", "t1", "Basic", "999", "USD", "month", nil, testBaseTime, int64(1)).
 		RowError(0, wantErr)
 	mock.ExpectQuery(regexp.QuoteMeta(listPlansQuery)).WillReturnRows(rows)
 
@@ -155,7 +163,7 @@ func TestPostgresPlanRepoListScanError(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(listPlansQuery)).
 		WillReturnRows(sqlmock.NewRows(planColumns()).
-			AddRow("plan_basic", nil, "999", "USD", "month", nil))
+			AddRow("plan_basic", "t1", nil, "999", "USD", "month", nil, testBaseTime, int64(1)))
 
 	if _, err := repo.List(context.Background()); err == nil {
 		t.Fatal("expected scan error")
@@ -212,7 +220,7 @@ func newPlanSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 }
 
 func planColumns() []string {
-	return []string{"id", "name", "amount", "currency", "interval", "description"}
+	return []string{"id", "tenant_id", "name", "amount", "currency", "interval", "description", "updated_at", "version"}
 }
 
 func assertSQLExpectations(t *testing.T, mock sqlmock.Sqlmock) {

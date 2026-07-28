@@ -9,6 +9,7 @@ import (
 	"stellarbill-backend/internal/featureflags"
 	"stellarbill-backend/internal/logger"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/timeutil"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,7 @@ type StatementArchiveJob struct {
 	objStore cache.ObjectStore
 	config   StatementArchiveConfig
 	logger   logger.Logger
+	clock    timeutil.Clock
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -73,7 +75,15 @@ func NewStatementArchiveJob(db *sql.DB, objStore cache.ObjectStore, config State
 		objStore: objStore,
 		config:   config,
 		logger:   l,
+		clock:    timeutil.SystemClock,
 	}
+}
+
+// SetClock overrides the job's time source, so archival-cutoff behavior can
+// be tested deterministically. Call before Start(); production callers
+// should leave the default SystemClock in place.
+func (j *StatementArchiveJob) SetClock(c timeutil.Clock) {
+	j.clock = c
 }
 
 // Start begins the archival loop. It is safe to call Start only once.
@@ -180,7 +190,7 @@ func (j *StatementArchiveJob) archiveBatch() {
 	batchCtx, cancel := context.WithTimeout(j.ctx, j.config.ArchiveTimeout)
 	defer cancel()
 
-	threshold := time.Now().AddDate(0, -j.config.ArchiveThresholdMonths, 0)
+	threshold := j.clock.Now().AddDate(0, -j.config.ArchiveThresholdMonths, 0)
 	thresholdStr := threshold.Format(time.RFC3339)
 
 	tableName := "statements"
@@ -251,14 +261,14 @@ func (j *StatementArchiveJob) archiveBatch() {
 	}
 
 	j.mu.Lock()
-	j.lastRunTime = time.Now()
+	j.lastRunTime = j.clock.Now()
 	j.mu.Unlock()
 }
 
 // archiveStatement archives a single statement to object storage.
 func (j *StatementArchiveJob) archiveStatement(ctx context.Context, stmt *repository.StatementRow) error {
 	// Serialize to JSON
-	now := time.Now().UTC()
+	now := j.clock.Now()
 	payload := &cache.StatementArchivePayload{
 		ID:             stmt.ID,
 		SubscriptionID: stmt.SubscriptionID,

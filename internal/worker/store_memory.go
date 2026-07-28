@@ -3,6 +3,7 @@ package worker
 import (
 	"errors"
 	"sort"
+	"stellarbill-backend/internal/timeutil"
 	"sync"
 	"time"
 )
@@ -23,13 +24,22 @@ type MemoryStore struct {
 	mu    sync.RWMutex
 	jobs  map[string]*Job
 	locks map[string]*lockInfo
+	clock timeutil.Clock
 }
 
 // NewMemoryStore creates a new in-memory job store
 func NewMemoryStore() *MemoryStore {
+	return NewMemoryStoreWithClock(timeutil.SystemClock)
+}
+
+// NewMemoryStoreWithClock creates a new in-memory job store backed by the
+// given Clock. Intended for deterministic tests of TTL-based lock expiry and
+// scheduled-job visibility; production callers should use NewMemoryStore.
+func NewMemoryStoreWithClock(clock timeutil.Clock) *MemoryStore {
 	return &MemoryStore{
 		jobs:  make(map[string]*Job),
 		locks: make(map[string]*lockInfo),
+		clock: clock,
 	}
 }
 
@@ -41,10 +51,10 @@ func (s *MemoryStore) Create(job *Job) error {
 		return errors.New("job ID is required")
 	}
 	if job.CreatedAt.IsZero() {
-		job.CreatedAt = time.Now()
+		job.CreatedAt = s.clock.Now()
 	}
 	if job.UpdatedAt.IsZero() {
-		job.UpdatedAt = time.Now()
+		job.UpdatedAt = s.clock.Now()
 	}
 
 	// Deep copy to avoid external mutations
@@ -87,7 +97,7 @@ func (s *MemoryStore) Update(job *Job) error {
 		return ErrJobNotFound
 	}
 
-	job.UpdatedAt = time.Now()
+	job.UpdatedAt = s.clock.Now()
 	jobCopy := *job
 	if job.Payload != nil {
 		jobCopy.Payload = make(map[string]interface{})
@@ -104,7 +114,7 @@ func (s *MemoryStore) ListPending(limit int) ([]*Job, error) {
 	defer s.mu.RUnlock()
 
 	var pending []*Job
-	now := time.Now()
+	now := s.clock.Now()
 
 	for _, job := range s.jobs {
 		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
@@ -127,7 +137,7 @@ func (s *MemoryStore) ListPendingByPriority(priority Priority, limit int) ([]*Jo
 	defer s.mu.RUnlock()
 
 	var pending []*Job
-	now := time.Now()
+	now := s.clock.Now()
 
 	for _, job := range s.jobs {
 		if job.Priority == priority && job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
@@ -162,7 +172,7 @@ func (s *MemoryStore) LaneDepth(priority Priority) int {
 	defer s.mu.RUnlock()
 
 	count := 0
-	now := time.Now()
+	now := s.clock.Now()
 	for _, job := range s.jobs {
 		if job.Priority == priority && job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
 			count++
@@ -176,7 +186,7 @@ func (s *MemoryStore) QueueDepth() int {
 	defer s.mu.RUnlock()
 
 	count := 0
-	now := time.Now()
+	now := s.clock.Now()
 
 	for _, job := range s.jobs {
 		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {
@@ -214,7 +224,7 @@ func (s *MemoryStore) AcquireLock(jobID string, workerID string, ttl time.Durati
 
 	// Clean up expired locks
 	if lock, exists := s.locks[jobID]; exists {
-		if time.Now().After(lock.expiresAt) {
+		if s.clock.Now().After(lock.expiresAt) {
 			delete(s.locks, jobID)
 		} else if lock.workerID != workerID {
 			return false, nil
@@ -224,7 +234,7 @@ func (s *MemoryStore) AcquireLock(jobID string, workerID string, ttl time.Durati
 	// Acquire or renew lock
 	s.locks[jobID] = &lockInfo{
 		workerID:  workerID,
-		expiresAt: time.Now().Add(ttl),
+		expiresAt: s.clock.Now().Add(ttl),
 	}
 	return true, nil
 }
@@ -251,7 +261,7 @@ func (s *MemoryStore) OldestPending() *Job {
 	defer s.mu.RUnlock()
 
 	var oldest *Job
-	now := time.Now()
+	now := s.clock.Now()
 
 	for _, job := range s.jobs {
 		if job.Status == JobStatusPending && !job.ScheduledAt.After(now) {

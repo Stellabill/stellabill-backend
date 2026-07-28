@@ -172,6 +172,16 @@ var ShutdownDuration = promauto.NewHistogram(
 	},
 )
 
+// AnalyzeLastRunTimestamp reports the Unix timestamp (seconds since epoch) of
+// the last successful ANALYZE on each hot table. Updated by the analyze worker.
+var AnalyzeLastRunTimestamp = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "analyze_last_run_timestamp",
+		Help: "Unix timestamp of the last successful ANALYZE, by table",
+	},
+	[]string{"table"},
+)
+
 func sanitizeLabel(value string) string {
 	if value == "" {
 		return "unknown"

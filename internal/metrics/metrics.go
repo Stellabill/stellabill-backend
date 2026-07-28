@@ -136,6 +136,15 @@ var CacheHitsTotal = promauto.NewCounterVec(
 	[]string{"layer", "op", "result"},
 )
 
+// ShutdownDuration tracks the time taken to shut down gracefully in seconds.
+var ShutdownDuration = promauto.NewHistogram(
+	prometheus.HistogramOpts{
+		Name:    "shutdown_duration_seconds",
+		Help:    "Time taken to shut down gracefully in seconds",
+		Buckets: []float64{.1, .25, .5, 1, 2.5, 5, 10, 25, 30},
+	},
+)
+
 func sanitizeLabel(value string) string {
 	if value == "" {
 		return "unknown"

@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/routes"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +33,6 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// Initialize SPIFFE Verifier for cross-service mesh auth
 	spiffeVerifier, err := auth.NewSpiffeVerifier(context.Background(), cfg.SpiffeSocketPath, cfg.SpiffeTrustDomain, cfg.Env)
 	if err != nil {
 		log.Fatalf("failed to initialize SPIFFE verifier: %v", err)
@@ -52,10 +57,64 @@ func main() {
 		IdleTimeout:  time.Duration(cfg.IdleTimeout) * time.Second,
 	}
 
-	log.Printf("server listening on %s", addr)
-	if err := listenAndServe(srv); err != nil && err != http.ErrServerClosed {
+	pool, err := db.NewPool(context.Background(), cfg)
+	if err != nil {
+		log.Fatalf("failed to create database pool: %v", err)
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+
+	shutdownTimeout := time.Duration(cfg.GracefulShutdownTimeout) * time.Second
+	if err := runHTTPServer(context.Background(), sig, srv, shutdownTimeout, func(ctx context.Context) error {
+		if pool != nil {
+			pool.Close()
+		}
+		return nil
+	}); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func runHTTPServer(ctx context.Context, sig chan os.Signal, srv *http.Server, shutdownTimeout time.Duration, cleanup func(context.Context) error) error {
+	start := time.Now()
+
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- listenAndServe(srv)
+	}()
+
+	select {
+	case <-ctx.Done():
+	case s := <-sig:
+		log.Printf("received signal %v, initiating graceful shutdown", s)
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		select {
+		case <-sig:
+			_ = srv.Close()
+			return fmt.Errorf("forced shutdown after second signal: %w", err)
+		default:
+		}
+		return fmt.Errorf("http server shutdown: %w", err)
+	}
+
+	if err := <-serveErr; err != nil && err != http.ErrServerClosed {
+		return err
+	}
+
+	if cleanup != nil {
+		if err := cleanup(context.Background()); err != nil {
+			return fmt.Errorf("cleanup: %w", err)
+		}
+	}
+
+	metrics.ShutdownDuration.Observe(time.Since(start).Seconds())
+	return nil
 }
 
 func printConfigError(err error) {

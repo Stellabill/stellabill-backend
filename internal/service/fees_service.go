@@ -2,9 +2,122 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
+
+// CurrencyScale defines the number of decimal places for a given ISO 4217
+// currency code.  Currencies not listed default to 2 decimal places.
+//
+//   - 0 decimal places: JPY, KRW, VND, CLP, GNF, MGA, PYG, RWF, UGX, XAF, XOF, XPF
+//   - 3 decimal places: BHD, IQD, JOD, KWD, LYD, OMR, TND
+var CurrencyScale = map[string]int32{
+	// Zero-decimal currencies
+	"JPY": 0, "KRW": 0, "VND": 0, "CLP": 0,
+	"GNF": 0, "MGA": 0, "PYG": 0, "RWF": 0,
+	"UGX": 0, "XAF": 0, "XOF": 0, "XPF": 0,
+	// Three-decimal currencies
+	"BHD": 3, "IQD": 3, "JOD": 3, "KWD": 3,
+	"LYD": 3, "OMR": 3, "TND": 3,
+}
+
+// scaleForCurrency returns the number of minor-unit decimal places for the
+// given ISO 4217 currency code. Unknown currencies default to 2.
+func scaleForCurrency(currency string) int32 {
+	if s, ok := CurrencyScale[currency]; ok {
+		return s
+	}
+	return 2
+}
+
+// ErrInvalidAmount is returned when an input amount is negative or unparseable.
+var ErrInvalidAmount = errors.New("amount must be non-negative")
+
+// ErrInvalidTaxRate is returned when a tax rate is outside [0, 1].
+var ErrInvalidTaxRate = errors.New("tax rate must be between 0 and 1 inclusive")
+
+// ErrInvalidParts is returned when the number of proration parts is ≤ 0.
+var ErrInvalidParts = errors.New("parts must be greater than zero")
+
+// MoneyAmount holds a currency-aware decimal amount.
+type MoneyAmount struct {
+	Value    decimal.Decimal
+	Currency string
+}
+
+// RoundMoney rounds amount to the correct number of minor units for the
+// given currency using banker's rounding (RoundHalfEven) to minimise
+// systematic drift across large volumes of transactions.
+func RoundMoney(amount decimal.Decimal, currency string) decimal.Decimal {
+	scale := scaleForCurrency(currency)
+	return amount.RoundBank(scale)
+}
+
+// ProrateFee splits amount into n equal parts for currency, distributing
+// any sub-unit remainder to the last part so the sum is exactly amount.
+//
+// Invariants guaranteed:
+//   - len(result) == parts
+//   - sum(result) == RoundMoney(amount, currency)
+//   - every result[i] >= 0
+func ProrateFee(amount decimal.Decimal, currency string, parts int) ([]decimal.Decimal, error) {
+	if amount.IsNegative() {
+		return nil, ErrInvalidAmount
+	}
+	if parts <= 0 {
+		return nil, ErrInvalidParts
+	}
+
+	rounded := RoundMoney(amount, currency)
+	scale := scaleForCurrency(currency)
+
+	// Each part in minor units avoids floating-point drift.
+	//   base    = floor(rounded / parts)
+	//   remainder is distributed to the first r parts (standard "largest-remainder")
+	minor := rounded.Shift(scale)                            // e.g. 10.00 USD → 1000
+	partsD := decimal.NewFromInt(int64(parts))
+	base := minor.Div(partsD).Floor()                        // integer quotient
+	remainder := minor.Sub(base.Mul(partsD))                 // 0 ≤ remainder < parts
+	remainderInt := remainder.IntPart()
+
+	result := make([]decimal.Decimal, parts)
+	for i := 0; i < parts; i++ {
+		v := base
+		if int64(i) < remainderInt {
+			v = v.Add(decimal.NewFromInt(1))
+		}
+		result[i] = v.Shift(-scale)
+	}
+	return result, nil
+}
+
+// TaxSplit decomposes amount into a tax component and a net component for the
+// given currency and tax rate (expressed as a fraction in [0,1]).
+//
+// tax = RoundMoney(amount × rate, currency)
+// net = amount − tax   (exact, may carry sub-unit precision before external rounding)
+//
+// Invariants guaranteed:
+//   - tax + net == amount  (after rounding applied to tax)
+//   - tax >= 0, net >= 0
+//   - rate must be in [0, 1]
+func TaxSplit(amount decimal.Decimal, currency string, rate decimal.Decimal) (tax, net decimal.Decimal, err error) {
+	if amount.IsNegative() {
+		return decimal.Zero, decimal.Zero, ErrInvalidAmount
+	}
+	zero := decimal.Zero
+	one := decimal.NewFromInt(1)
+	if rate.LessThan(zero) || rate.GreaterThan(one) {
+		return decimal.Zero, decimal.Zero, ErrInvalidTaxRate
+	}
+
+	tax = RoundMoney(amount.Mul(rate), currency)
+	net = amount.Sub(tax)
+	return tax, net, nil
+}
 
 // FeeRecord represents a single fee entry.
 type FeeRecord struct {

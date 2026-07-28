@@ -185,6 +185,26 @@ func (csr *CachedSubscriptionRepo) UpdateStatus(ctx context.Context, id string, 
 
 // Delete removes cached entries for a subscription and records invalidation times.
 // It clears both the by-id and by-id-and-tenant keys.
+func (csr *CachedSubscriptionRepo) Flush(ctx context.Context) (int, error) {
+	if csr.cache == nil {
+		return 0, nil
+	}
+	if err := csr.cache.Delete(ctx, csr.cacheKey("")); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+
+func (csr *CachedSubscriptionRepo) ResetMetrics() {
+	atomic.StoreUint64(&csr.hits, 0)
+	atomic.StoreUint64(&csr.misses, 0)
+	atomic.StoreUint64(&csr.stales, 0)
+}
+
+func (csr *CachedSubscriptionRepo) Namespace() string {
+	return "subscriptions"
+}
+
 func (csr *CachedSubscriptionRepo) Delete(ctx context.Context, id string, tenantID string) error {
 	if csr.cache == nil {
 		return nil

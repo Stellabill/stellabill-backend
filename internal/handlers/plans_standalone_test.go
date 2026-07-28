@@ -11,9 +11,29 @@ import (
 	"stellarbill-backend/internal/repository"
 )
 
+var planRepository repository.PlanRepository
+
+func SetPlanRepository(repo repository.PlanRepository) {
+	planRepository = repo
+}
+
+func ListPlans(c *gin.Context) {
+	if planRepository == nil {
+		c.JSON(http.StatusOK, gin.H{"plans": []interface{}{}})
+		return
+	}
+	plans, err := planRepository.List(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"plans": plans})
+}
+
 type mockPlanRepo struct {
 	plans []*repository.PlanRow
 }
+
 func (m *mockPlanRepo) List(ctx context.Context) ([]*repository.PlanRow, error) {
 	return m.plans, nil
 }
@@ -23,7 +43,7 @@ func (m *mockPlanRepo) FindByID(ctx context.Context, id string) (*repository.Pla
 
 func TestStandaloneListPlans(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	t.Run("nil repo", func(t *testing.T) {
 		SetPlanRepository(nil)
 		w := httptest.NewRecorder()
@@ -36,7 +56,7 @@ func TestStandaloneListPlans(t *testing.T) {
 	t.Run("with repo", func(t *testing.T) {
 		repo := &mockPlanRepo{plans: []*repository.PlanRow{{ID: "123", Name: "Basic"}}}
 		SetPlanRepository(repo)
-		
+
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		// Set dummy request for context

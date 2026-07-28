@@ -12,6 +12,8 @@ import (
 type StatementService interface {
 	GetDetail(ctx context.Context, callerID string, roles []string, statementID string) (*StatementDetail, []string, error)
 	ListByCustomer(ctx context.Context, callerID string, roles []string, customerID string, q repository.StatementQuery) (*ListStatementsDetail, int, []string, error)
+	// ExportStatements exports statements to S3 and returns a presigned URL.
+	ExportStatements(ctx context.Context, callerID string, roles []string, tenantID, customerID string, uploader interface{}) (*ExportResult, error)
 }
 
 // statementService is the concrete implementation of StatementService.
@@ -168,6 +170,11 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 	}
 
 	return result, count, warnings, nil
+}
+
+// ExportStatements exports statements to S3 and returns a presigned URL.
+func (s *statementService) ExportStatements(ctx context.Context, callerID string, roles []string, tenantID, customerID string, uploader interface{}) (*ExportResult, error) {
+	return nil, errors.New("export statements not implemented")
 }
 
 func normalizeRFC3339OrKeep(raw string) string {

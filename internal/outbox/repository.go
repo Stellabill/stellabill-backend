@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"stellarbill-backend/internal/db"
 	"time"
@@ -35,14 +36,15 @@ func NewPostgresRepository(executor db.DBTX) Repository {
 func (r *postgresRepository) Store(event *Event) error {
 	query := `
 		INSERT INTO outbox_events (
-			id, event_type, event_data, aggregate_id, aggregate_type,
+			id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			occurred_at, status, retry_count, max_retries, next_retry_at,
 			error_message, created_at, updated_at, version, deduplication_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`
 
 	_, err := r.db.Exec(query,
 		event.ID,
+		event.TenantID,
 		event.EventType,
 		event.EventData,
 		event.AggregateID,
@@ -68,7 +70,7 @@ func (r *postgresRepository) Store(event *Event) error {
 // GetPendingEvents retrieves pending events for processing
 func (r *postgresRepository) GetPendingEvents(limit int) ([]*Event, error) {
 	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+		SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
 			   error_message, created_at, updated_at, version, deduplication_id
 		FROM outbox_events
@@ -102,7 +104,7 @@ func (r *postgresRepository) GetPendingEvents(limit int) ([]*Event, error) {
 // GetByID retrieves an event by ID
 func (r *postgresRepository) GetByID(id uuid.UUID) (*Event, error) {
 	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+		SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
 			   error_message, created_at, updated_at, version, deduplication_id
 		FROM outbox_events
@@ -224,9 +226,9 @@ func (r *postgresRepository) GetPublisherProgress(publisher string) (*uuid.UUID,
 // GetPendingEventsForPublisher returns events above the publisher high-water mark.
 func (r *postgresRepository) GetPendingEventsForPublisher(publisher string, limit int) ([]*Event, error) {
 	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
-			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
+		SELECT e.id, e.tenant_id, e.event_type, e.event_data, e.aggregate_id, e.aggregate_type,
+			   e.occurred_at, e.status, e.retry_count, e.max_retries, e.next_retry_at,
+			   e.error_message, e.created_at, e.updated_at, e.version, e.deduplication_id
 		FROM outbox_events e
 		LEFT JOIN outbox_publisher_progress p ON p.publisher = $1
 		WHERE (e.status = $2 OR (e.status = $3 AND e.next_retry_at <= $4))
@@ -351,7 +353,7 @@ func publisherProgressReached(ctx context.Context, exec sqlProgressExecutor, eve
 // ListDeadLetteredEvents retrieves dead-lettered (failed) events
 func (r *postgresRepository) ListDeadLetteredEvents(limit int) ([]*Event, error) {
 	query := `
-		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+		SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
 			   error_message, created_at, updated_at, version, deduplication_id
 		FROM dead_letter_events
@@ -408,11 +410,13 @@ func (r *postgresRepository) RequeueEvent(id uuid.UUID) error {
 // scanEvent scans a database row into an Event struct
 func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) error }) (*Event, error) {
 	var event Event
+	var tenantID sql.NullString
 	var aggregateID, aggregateType, errorMessage, deduplicationID sql.NullString
 	var nextRetryAt sql.NullTime
 
 	err := scanner.Scan(
 		&event.ID,
+		&tenantID,
 		&event.EventType,
 		&event.EventData,
 		&aggregateID,
@@ -430,6 +434,10 @@ func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) e
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan event: %w", err)
+	}
+
+	if tenantID.Valid {
+		event.TenantID = tenantID.String
 	}
 
 	if deduplicationID.Valid {

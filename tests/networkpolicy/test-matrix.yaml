@@ -1,0 +1,184 @@
+# NetworkPolicy Test Matrix for netpol-cli
+# This file defines the expected connectivity matrix for validation
+
+---
+# Test: API can reach Database
+- name: api-to-database
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: api
+        component: backend
+  to:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: database
+        component: postgresql
+  ports:
+    - protocol: TCP
+      port: 5432
+  expected: allow
+
+---
+# Test: API can reach Redis
+- name: api-to-redis
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: api
+        component: backend
+  to:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: cache
+        component: redis
+  ports:
+    - protocol: TCP
+      port: 6379
+  expected: allow
+
+---
+# Test: API cannot reach Kafka (should be blocked)
+- name: api-to-kafka-blocked
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: api
+        component: backend
+  to:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: messaging
+        component: kafka
+  ports:
+    - protocol: TCP
+      port: 9092
+  expected: deny
+
+---
+# Test: Worker can reach Database
+- name: worker-to-database
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: worker
+        component: background-jobs
+  to:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: database
+        component: postgresql
+  ports:
+    - protocol: TCP
+      port: 5432
+  expected: allow
+
+---
+# Test: Worker can reach Kafka
+- name: worker-to-kafka
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: worker
+        component: background-jobs
+  to:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: messaging
+        component: kafka
+  ports:
+    - protocol: TCP
+      port: 9092
+  expected: allow
+
+---
+# Test: Worker cannot reach Redis (should be blocked)
+- name: worker-to-redis-blocked
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: worker
+        component: background-jobs
+  to:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: cache
+        component: redis
+  ports:
+    - protocol: TCP
+      port: 6379
+  expected: deny
+
+---
+# Test: API can resolve DNS
+- name: api-to-dns
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: api
+        component: backend
+  to:
+    namespace: kube-system
+    pod:
+      matchLabels:
+        k8s-app: kube-dns
+  ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  expected: allow
+
+---
+# Test: Worker can resolve DNS
+- name: worker-to-dns
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: worker
+        component: background-jobs
+  to:
+    namespace: kube-system
+    pod:
+      matchLabels:
+        k8s-app: kube-dns
+  ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  expected: allow
+
+---
+# Test: Database cannot initiate outbound connections
+- name: database-egress-blocked
+  from:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: database
+        component: postgresql
+  to:
+    namespace: default
+    pod:
+      matchLabels:
+        tier: api
+        component: backend
+  ports:
+    - protocol: TCP
+      port: 8080
+  expected: deny

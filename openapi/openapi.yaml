@@ -53,6 +53,9 @@ paths:
       responses:
         "200":
           description: Plans list
+          headers:
+            Link:
+              $ref: "#/components/headers/Link"
           content:
             application/json:
               schema:
@@ -83,6 +86,9 @@ paths:
       responses:
         "200":
           description: Subscriptions list
+          headers:
+            Link:
+              $ref: "#/components/headers/Link"
           content:
             application/json:
               schema:
@@ -161,6 +167,17 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 components:
+  headers:
+    Link:
+      description: |
+        RFC 5988 (RFC 8288) Link header for cursor pagination. Always
+        includes rel="first"; includes rel="prev" when the request was not
+        for the first page, and rel="next" when more results are available.
+        Provided alongside the `pagination` object in the response body so
+        generic HTTP clients can walk the collection without parsing JSON.
+      schema:
+        type: string
+      example: '<https://api.example.com/api/v1/plans?limit=20>; rel="first", <https://api.example.com/api/v1/plans?limit=20&cursor=abc>; rel="next"'
   parameters:
     Cursor:
       name: cursor

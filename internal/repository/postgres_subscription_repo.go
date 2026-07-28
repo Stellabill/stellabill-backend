@@ -10,11 +10,17 @@ import (
 // It uses database/sql to execute queries against a subscriptions table and
 // maps nullable timestamps into the internal SubscriptionRow model.
 type PostgresSubscriptionRepo struct {
-	db *sql.DB
+	db subDB
+}
+
+type subDB interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // NewPostgresSubscriptionRepo constructs a new PostgresSubscriptionRepo.
-func NewPostgresSubscriptionRepo(db *sql.DB) *PostgresSubscriptionRepo {
+func NewPostgresSubscriptionRepo(db subDB) *PostgresSubscriptionRepo {
 	return &PostgresSubscriptionRepo{db: db}
 }
 
@@ -183,6 +189,8 @@ func (r *PostgresSubscriptionRepo) fetchSubscription(ctx context.Context, query 
 		&subscription.Currency,
 		&subscription.Interval,
 		&nextBilling,
+		&subscription.UpdatedAt,
+		&subscription.Version,
 		&deletedAt,
 	)
 	if err != nil {

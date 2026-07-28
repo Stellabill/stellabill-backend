@@ -1,0 +1,13 @@
+apiVersion: v2
+name: stellabill
+description: Helm chart for Stellabill backend with NetworkPolicies for secure pod-to-pod communication
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - stellabill
+  - billing
+  - subscriptions
+  - go
+maintainers:
+  - name: Stellabill Team

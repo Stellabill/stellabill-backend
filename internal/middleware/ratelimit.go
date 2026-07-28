@@ -3,6 +3,7 @@ package middleware
 import (
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"stellarbill-backend/internal/timeutil"
 	"sync"
@@ -10,6 +11,42 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// RateLimitSnapshot captures the current state of rate limiting for header emission
+type RateLimitSnapshot struct {
+	Limit     int64     // Maximum requests allowed in the current window
+	Remaining int64     // Number of requests remaining in the current window
+	Reset     time.Time // Time when the rate limit window resets
+}
+
+// emitRateLimitHeaders emits rate limit headers to the response
+// Uses unix-seconds format for Reset and ensures no negative values
+func emitRateLimitHeaders(c *gin.Context, snapshot RateLimitSnapshot) {
+	// Ensure no negative values
+	limit := snapshot.Limit
+	if limit < 0 {
+		limit = 0
+	}
+
+	remaining := snapshot.Remaining
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	// Emit standard rate limit headers
+	c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
+	c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+	c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", snapshot.Reset.Unix()))
+
+	// Calculate and emit Retry-After for rate-limited responses
+	if remaining == 0 {
+		retryAfter := int(math.Ceil(snapshot.Reset.Sub(timeutil.NowUTC()).Seconds()))
+		if retryAfter < 1 {
+			retryAfter = 1 // Minimum 1 second
+		}
+		c.Header("Retry-After", fmt.Sprintf("%d", retryAfter))
+	}
+}
 
 // RateLimitMode defines the rate limiting strategy
 type RateLimitMode string
@@ -218,11 +255,19 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 		bucket := limiter.getBucket(key, path)
 
 		if !bucket.allowRequest() {
-			// Rate limit exceeded
-			c.Header("X-RateLimit-Limit", "0")
-			c.Header("X-RateLimit-Remaining", "0")
-			c.Header("X-RateLimit-Reset", timeutil.FormatRFC3339UTC(timeutil.NowUTC().Add(time.Second)))
-			c.Header("Retry-After", "1")
+			// Rate limit exceeded - calculate reset time based on refill rate
+			bucket.mutex.Lock()
+			resetTime := bucket.lastRefill.Add(time.Duration(float64(bucket.capacity-bucket.tokens)/float64(bucket.refillRate)) * time.Second)
+			if resetTime.Before(timeutil.NowUTC()) {
+				resetTime = timeutil.NowUTC().Add(time.Second)
+			}
+			bucket.mutex.Unlock()
+
+			emitRateLimitHeaders(c, RateLimitSnapshot{
+				Limit:     bucket.burstCapacity,
+				Remaining: 0,
+				Reset:     resetTime,
+			})
 
 			// Log rate limit hit if enabled
 			if config.LogRateLimitHits {
@@ -242,11 +287,18 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 		bucket.mutex.Lock()
 		remaining := bucket.tokens
 		limit := bucket.burstCapacity
+		// Calculate reset time based on when tokens will fully refill
+		resetTime := bucket.lastRefill.Add(time.Duration(float64(limit-remaining)/float64(bucket.refillRate)) * time.Second)
+		if resetTime.Before(timeutil.NowUTC()) {
+			resetTime = timeutil.NowUTC().Add(time.Second)
+		}
 		bucket.mutex.Unlock()
 
-		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
-		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
-		c.Header("X-RateLimit-Reset", timeutil.FormatRFC3339UTC(timeutil.NowUTC().Add(time.Second)))
+		emitRateLimitHeaders(c, RateLimitSnapshot{
+			Limit:     limit,
+			Remaining: remaining,
+			Reset:     resetTime,
+		})
 
 		c.Next()
 	}

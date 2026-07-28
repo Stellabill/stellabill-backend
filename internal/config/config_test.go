@@ -68,6 +68,7 @@ func newValidProvider() *stubProvider {
 			"DATABASE_URL": validDBURL,
 			"JWT_SECRET":   validJWTSecret,
 			"ADMIN_TOKEN":  validAdminToken,
+			"REDIS_URL":    "redis://localhost:6379",
 		},
 		errs: map[string]error{},
 	}

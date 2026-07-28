@@ -10,13 +10,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type pgxPool interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Begin(ctx context.Context) (pgx.Tx, error)
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 }

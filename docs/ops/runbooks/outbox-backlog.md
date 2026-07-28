@@ -4,7 +4,7 @@
 **Service:** Stellabill Backend (`internal/outbox`, `internal/worker`)  
 **Owner:** On-call engineer  
 **Last updated:** 2026-07-27  
-**Related docs:** [`../../outbox-pattern.md`](../../outbox-pattern.md), [`../README.md`](../README.md), [`../elevated-errors-runbook.md`](../elevated-errors-runbook.md), [`../../runbooks/chaos-outbox.md`](../../runbooks/chaos-outbox.md)
+**Related docs:** [`../../outbox-pattern.md`](../../outbox-pattern.md), [`../README.md`](../README.md), [`../elevated-errors-runbook.md`](../elevated-errors-runbook.md), [`../../runbooks/chaos-outbox.md`](../../runbooks/chaos-outbox.md), [`../keda-worker-autoscale.md`](../keda-worker-autoscale.md)
 
 ---
 
@@ -313,7 +313,7 @@ COMMIT;
 
 | Trigger | Escalation Target | SLA | Required Action |
 | --- | --- | --- | --- |
-| Backlog > **10,000** pending events | Backend Lead | 15 min | Scale out worker concurrency |
+| Backlog > **10,000** pending events | Backend Lead | 15 min | Scale out worker concurrency (confirm KEDA HPA desired is at `maxReplicaCount`; see [`../keda-worker-autoscale.md`](../keda-worker-autoscale.md)) |
 | DB lock contention on `outbox_events` | DBA / Infra | 15 min | Vacuum / reindex outbox tables |
 | External endpoint outage > **2 hours** | Product Ops | 30 min | Notify affected tenants |
 | Data payload corruption detected | Security Lead | Immediate | Pause dispatcher and quarantine rows |

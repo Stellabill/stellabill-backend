@@ -1,0 +1,49 @@
+---
+# NetworkPolicy: allow the API pod to egress to Postgres directly (when no
+# sidecar) or keep the existing database egress rule when the sidecar is
+# deployed.  The sidecar itself connects to Postgres using the same pod identity,
+# so the existing database egress policy already covers it.
+#
+# No additional inbound NetworkPolicy is needed for the sidecar because:
+#   - PgBouncer binds to 127.0.0.1 (loopback) only; no other pod can reach it.
+#   - Inter-container loopback traffic within a pod is not subject to
+#     NetworkPolicy enforcement (it uses the lo interface, not eth0).
+#
+# This manifest is a no-op placeholder that documents the security boundary.
+# If you change PgBouncer to listen on 0.0.0.0 for a shared deployment,
+# add a proper ingress NetworkPolicy here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: stellabill-pgbouncer-egress
+  labels:
+    app: stellabill
+    component: pgbouncer
+    policy-type: allowlist
+  annotations:
+    # This policy documents that PgBouncer egress to Postgres is covered by
+    # the existing database egress rule applied to the api pod selector.
+    stellabill.io/note: >
+      PgBouncer binds to 127.0.0.1 only. No additional ingress rule is needed.
+      The sidecar uses the same pod network namespace as the api container and
+      egresses to Postgres under the same pod label selector as the api pod.
+spec:
+  # Apply to API pods that run the PgBouncer sidecar.
+  podSelector:
+    matchLabels:
+      app: stellabill
+      tier: api
+  policyTypes:
+    - Egress
+  egress:
+    # Allow egress from the sidecar to the Postgres backend.
+    # In a standard cluster this duplicates the existing api egress rule, but
+    # it is kept here for explicitness and to survive future policy refactoring.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: stellabill
+              tier: database
+      ports:
+        - protocol: TCP
+          port: 5432

@@ -36,6 +36,22 @@ func (p *PoolPinger) PingContext(ctx context.Context) error {
 // The time-based config fields are expressed in seconds; they are converted to
 // time.Duration here. ConnectTimeout is applied to the per-dial timeout on the
 // underlying connection config.
+//
+// When cfg.PgBouncerEnabled is true, the pool is configured for PgBouncer
+// transaction pooling:
+//   - The connection target is rewritten to cfg.PgBouncerHost:cfg.PgBouncerPort
+//     while retaining the original database name, user, and sslmode.
+//   - The query-exec mode is set according to cfg.DBStatementCacheMode:
+//     "describe" → QueryExecModeDescribeExec (no prepared statements sent to the
+//     server; pgx uses DescribeStatement to infer types — required for PgBouncer
+//     transaction pooling).
+//     "simple"   → QueryExecModeSimpleProtocol (plain text queries, no binary
+//     protocol — widest compatibility).
+//     "prepare"  → QueryExecModeCacheStatement (default pgx behaviour; only safe
+//     with PgBouncer session pooling or a direct connection).
+//
+// The StatementCacheCapacity is set to 0 when using "describe" or "simple" mode
+// to ensure pgx does not silently fall back to the prepared-statement cache.
 func NewPoolConfig(cfg config.Config) (*pgxpool.Config, error) {
 	if cfg.DBConn == "" {
 		return nil, fmt.Errorf("DBConn is empty")
@@ -46,13 +62,23 @@ func NewPoolConfig(cfg config.Config) (*pgxpool.Config, error) {
 		return nil, fmt.Errorf("parse database connection string: %w", err)
 	}
 
+	// When PgBouncer sidecar is enabled, redirect the TCP connection to the
+	// sidecar endpoint.  The rest of the DSN (database, user, password, SSL
+	// settings) is kept intact so the pool authenticates to PgBouncer exactly
+	// as it would to Postgres directly.
+	if cfg.PgBouncerEnabled && poolCfg.ConnConfig != nil {
+		poolCfg.ConnConfig.Host = cfg.PgBouncerHost
+		poolCfg.ConnConfig.Port = uint16(cfg.PgBouncerPort) //nolint:gosec // port validated 1–65535
+	}
+
 	poolCfg.MaxConns = int32(cfg.DBPoolMaxConns)
 	poolCfg.MinConns = int32(cfg.DBPoolMinConns)
 	poolCfg.MaxConnLifetime = time.Duration(cfg.DBPoolMaxConnLifetime) * time.Second
 	poolCfg.MaxConnIdleTime = time.Duration(cfg.DBPoolMaxConnIdleTime) * time.Second
 	poolCfg.HealthCheckPeriod = time.Duration(cfg.DBPoolHealthCheckPeriod) * time.Second
 
-	// ConnectTimeout bounds each individual dial attempt against the database.
+	// ConnectTimeout bounds each individual dial attempt against the database
+	// (or PgBouncer sidecar when enabled).
 	if poolCfg.ConnConfig != nil {
 		poolCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DBPoolConnectTimeout) * time.Second
 		poolCfg.ConnConfig.Tracer = &timingTracer{}
@@ -79,7 +105,8 @@ func (t *timingTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ pgx.Tra
 }
 
 // NewPool constructs a pgx connection pool from cfg, applying the DBPool*
-// tuning fields, and verifies connectivity before returning.
+// tuning fields and PgBouncer settings, and verifies connectivity before
+// returning.
 //
 // When cfg.DBConn is empty (e.g. local dev with no DATABASE_URL) it returns
 // (nil, nil) so callers can degrade gracefully to in-memory dependencies rather

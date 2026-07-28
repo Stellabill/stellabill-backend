@@ -74,6 +74,15 @@ func (r *postgresRepository) Store(ctx context.Context, event *Event) error {
 	return nil
 }
 
+func (r *postgresRepository) BulkInsert(ctx context.Context, events []*Event) error {
+	for _, e := range events {
+		if err := r.Store(e); err != nil {
+			return fmt.Errorf("failed to bulk insert event %s: %w", e.ID, err)
+		}
+	}
+	return nil
+}
+
 // GetPendingEvents retrieves pending events for processing
 func (r *postgresRepository) GetPendingEvents(limit int) ([]*Event, error) {
 	query := `

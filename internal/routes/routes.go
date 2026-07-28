@@ -18,6 +18,7 @@ import (
 	"stellarbill-backend/internal/tracing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -90,6 +91,10 @@ func Register(r *gin.Engine) {
 	api.GET("/liveness", h.LivenessProbe)
 	api.GET("/readiness", h.ReadinessProbe)
 
+	// Prometheus metrics — no auth required; network-level access control is
+	// expected (e.g. Kubernetes NetworkPolicy or reverse-auth proxy).
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
 	{
@@ -132,6 +137,9 @@ func Register(r *gin.Engine) {
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
 	webhookHandler := handlers.NewWebhookHandler()
 	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
+	// Admin login (no JWT required — uses admin token directly)
+	r.POST("/api/admin/login", adminHandler.Login)
+
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 

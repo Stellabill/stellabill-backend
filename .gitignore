@@ -8,6 +8,9 @@
 /dist/
 /build/
 out/
+# Project-local compiled binaries (go build output at repo root)
+/openapi-lint
+/stellarbill-backend
 
 # Go workspace and test
 *.test

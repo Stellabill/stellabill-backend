@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/jsonx"
 	"stellarbill-backend/internal/pagination"
 )
 
@@ -45,9 +46,12 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	// Paginate the slice. In a real DB repo, this would be in the query.
 	page := pagination.PaginateSlice(allPlans, cursor, limit)
 
-	c.JSON(http.StatusOK, gin.H{
+	// Use jsonx.GinRenderer (sonic on amd64/arm64 with -tags=sonic,
+	// encoding/json elsewhere) to reduce per-request serialisation CPU
+	// on this high-QPS list endpoint. See internal/jsonx for details.
+	c.Render(http.StatusOK, jsonx.GinRenderer{Data: gin.H{
 		"plans":       page.Items,
 		"next_cursor": page.NextCursor,
 		"has_more":    page.HasMore,
-	})
+	}})
 }

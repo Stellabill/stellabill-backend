@@ -17,9 +17,16 @@ import (
 	_ "github.com/lib/pq"
 )
 
-var listenAndServe = func(srv *http.Server) error {
-	return srv.ListenAndServe()
-}
+var (
+	listenAndServe = func(srv *http.Server) error {
+		return srv.ListenAndServe()
+	}
+
+	// openDB is a variable so tests can inject a mock.
+	openDB = func(driver, connStr string) (*sql.DB, error) {
+		return sql.Open(driver, connStr)
+	}
+)
 
 func main() {
 	cfg, err := config.Load()
@@ -30,6 +37,21 @@ func main() {
 
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// Database connection — required for KPI metrics and other background jobs.
+	var db *sql.DB
+	if cfg.DBConn != "" {
+		db, err = openDB("postgres", cfg.DBConn)
+		if err != nil {
+			log.Fatalf("failed to open database: %v", err)
+		}
+		defer db.Close()
+		db.SetMaxOpenConns(cfg.DBPoolMaxConns)
+		db.SetMaxIdleConns(cfg.DBPoolMinConns)
+		db.SetConnMaxLifetime(time.Duration(cfg.DBPoolMaxConnLifetime) * time.Second)
+		db.SetConnMaxIdleTime(time.Duration(cfg.DBPoolMaxConnIdleTime) * time.Second)
+		log.Println("database connection established")
 	}
 
 	// Initialize SPIFFE Verifier for cross-service mesh auth
@@ -43,10 +65,27 @@ func main() {
 		}
 	}
 
+	// Start KPI metrics refresh worker when a database is available.
+	var kpiJob *worker.KpiRefreshJob
+	if db != nil {
+		kpiJob = worker.NewKpiRefreshJob(db, worker.DefaultKpiRefreshConfig(), stdLogger{})
+		kpiJob.Start()
+		log.Println("KPI metrics refresh worker started (hourly)")
+	}
+
 	router := gin.New()
 	router.Use(gin.Recovery())
 
 	routes.Register(router)
+
+	// Stop the KPI worker on server shutdown.
+	if kpiJob != nil {
+		defer func() {
+			if err := kpiJob.Stop(); err != nil {
+				log.Printf("KPI refresh worker stop: %v", err)
+			}
+		}()
+	}
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	srv := &http.Server{
@@ -65,4 +104,11 @@ func main() {
 
 func printConfigError(err error) {
 	fmt.Fprintf(os.Stderr, "%v\n", err)
+}
+
+// stdLogger adapts the standard log package to the worker's logger interface.
+type stdLogger struct{}
+
+func (stdLogger) Error(msg string, keysAndValues ...any) {
+	log.Println(append([]any{"ERROR: " + msg}, keysAndValues...)...)
 }

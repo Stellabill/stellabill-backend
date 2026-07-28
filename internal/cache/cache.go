@@ -66,6 +66,12 @@ func (m *InMemory) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+func (m *InMemory) Len() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.items)
+}
+
 // GuardedCache wraps a Cache with per-key stampede protection.
 // Only one goroutine per key executes the loader; others wait and share the result.
 type GuardedCache struct {

@@ -1,155 +1,6 @@
 package routes
 
 import (
-	"fmt"
-
-	"stellarbill-backend/internal/auth"
-	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/handlers"
-	"stellarbill-backend/internal/middleware"
-	"stellarbill-backend/internal/reconciliation"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/service"
-	"stellarbill-backend/internal/startup"
-	"stellarbill-backend/internal/tracing"
-
-	"github.com/gin-gonic/gin"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-)
-
-// Register configures all routes on the provided router.
-func Register(r *gin.Engine) {
-	cfg, err := config.Load()
-	if err != nil {
-		panic(fmt.Sprintf("failed to load configuration: %v", err))
-	}
-
-	// Initialize tracing
-	if cfg.TracingExporter != "none" {
-		_, err := tracing.InitTracer(cfg.TracingServiceName)
-		if err != nil {
-			fmt.Printf("Failed to initialize tracer: %v\n", err)
-		}
-	}
-
-	// Global middleware
-	r.Use(middleware.RequestID())
-	r.Use(middleware.Recovery())
-	r.Use(otelgin.Middleware(cfg.TracingServiceName))
-	r.Use(middleware.TailSamplingSignals())
-	r.Use(middleware.TraceIDMiddleware())
-
-	// Rate limiting
-	rateLimitConfig := middleware.RateLimiterConfig{
-		Enabled:        cfg.RateLimitEnabled,
-		Mode:           middleware.RateLimitMode(cfg.RateLimitMode),
-		RequestsPerSec: int64(cfg.RateLimitRPS),
-		BurstSize:      int64(cfg.RateLimitBurst),
-		WhitelistPaths: cfg.RateLimitWhitelist,
-	}
-	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
-
-	// Request size and Gzip
-	r.Use(middleware.RequestSizeLimit(cfg.MaxRequestSize))
-	r.Use(middleware.GzipPolicy(middleware.GzipPolicyConfig{
-		MaxUncompressedBytes: cfg.MaxGzipUncompressed,
-		MaxRatio:             cfg.MaxGzipRatio,
-	}))
-
-	// Dependencies
-	subRepo := repository.NewMockSubscriptionRepo()
-	planRepo := repository.NewMockPlanRepo()
-	stmtRepo := repository.NewMockStatementRepo()
-
-	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
-	svc := service.NewSubscriptionService(subRepo, planRepo)
-
-	// Create handlers
-	h := handlers.NewHandler(nil, nil)
-	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
-
-	// Auth configuration
-	jwtSecret := cfg.JWTSecret
-	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
-
-	// API Groups
-	api := r.Group("/api")
-	v1 := api.Group("/v1")
-
-	dep := middleware.DeprecationHeaders()
-
-	// Public health check
-	api.GET("/health", dep, h.LivenessProbe)
-	v1.GET("/health", h.LivenessProbe)
-	api.GET("/liveness", h.LivenessProbe)
-	api.GET("/readiness", h.ReadinessProbe)
-
-	// V1 routes are all protected
-	v1.Use(authMiddleware)
-	{
-		v1.GET("/subscriptions", h.ListSubscriptions)
-		v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
-		v1.GET("/plans", h.ListPlans)
-		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
-		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
-	}
-
-	// Legacy /api routes - also protected
-	apiProtected := api.Group("")
-	apiProtected.Use(authMiddleware)
-	{
-		apiProtected.GET("/plans",
-			dep,
-			auth.RequirePermission(auth.PermReadPlans),
-			h.ListPlans,
-		)
-
-		apiProtected.GET("/subscriptions",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			h.ListSubscriptions,
-		)
-
-		apiProtected.GET("/subscriptions/:id",
-			dep,
-			auth.RequirePermission(auth.PermReadSubscriptions),
-			h.GetSubscription,
-		)
-
-		apiProtected.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
-		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
-	}
-	
-// Webhook receiver — signature verified by WebhookVerification middleware
-	webhookSecret := os.Getenv("WEBHOOK_SECRET")
-	webhookHandler := handlers.NewWebhookHandler()
-	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
-	admin := api.Group("/admin")
-	admin.Use(authMiddleware)
-	
-	{
-		admin.POST("/purge", adminHandler.PurgeCache)
-		// Diagnostics endpoint — re-runs startup checks for live triage
-		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
-		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
-
-		// Reconciliation — scoped by RBAC and tenant
-		adapter := reconciliation.NewMemoryAdapter()
-		reconStore := reconciliation.NewMemoryStore()
-		admin.POST("/reconcile", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewReconcileHandler(adapter, reconStore))
-		admin.GET("/reports", auth.RequirePermission(auth.PermManageSubscriptions), func(c *gin.Context) {
-			reports, err := reconStore.ListReports()
-			if err != nil {
-				c.JSON(500, gin.H{"error": "failed to load reports"})
-				return
-			}
-			c.JSON(200, gin.H{"reports": reports})
-		})
-	}
-}
-package routes
-
-import (
 	"context"
 	"database/sql"
 	"fmt"
@@ -160,10 +11,13 @@ import (
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/featureflags"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/saga"
@@ -174,10 +28,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
-
 
 // Register configures all routes on the provided router.
 func Register(r *gin.Engine) {
@@ -192,7 +46,10 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		panic(fmt.Sprintf("failed to load configuration: %v", err))
 	}
 
-	var tracerShutdown func(context.Context) error
+	var (
+		tracerShutdown func(context.Context) error
+		redisClient    redis.UniversalClient
+	)
 
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
@@ -220,8 +77,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		WhitelistPaths: append(cfg.RateLimitWhitelist, "/metrics"),
 	}
 
-	var dbPool *pgxpool.Pool
-	var planDB *sql.DB
+	var (
+		dbPool    *pgxpool.Pool
+		planDB    *sql.DB
+		replicaDB *sql.DB
+		routerDB  db.DBTX
+	)
 	if cfg.DBConn != "" {
 		var err error
 		dbPool, err = pgxpool.New(context.Background(), cfg.DBConn)
@@ -288,11 +149,52 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	}
 	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
 
-	// Each cached repo gets its own InMemory cache instance so that Flush is
-	// scoped to its namespace and does not evict entries from other caches.
-	planCache := cache.NewInMemory()
-	subCache := cache.NewInMemory()
-	const repoCacheTTL = 5 * time.Minute
+	// Cache setup: use Redis when REDIS_URL is configured, otherwise fall back
+	// to in-memory caches. Each cached repo gets its own cache namespace so
+	// that Flush is scoped to its repository and does not evict entries from
+	// other caches.
+	repoCacheTTL := time.Duration(cfg.CacheTTL) * time.Second
+	if repoCacheTTL <= 0 {
+		repoCacheTTL = 60 * time.Second
+	}
+
+	var planCache cache.Cache
+	var subCache cache.Cache
+	var cleanupRedis func()
+
+	if cfg.RedisURL != "" {
+		redisOpts, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			fmt.Printf("Failed to parse REDIS_URL, falling back to in-memory cache: %v\n", err)
+			planCache = cache.NewInMemory()
+			subCache = cache.NewInMemory()
+		} else {
+			redisClient = redis.NewClient(redisOpts)
+			// Verify connectivity — fall back to in-memory on failure
+			if err := redisClient.Ping(context.Background()).Err(); err != nil {
+				fmt.Printf("Redis unreachable (%v), falling back to in-memory cache\n", err)
+				redisClient.Close()
+				redisClient = nil
+				planCache = cache.NewInMemory()
+				subCache = cache.NewInMemory()
+			} else {
+				fmt.Printf("Connected to Redis at %s\n", redisOpts.Addr)
+				// Use separate Redis namespaces by prefixing keys in the cache wrapper,
+				// but we can also use separate Redis DB indices or prefixes.
+				// For simplicity, each repo gets its own Redis-backed Cache instance.
+				planCache = cache.NewRedis(redisClient)
+				subCache = cache.NewRedis(redisClient)
+				cleanupRedis = func() {
+					if redisClient != nil {
+						redisClient.Close()
+					}
+				}
+			}
+		}
+	} else {
+		planCache = cache.NewInMemory()
+		subCache = cache.NewInMemory()
+	}
 
 	rawPlanRepo := repository.NewMockPlanRepo()
 	rawSubRepo := repository.NewMockSubscriptionRepo(
@@ -363,6 +265,10 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	api.GET("/liveness", h.LivenessProbe)
 	api.GET("/readiness", h.ReadinessProbe)
 
+	// Idempotency key inspection — lets callers query the state of any key they
+	// own without triggering the mutation-only Idempotency middleware.
+	idemHandler := handlers.NewIdempotencyHandler(idemStore)
+
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
 	v1.Use(middleware.RateLimitMiddleware(rateLimitConfig))
@@ -377,6 +283,8 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		v1.DELETE("/plans/:id", auth.RequirePermission(auth.PermManageSubscriptions), h.DeletePlan)
 		v1.GET("/statements/:id", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewListStatementsHandler(stmtSvc))
+		// Idempotency key inspection — tenant-scoped, read-only.
+		v1.GET("/idempotency/:key", idemHandler.InspectKey)
 	}
 
 	// Legacy /api routes - also protected
@@ -431,6 +339,11 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		apiProtected.GET("/statements", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewListStatementsHandler(stmtSvc))
 	}
 
+	// Webhook receiver — signature verified by WebhookVerification middleware
+	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+	webhookHandler := handlers.NewWebhookHandler()
+	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
+
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 	admin.Use(middleware.RateLimitMiddleware(rateLimitConfig))
@@ -467,6 +380,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		if stopMetrics != nil {
 			close(stopMetrics)
 		}
+		if cleanupRedis != nil {
+			cleanupRedis()
+		}
 		if dbPool != nil {
 			log.Printf("closing database pool")
 			dbPool.Close()
@@ -474,12 +390,6 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		if planDB != nil {
 			log.Printf("closing plan database handle")
 			planDB.Close()
-		}
-		if replicaDB != nil {
-			log.Printf("closing replica database handle")
-			if err := replicaDB.Close(); err != nil {
-				return fmt.Errorf("close replica database handle: %w", err)
-			}
 		}
 		if tracerShutdown != nil {
 			log.Printf("flushing tracer")

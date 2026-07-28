@@ -24,6 +24,7 @@ var tracer = otel.Tracer("service/subscriptions")
 type SubscriptionService interface {
 	GetDetail(ctx context.Context, tenantID string, callerID string, subscriptionID string) (*SubscriptionDetail, []string, error)
 	ChangeStatus(ctx context.Context, tenantID string, actorID string, subscriptionID string, targetStatus string) (*SubscriptionStatusChange, error)
+	BatchChangeStatus(ctx context.Context, tenantID string, actorID string, operations []BatchSubscriptionOperation) ([]BatchSubscriptionResult, error)
 }
 
 // subscriptionService is the concrete implementation of SubscriptionService.
@@ -187,4 +188,68 @@ func (s *subscriptionService) ChangeStatus(ctx context.Context, tenantID string,
 		PreviousStatus: previousStatus,
 		Changed:        true,
 	}, nil
+}
+
+func (s *subscriptionService) BatchChangeStatus(ctx context.Context, tenantID string, actorID string, operations []BatchSubscriptionOperation) ([]BatchSubscriptionResult, error) {
+	if len(operations) == 0 {
+		return nil, fmt.Errorf("batch operations must not be empty")
+	}
+
+	results := make([]BatchSubscriptionResult, 0, len(operations))
+	for _, op := range operations {
+		result := BatchSubscriptionResult{
+			ID:             op.ID,
+			IdempotencyKey: op.IdempotencyKey,
+		}
+
+		if strings.TrimSpace(op.ID) == "" {
+			result.Success = false
+			result.Error = &BatchSubscriptionError{Code: "VALIDATION_FAILED", Message: "subscription id is required"}
+			results = append(results, result)
+			continue
+		}
+
+		if strings.TrimSpace(op.Status) == "" {
+			result.Success = false
+			result.Error = &BatchSubscriptionError{Code: "VALIDATION_FAILED", Message: "status is required"}
+			results = append(results, result)
+			continue
+		}
+
+		if strings.TrimSpace(op.IdempotencyKey) == "" {
+			result.Success = false
+			result.Error = &BatchSubscriptionError{Code: "VALIDATION_FAILED", Message: "idempotency_key is required"}
+			results = append(results, result)
+			continue
+		}
+
+		change, err := s.ChangeStatus(ctx, tenantID, actorID, op.ID, op.Status)
+		if err != nil {
+			result.Success = false
+			result.Error = &BatchSubscriptionError{Code: batchErrorCode(err), Message: err.Error()}
+			results = append(results, result)
+			continue
+		}
+
+		result.Success = true
+		result.Status = change.Status
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+func batchErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ErrInvalidStatus):
+		return "VALIDATION_FAILED"
+	case errors.Is(err, ErrInvalidTransition), errors.Is(err, ErrUnknownCurrentState):
+		return "CONFLICT"
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrDeleted):
+		return "NOT_FOUND"
+	case errors.Is(err, ErrForbidden):
+		return "FORBIDDEN"
+	default:
+		return "INTERNAL_ERROR"
+	}
 }

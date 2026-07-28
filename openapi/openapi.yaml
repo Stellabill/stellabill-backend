@@ -17,6 +17,7 @@ tags:
   - name: Plans
   - name: Subscriptions
   - name: ContractEvents
+  - name: Idempotency
 paths:
   /api/health:
     get:
@@ -116,6 +117,47 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/idempotency/{key}:
+    get:
+      tags: [Idempotency]
+      summary: Inspect an idempotency key
+      operationId: inspectIdempotencyKey
+      description: |
+        Returns the stored metadata for a previously recorded idempotency key.
+
+        Results are **tenant-scoped**: a caller can only inspect keys that were
+        created under their own tenant/caller identity. Keys that have expired
+        or were never recorded return `404`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 255
+          description: The idempotency key to inspect.
+          example: "order-abc-123"
+      responses:
+        "200":
+          description: Key found — returns stored metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdempotencyKeyRecord"
+              example:
+                key: "order-abc-123"
+                used_at: "2026-07-27T10:00:00Z"
+                expires_at: "2026-07-28T10:00:00Z"
+                status_code: 201
+                request_fingerprint: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
 components:
@@ -244,6 +286,36 @@ components:
             $ref: "#/components/schemas/Subscription"
         pagination:
           $ref: "#/components/schemas/Pagination"
+    IdempotencyKeyRecord:
+      type: object
+      additionalProperties: false
+      required: [key, used_at, expires_at, status_code, request_fingerprint]
+      description: Metadata for a stored idempotency key, scoped to the authenticated caller's tenant.
+      properties:
+        key:
+          type: string
+          description: The idempotency key that was queried.
+          example: "order-abc-123"
+        used_at:
+          type: string
+          format: date-time
+          description: When the key was first recorded (RFC 3339 UTC).
+          example: "2026-07-27T10:00:00Z"
+        expires_at:
+          type: string
+          format: date-time
+          description: When the key will be purged (RFC 3339 UTC).
+          example: "2026-07-28T10:00:00Z"
+        status_code:
+          type: integer
+          description: |
+            HTTP status code stored with the completed response.
+            `0` indicates the original request is still in-flight.
+          example: 201
+        request_fingerprint:
+          type: string
+          description: SHA-256 hex digest of the original request body, used to detect key reuse with a different payload.
+          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   responses:
     BadRequest:
       description: Validation or client error

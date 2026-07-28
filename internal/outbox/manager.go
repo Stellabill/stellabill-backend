@@ -45,7 +45,7 @@ func NewManager(db *sql.DB, cfg config.Config) (*Manager, error) {
 
 // Start starts the outbox system
 func (m *Manager) Start() error {
-	logger.SafePrintf("Starting outbox manager...")
+	logger.Log.Info("Starting outbox manager...")
 	
 	// Run database migrations
 	if err := m.runMigrations(); err != nil {
@@ -57,19 +57,19 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to start outbox service: %w", err)
 	}
 	
-	logger.SafePrintf("Outbox manager started successfully")
+	logger.Log.Info("Outbox manager started successfully")
 	return nil
 }
 
 // Stop stops the outbox system
 func (m *Manager) Stop() error {
-	logger.SafePrintf("Stopping outbox manager...")
+	logger.Log.Info("Stopping outbox manager...")
 	
 	if err := m.service.Stop(); err != nil {
 		return fmt.Errorf("failed to stop outbox service: %w", err)
 	}
 	
-	logger.SafePrintf("Outbox manager stopped")
+	logger.Log.Info("Outbox manager stopped")
 	return nil
 }
 
@@ -90,7 +90,7 @@ func (m *Manager) Health() error {
 
 // runMigrations runs the necessary database migrations
 func (m *Manager) runMigrations() error {
-	logger.SafePrintf("Running outbox migrations...")
+	logger.Log.Info("Running outbox migrations...")
 	
 	// Check if outbox table exists
 	var exists bool
@@ -106,7 +106,7 @@ func (m *Manager) runMigrations() error {
 	}
 	
 	if !exists {
-		logger.SafePrintf("Creating outbox table...")
+		logger.Log.Info("Creating outbox table...")
 		if err := m.createOutboxTable(); err != nil {
 			return fmt.Errorf("failed to create outbox table: %w", err)
 		}
@@ -168,7 +168,7 @@ func (m *Manager) createOutboxTable() error {
 		return fmt.Errorf("failed to create outbox table: %w", err)
 	}
 	
-	logger.SafePrintf("Outbox table created successfully")
+	logger.Log.Info("Outbox table created successfully")
 	return nil
 }
 

@@ -32,6 +32,21 @@ type exportStatusResponse struct {
 	Error  string                   `json:"error,omitempty"`
 }
 
+// getRequiredStringContextValue extracts a required string from the gin context.
+func getRequiredStringContextValue(c *gin.Context, key string, msg string) (string, bool) {
+	val, exists := c.Get(key)
+	if !exists {
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, msg)
+		return "", false
+	}
+	s, ok := val.(string)
+	if !ok {
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, msg)
+		return "", false
+	}
+	return s, true
+}
+
 // NewTenantExportHandler returns a gin.HandlerFunc for POST /api/v1/tenants/me/export.
 //
 // It enqueues an asynchronous export job that produces a downloadable ZIP

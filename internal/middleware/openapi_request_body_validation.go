@@ -49,7 +49,7 @@ func OpenAPIRequestBodyValidation() gin.HandlerFunc {
 		}
 
 		reqBody := op.RequestBody
-		if reqBody.Value.Required != nil && !*reqBody.Value.Required {
+		if !reqBody.Value.Required {
 			// Optional request body; if absent, let it through.
 			if c.Request.Body == nil || c.Request.ContentLength == 0 {
 				c.Next()
@@ -86,8 +86,7 @@ func OpenAPIRequestBodyValidation() gin.HandlerFunc {
 
 		// If body is empty and not required, allow.
 		if len(bytes.TrimSpace(raw)) == 0 {
-
-			if reqBody.Value.Required == nil || !*reqBody.Value.Required {
+			if !reqBody.Value.Required {
 				c.Next()
 				return
 			}

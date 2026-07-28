@@ -35,6 +35,10 @@ func (m *mockSubscriptionService) ChangeStatus(ctx context.Context, tenantID str
 	return nil, nil
 }
 
+func (m *mockSubscriptionService) BatchChangeStatus(ctx context.Context, tenantID string, actorID string, operations []service.BatchSubscriptionOperation) ([]service.BatchSubscriptionResult, error) {
+	return nil, nil
+}
+
 func (m *mockSubscriptionService) ListSubscriptions(c *gin.Context) ([]Subscription, error) {
 	return nil, nil
 }

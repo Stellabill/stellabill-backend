@@ -3,6 +3,7 @@ package handlers
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/mock"
+	"stellarbill-backend/internal/service"
 )
 
 type MockPlanService struct {
@@ -35,4 +36,12 @@ func (m *MockSubscriptionService) GetSubscription(c *gin.Context, id string) (*S
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*Subscription), args.Error(1)
+}
+
+func (m *MockSubscriptionService) BatchChangeStatus(c *gin.Context, tenantID string, actorID string, operations []service.BatchSubscriptionOperation) ([]service.BatchSubscriptionResult, error) {
+	args := m.Called(c, tenantID, actorID, operations)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]service.BatchSubscriptionResult), args.Error(1)
 }

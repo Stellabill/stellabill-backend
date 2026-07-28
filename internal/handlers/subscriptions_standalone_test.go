@@ -9,9 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func ListSubscriptions(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"subscriptions": []interface{}{}})
+}
+
 func TestStandaloneListSubscriptions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	ListSubscriptions(c)

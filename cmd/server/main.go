@@ -9,6 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"context"
+
+	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/routes"
 )
@@ -26,6 +29,17 @@ func main() {
 
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// Initialize SPIFFE Verifier for cross-service mesh auth
+	spiffeVerifier, err := auth.NewSpiffeVerifier(context.Background(), cfg.SpiffeSocketPath, cfg.SpiffeTrustDomain, cfg.Env)
+	if err != nil {
+		log.Fatalf("failed to initialize SPIFFE verifier: %v", err)
+	}
+	if spiffeVerifier != nil {
+		if v, ok := spiffeVerifier.(interface{ Close() }); ok {
+			defer v.Close()
+		}
 	}
 
 	router := gin.New()

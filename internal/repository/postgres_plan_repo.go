@@ -10,18 +10,19 @@ import (
 )
 
 const findPlanByIDQuery = `
-	SELECT id, name, amount_cents::text, currency, interval, description
+	SELECT id, name, amount_cents::text, currency, interval, description, updated_at, version
 	FROM plans
 	WHERE id = $1`
 
 const listPlansQuery = `
-	SELECT id, name, amount_cents::text, currency, interval, description
+	SELECT id, name, amount_cents::text, currency, interval, description, updated_at, version
 	FROM plans
 	ORDER BY name, id`
 
 type planDB interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // PostgresPlanRepo implements PlanRepository using PostgreSQL via database/sql.
@@ -60,6 +61,8 @@ func (r *PostgresPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 		&row.Currency,
 		&row.Interval,
 		&description,
+		&row.UpdatedAt,
+		&row.Version,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -95,6 +98,45 @@ func (r *PostgresPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	return plans, nil
 }
 
+func (r *PostgresPlanRepo) Update(ctx context.Context, plan *PlanRow, expectedVersion int64) error {
+	const query = `
+		UPDATE plans
+		SET name = $1, description = $2, version = version + 1
+		WHERE id = $3 AND version = $4
+	`
+	res, err := r.db.ExecContext(ctx, query, plan.Name, plan.Description, plan.ID, expectedVersion)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrConcurrentUpdate
+	}
+	return nil
+}
+
+func (r *PostgresPlanRepo) Delete(ctx context.Context, id string, expectedVersion int64) error {
+	const query = `
+		DELETE FROM plans
+		WHERE id = $1 AND version = $2
+	`
+	res, err := r.db.ExecContext(ctx, query, id, expectedVersion)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrConcurrentUpdate
+	}
+	return nil
+}
+
 func scanPlanRow(scanner interface{ Scan(dest ...any) error }) (*PlanRow, error) {
 	var row PlanRow
 	var description sql.NullString
@@ -106,6 +148,8 @@ func scanPlanRow(scanner interface{ Scan(dest ...any) error }) (*PlanRow, error)
 		&row.Currency,
 		&row.Interval,
 		&description,
+		&row.UpdatedAt,
+		&row.Version,
 	); err != nil {
 		return nil, err
 	}

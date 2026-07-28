@@ -11,6 +11,19 @@ import (
 	"stellarbill-backend/internal/service"
 )
 
+func getRequiredStringContextValue(c *gin.Context, key, msg string) (string, bool) {
+	value, exists := c.Get(key)
+	if !exists {
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, msg)
+		return "", false
+	}
+	if str, ok := value.(string); ok && str != "" {
+		return str, true
+	}
+	RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, msg)
+	return "", false
+}
+
 // ExportJobManager defines the interface for creating and querying export jobs.
 // The handler depends on this interface rather than a concrete type, making it
 // straightforward to test and swap implementations.

@@ -7,12 +7,16 @@ import (
 // PlanService defines the interface for plan-related operations
 type PlanService interface {
 	ListPlans(c *gin.Context) ([]Plan, error)
+	PatchPlan(c *gin.Context, id string, plan *Plan, expectedVersion int64) error
+	DeletePlan(c *gin.Context, id string, expectedVersion int64) error
 }
 
 // SubscriptionService defines the interface for subscription-related operations
 type SubscriptionService interface {
 	ListSubscriptions(c *gin.Context) ([]Subscription, error)
 	GetSubscription(c *gin.Context, id string) (*Subscription, error)
+	PatchSubscription(c *gin.Context, id string, sub *Subscription, expectedVersion int64) error
+	DeleteSubscription(c *gin.Context, id string, expectedVersion int64) error
 }
 
 // Handler holds the dependencies for the HTTP handlers

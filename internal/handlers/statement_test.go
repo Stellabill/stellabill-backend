@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -277,6 +278,139 @@ func TestListStatements_AdminCanListAnyCustomer(t *testing.T) {
 	w := do(r, http.MethodGet, "/api/v1/statements?customer_id=cust-99")
 	if w.Code != http.StatusOK {
 		t.Fatalf("admin: expected 200, got %d", w.Code)
+	}
+}
+
+func TestListStatements_CSV_HappyPath(t *testing.T) {
+	svc := &mockStatementService{
+		listResult: &service.ListStatementsDetail{
+			Statements: []*service.StatementDetail{
+				{
+					ID:             "stmt-1",
+					SubscriptionID: "sub-1",
+					Customer:       "cust-1",
+					PeriodStart:    "2025-01-01T00:00:00Z",
+					PeriodEnd:      "2025-02-01T00:00:00Z",
+					IssuedAt:       "2025-02-02T00:00:00Z",
+					TotalAmount:    "1000",
+					Currency:       "USD",
+					Kind:           "invoice",
+					Status:         "paid",
+				},
+			},
+		},
+		listTotal: 1,
+	}
+	h := NewListStatementsHandler(svc)
+	r := withAuth(http.MethodGet, "/api/v1/statements", "cust-1", []string{"customer"}, h)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/statements?customer_id=cust-1", nil)
+	req.Header.Set("Accept", "text/csv")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/csv; charset=utf-8" {
+		t.Errorf("expected text/csv Content-Type, got %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); cd != `attachment; filename="statements.csv"` {
+		t.Errorf("expected attachment Content-Disposition, got %q", cd)
+	}
+
+	expected := "id,subscription_id,customer_id,period_start,period_end,issued_at,total_amount,currency,kind,status\n" +
+		"stmt-1,sub-1,cust-1,2025-01-01T00:00:00Z,2025-02-01T00:00:00Z,2025-02-02T00:00:00Z,1000,USD,invoice,paid\n"
+	if w.Body.String() != expected {
+		t.Errorf("unexpected CSV output:\ngot:\n%s\nwant:\n%s", w.Body.String(), expected)
+	}
+}
+
+func TestListStatements_CSV_OWASPFormulaInjectionEscaping(t *testing.T) {
+	svc := &mockStatementService{
+		listResult: &service.ListStatementsDetail{
+			Statements: []*service.StatementDetail{
+				{
+					ID:             "=cmd|' /C calc'!A0",
+					SubscriptionID: "+1234567890",
+					Customer:       "-100",
+					PeriodStart:    "@SUM(A1:A10)",
+					PeriodEnd:      "\t2025-02-01",
+					IssuedAt:       "\r2025-02-02",
+					TotalAmount:    "   =1+1",
+					Currency:       "USD",
+					Kind:           "invoice",
+					Status:         "paid",
+				},
+			},
+		},
+		listTotal: 1,
+	}
+	h := NewListStatementsHandler(svc)
+	r := withAuth(http.MethodGet, "/api/v1/statements", "cust-1", []string{"customer"}, h)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/statements?customer_id=cust-1", nil)
+	req.Header.Set("Accept", "text/csv")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	for _, escaped := range []string{
+		"'=cmd|' /C calc'!A0",
+		"'+1234567890",
+		"'-100",
+		"'@SUM(A1:A10)",
+		"'\t2025-02-01",
+		"'\r2025-02-02",
+		"'   =1+1",
+	} {
+		if !strings.Contains(body, escaped) {
+			t.Errorf("expected CSV body to contain escaped field %q, body:\n%s", escaped, body)
+		}
+	}
+}
+
+func TestListStatements_CSV_NilSvc(t *testing.T) {
+	h := NewListStatementsHandler(nil)
+	r := noAuth(http.MethodGet, "/api/v1/statements", h)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/statements", nil)
+	req.Header.Set("Accept", "text/csv")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	expected := "id,subscription_id,customer_id,period_start,period_end,issued_at,total_amount,currency,kind,status\n"
+	if w.Body.String() != expected {
+		t.Errorf("expected only header row, got:\n%s", w.Body.String())
+	}
+}
+
+func TestListStatements_CSV_EmptyResultSet(t *testing.T) {
+	svc := &mockStatementService{
+		listResult: &service.ListStatementsDetail{Statements: nil},
+		listTotal:  0,
+	}
+	h := NewListStatementsHandler(svc)
+	r := withAuth(http.MethodGet, "/api/v1/statements", "cust-1", []string{"customer"}, h)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/statements?customer_id=cust-1", nil)
+	req.Header.Set("Accept", "text/csv")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	expected := "id,subscription_id,customer_id,period_start,period_end,issued_at,total_amount,currency,kind,status\n"
+	if w.Body.String() != expected {
+		t.Errorf("expected only header row, got:\n%s", w.Body.String())
 	}
 }
 

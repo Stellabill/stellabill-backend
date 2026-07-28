@@ -181,6 +181,10 @@ The system ensures idempotency through:
 2. **Status tracking**: Events are marked as `processing` to prevent duplicate processing
 3. **Version control**: Event versions prevent concurrent modifications
 
+### Operational Runbooks
+
+- [`docs/ops/runbooks/outbox-backlog.md`](ops/runbooks/outbox-backlog.md) — Remediation runbook for `outbox_backlog_depth`, safe DLQ replays, rollback, and dispatcher restarts.
+
 ## Testing
 
 ### Unit Tests

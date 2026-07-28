@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -215,8 +216,18 @@ const (
 	ExportJobFailed    ExportJobStatus = "failed"
 )
 
+type ExportOperationStatus string
+
+const (
+	OperationPending   ExportOperationStatus = "pending"
+	OperationRunning   ExportOperationStatus = "running"
+	OperationSucceeded ExportOperationStatus = "succeeded"
+	OperationFailed    ExportOperationStatus = "failed"
+)
+
 type ExportJob struct {
 	ID          string              `json:"id"`
+	OperationID string              `json:"operation_id,omitempty"`
 	TenantID    string              `json:"tenant_id"`
 	CallerID    string              `json:"caller_id"`
 	CallerRoles []string            `json:"caller_roles"`
@@ -227,27 +238,208 @@ type ExportJob struct {
 	UpdatedAt   time.Time           `json:"updated_at"`
 }
 
+type ExportOperation struct {
+	ID          string                `json:"id"`
+	TenantID    string                `json:"tenant_id"`
+	CallerID    string                `json:"caller_id"`
+	CallerRoles []string              `json:"caller_roles"`
+	Status      ExportOperationStatus `json:"status"`
+	Result      *TenantExportResult   `json:"result,omitempty"`
+	Error       string                `json:"error,omitempty"`
+	CreatedAt   time.Time             `json:"created_at"`
+	UpdatedAt   time.Time             `json:"updated_at"`
+}
+
+type ExportOperationStore interface {
+	Create(ctx context.Context, op *ExportOperation) error
+	Get(ctx context.Context, id string) (*ExportOperation, error)
+	Update(ctx context.Context, op *ExportOperation) error
+	DeleteExpired(ctx context.Context, before time.Time) error
+}
+
+type inMemoryExportOperationStore struct {
+	mu      sync.RWMutex
+	ops     map[string]*ExportOperation
+	ttl     time.Duration
+	created time.Time
+}
+
+type postgresExportOperationStore struct {
+	db  *sql.DB
+	ttl time.Duration
+}
+
+func NewInMemoryExportOperationStore(ttl time.Duration) ExportOperationStore {
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	return &inMemoryExportOperationStore{ops: make(map[string]*ExportOperation), ttl: ttl, created: time.Now().UTC()}
+}
+
+func (s *inMemoryExportOperationStore) Create(_ context.Context, op *ExportOperation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ops == nil {
+		s.ops = make(map[string]*ExportOperation)
+	}
+	s.ops[op.ID] = op
+	return nil
+}
+
+func (s *inMemoryExportOperationStore) Get(_ context.Context, id string) (*ExportOperation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	op, ok := s.ops[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return op, nil
+}
+
+func (s *inMemoryExportOperationStore) Update(_ context.Context, op *ExportOperation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ops[op.ID] = op
+	return nil
+}
+
+func (s *inMemoryExportOperationStore) DeleteExpired(_ context.Context, before time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, op := range s.ops {
+		if op.UpdatedAt.Before(before) || op.CreatedAt.Before(before) {
+			delete(s.ops, id)
+		}
+	}
+	return nil
+}
+
+func NewPostgresExportOperationStore(db *sql.DB, ttl time.Duration) ExportOperationStore {
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	return &postgresExportOperationStore{db: db, ttl: ttl}
+}
+
+func (s *postgresExportOperationStore) Create(ctx context.Context, op *ExportOperation) error {
+	if s.db == nil {
+		return errors.New("database connection unavailable")
+	}
+	rolesJSON, err := json.Marshal(op.CallerRoles)
+	if err != nil {
+		return err
+	}
+	var resultJSON []byte
+	if op.Result != nil {
+		resultJSON, err = json.Marshal(op.Result)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO export_operations (id, tenant_id, caller_id, caller_roles, status, result, error, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, op.ID, op.TenantID, op.CallerID, string(rolesJSON), string(op.Status), string(resultJSON), op.Error, op.CreatedAt, op.UpdatedAt)
+	return err
+}
+
+func (s *postgresExportOperationStore) Get(ctx context.Context, id string) (*ExportOperation, error) {
+	if s.db == nil {
+		return nil, errors.New("database connection unavailable")
+	}
+	var op ExportOperation
+	var callerRoles []byte
+	var resultJSON []byte
+	var status string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, caller_id, caller_roles, status, result, error, created_at, updated_at
+		FROM export_operations
+		WHERE id = $1
+	`, id).Scan(&op.ID, &op.TenantID, &op.CallerID, &callerRoles, &status, &resultJSON, &op.Error, &op.CreatedAt, &op.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	op.Status = ExportOperationStatus(status)
+	if len(callerRoles) > 0 {
+		if err := json.Unmarshal(callerRoles, &op.CallerRoles); err != nil {
+			return nil, err
+		}
+	}
+	if len(resultJSON) > 0 {
+		if err := json.Unmarshal(resultJSON, &op.Result); err != nil {
+			return nil, err
+		}
+	}
+	return &op, nil
+}
+
+func (s *postgresExportOperationStore) Update(ctx context.Context, op *ExportOperation) error {
+	if s.db == nil {
+		return errors.New("database connection unavailable")
+	}
+	rolesJSON, err := json.Marshal(op.CallerRoles)
+	if err != nil {
+		return err
+	}
+	var resultJSON []byte
+	if op.Result != nil {
+		resultJSON, err = json.Marshal(op.Result)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE export_operations
+		SET tenant_id = $2, caller_id = $3, caller_roles = $4, status = $5, result = $6, error = $7, updated_at = $8
+		WHERE id = $1
+	`, op.ID, op.TenantID, op.CallerID, string(rolesJSON), string(op.Status), string(resultJSON), op.Error, op.UpdatedAt)
+	return err
+}
+
+func (s *postgresExportOperationStore) DeleteExpired(ctx context.Context, before time.Time) error {
+	if s.db == nil {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM export_operations
+		WHERE created_at < $1 OR updated_at < $1
+	`, before)
+	return err
+}
+
 type ExportJobManager struct {
-	jobs    map[string]*ExportJob
-	pending chan *ExportJob
-	svc     TenantExportService
-	upload  s3.S3Uploader
-	auditor *audit.Logger
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	jobs       map[string]*ExportJob
+	pending    chan *ExportJob
+	svc        TenantExportService
+	upload     s3.S3Uploader
+	auditor    *audit.Logger
+	operations ExportOperationStore
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 func NewExportJobManager(svc TenantExportService, uploader s3.S3Uploader, auditor *audit.Logger) *ExportJobManager {
+	return NewExportJobManagerWithOperationStore(svc, uploader, auditor, NewInMemoryExportOperationStore(24*time.Hour))
+}
+
+func NewExportJobManagerWithOperationStore(svc TenantExportService, uploader s3.S3Uploader, auditor *audit.Logger, operations ExportOperationStore) *ExportJobManager {
 	ctx, cancel := context.WithCancel(context.Background())
+	if operations == nil {
+		operations = NewInMemoryExportOperationStore(24 * time.Hour)
+	}
 	m := &ExportJobManager{
-		jobs:    make(map[string]*ExportJob),
-		pending: make(chan *ExportJob, 100),
-		svc:     svc,
-		upload:  uploader,
-		auditor: auditor,
-		ctx:     ctx,
-		cancel:  cancel,
+		jobs:       make(map[string]*ExportJob),
+		pending:    make(chan *ExportJob, 100),
+		svc:        svc,
+		upload:     uploader,
+		auditor:    auditor,
+		operations: operations,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 	m.wg.Add(1)
 	go m.processLoop()
@@ -285,6 +477,19 @@ func (m *ExportJobManager) CreateJob(ctx context.Context, tenantID, callerID str
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
+	operation := &ExportOperation{
+		ID:          uuid.New().String(),
+		TenantID:    tenantID,
+		CallerID:    callerID,
+		CallerRoles: roles,
+		Status:      OperationPending,
+		CreatedAt:   job.CreatedAt,
+		UpdatedAt:   job.UpdatedAt,
+	}
+	if err := m.operations.Create(ctx, operation); err != nil {
+		return nil, err
+	}
+	job.OperationID = operation.ID
 	m.jobs[job.ID] = job
 
 	select {
@@ -308,6 +513,35 @@ func (m *ExportJobManager) GetJob(id string) (*ExportJob, error) {
 	return job, nil
 }
 
+func (m *ExportJobManager) CreateOperation(ctx context.Context, tenantID, callerID string, callerRoles []string) (*ExportOperation, error) {
+	before := time.Now().UTC().Add(-24 * time.Hour)
+	_ = m.operations.DeleteExpired(ctx, before)
+	if callerRoles == nil {
+		callerRoles = []string{}
+	}
+	roles := make([]string, len(callerRoles))
+	copy(roles, callerRoles)
+	operation := &ExportOperation{
+		ID:          uuid.New().String(),
+		TenantID:    tenantID,
+		CallerID:    callerID,
+		CallerRoles: roles,
+		Status:      OperationPending,
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+	if err := m.operations.Create(ctx, operation); err != nil {
+		return nil, err
+	}
+	return operation, nil
+}
+
+func (m *ExportJobManager) GetOperation(id string) (*ExportOperation, error) {
+	before := time.Now().UTC().Add(-24 * time.Hour)
+	_ = m.operations.DeleteExpired(context.Background(), before)
+	return m.operations.Get(context.Background(), id)
+}
+
 func (m *ExportJobManager) processLoop() {
 	defer m.wg.Done()
 	for {
@@ -323,6 +557,13 @@ func (m *ExportJobManager) processLoop() {
 func (m *ExportJobManager) processJob(job *ExportJob) {
 	job.Status = ExportJobRunning
 	job.UpdatedAt = time.Now().UTC()
+	if job.OperationID != "" {
+		if op, err := m.operations.Get(m.ctx, job.OperationID); err == nil {
+			op.Status = OperationRunning
+			op.UpdatedAt = job.UpdatedAt
+			_ = m.operations.Update(m.ctx, op)
+		}
+	}
 
 	roles := job.CallerRoles
 	if len(roles) == 0 {
@@ -335,12 +576,28 @@ func (m *ExportJobManager) processJob(job *ExportJob) {
 			job.Status = ExportJobFailed
 			job.Error = "export cancelled: " + err.Error()
 			job.UpdatedAt = time.Now().UTC()
+			if job.OperationID != "" {
+				if op, err := m.operations.Get(m.ctx, job.OperationID); err == nil {
+					op.Status = OperationFailed
+					op.Error = job.Error
+					op.UpdatedAt = job.UpdatedAt
+					_ = m.operations.Update(m.ctx, op)
+				}
+			}
 			return
 		}
 
 		job.Status = ExportJobFailed
 		job.Error = err.Error()
 		job.UpdatedAt = time.Now().UTC()
+		if job.OperationID != "" {
+			if op, err := m.operations.Get(m.ctx, job.OperationID); err == nil {
+				op.Status = OperationFailed
+				op.Error = job.Error
+				op.UpdatedAt = job.UpdatedAt
+				_ = m.operations.Update(m.ctx, op)
+			}
+		}
 
 		if m.auditor != nil {
 			ctx := audit.WithActor(m.ctx, job.CallerID)
@@ -350,8 +607,8 @@ func (m *ExportJobManager) processJob(job *ExportJob) {
 				Resource: fmt.Sprintf("tenant:%s", job.TenantID),
 				Outcome:  "failure",
 				Metadata: map[string]interface{}{
-					"job_id":  job.ID,
-					"reason":  err.Error(),
+					"job_id": job.ID,
+					"reason": err.Error(),
 				},
 			})
 		}
@@ -361,6 +618,14 @@ func (m *ExportJobManager) processJob(job *ExportJob) {
 	job.Status = ExportJobCompleted
 	job.Result = result
 	job.UpdatedAt = time.Now().UTC()
+	if job.OperationID != "" {
+		if op, err := m.operations.Get(m.ctx, job.OperationID); err == nil {
+			op.Status = OperationSucceeded
+			op.Result = result
+			op.UpdatedAt = job.UpdatedAt
+			_ = m.operations.Update(m.ctx, op)
+		}
+	}
 
 	if m.auditor != nil {
 		ctx := audit.WithActor(m.ctx, job.CallerID)

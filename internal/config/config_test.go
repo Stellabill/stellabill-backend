@@ -194,6 +194,36 @@ func TestLoadProviderErrorsAreClassified(t *testing.T) {
 	})
 }
 
+func TestLoadRejectsShutdownTimeoutOutOfRange(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		"ENV":                       "development",
+		"GRACEFUL_SHUTDOWN_TIMEOUT": "0",
+	}, func() {
+		_, err := Load(WithSecretsProvider(newValidProvider()))
+		if err == nil {
+			t.Fatal("expected invalid shutdown timeout error")
+		}
+		if !strings.Contains(err.Error(), "GRACEFUL_SHUTDOWN_TIMEOUT") {
+			t.Fatalf("expected GRACEFUL_SHUTDOWN_TIMEOUT in error, got: %v", err)
+		}
+	})
+}
+
+func TestLoadShutdownTimeoutDefault(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		"ENV": "development",
+	}, func() {
+		cfg, err := Load(WithSecretsProvider(newValidProvider()))
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if cfg.GracefulShutdownTimeout != DefaultGracefulShutdownTimeout {
+			t.Fatalf("expected default shutdown timeout %d, got %d",
+				DefaultGracefulShutdownTimeout, cfg.GracefulShutdownTimeout)
+		}
+	})
+}
+
 func TestIsValidSecretRequiresSpecialCharacter(t *testing.T) {
 	if isValidSecret("NoSpecialChars123") {
 		t.Fatal("expected secret without special char to fail")

@@ -28,6 +28,13 @@ func (r *memRepo) Store(event *Event) error {
 	return nil
 }
 
+func (r *memRepo) BulkInsert(ctx context.Context, events []*Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, events...)
+	return nil
+}
+
 func (r *memRepo) GetPendingEvents(limit int) ([]*Event, error) {
 	return r.GetPendingEventsForPublisher("", limit)
 }

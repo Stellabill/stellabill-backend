@@ -165,6 +165,10 @@ const (
 	DefaultDBPoolHealthCheckPeriod = 30   // 30 s proactive idle-conn check
 	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
 
+	// Graceful shutdown defaults — coordinate with k8s terminationGracePeriodSeconds.
+	DefaultGracefulShutdownTimeout = 30   // 30 s to drain in-flight requests and pool
+
+
 	// Validation bounds
 	MinDBPoolMaxConns = 1
 	MaxDBPoolMaxConns = 500
@@ -548,6 +552,20 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 
 	if svcName := os.Getenv("TRACING_SERVICE_NAME"); svcName != "" {
 		c.TracingServiceName = svcName
+	}
+
+	// Validate GRACEFUL_SHUTDOWN_TIMEOUT
+	if val := os.Getenv("GRACEFUL_SHUTDOWN_TIMEOUT"); val != "" {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
+			c.GracefulShutdownTimeout = timeout
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "GRACEFUL_SHUTDOWN_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
+		}
 	}
 
 	// Validate DB pool configuration

@@ -8,6 +8,9 @@ import (
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrConcurrentUpdate is returned when a row has been modified since last read.
+var ErrConcurrentUpdate = errors.New("concurrent update detected")
+
 // SubscriptionRepository is the read interface used by the service.
 type SubscriptionRepository interface {
 	FindByID(ctx context.Context, id string) (*SubscriptionRow, error)

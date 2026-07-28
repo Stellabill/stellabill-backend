@@ -39,13 +39,13 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 	cursorStr := c.Query("cursor")
 	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor format"})
+		RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, "invalid cursor format")
 		return
 	}
 
 	allSubs, err := h.Subscriptions.ListSubscriptions(c)
 	if err != nil {
-		RespondWithInternalError(c, "Failed to retrieve subscriptions")
+		RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "Failed to retrieve subscriptions")
 		return
 	}
 
@@ -63,7 +63,7 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 	id := c.Param("id")
 	sub, err := h.Subscriptions.GetSubscription(c, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		RenderProblem(c, http.StatusNotFound, ErrorCodeNotFound, "not found")
 		return
 	}
 	c.JSON(http.StatusOK, sub)

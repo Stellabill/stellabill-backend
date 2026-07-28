@@ -194,3 +194,104 @@ func TestIdentifierRule(t *testing.T) {
 		t.Fatal("expected identifier pattern to be set")
 	}
 }
+
+func TestParseFields(t *testing.T) {
+	allowed := []string{"id", "name", "status", "amount", "currency"}
+
+	t.Run("returns nil for empty string", func(t *testing.T) {
+		got, err := ParseFields("", allowed)
+		if err != nil {
+			t.Fatalf("ParseFields('') returned error: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("parses single field", func(t *testing.T) {
+		got, err := ParseFields("id", allowed)
+		if err != nil {
+			t.Fatalf("ParseFields('id') returned error: %v", err)
+		}
+		if len(got) != 1 || got[0] != "id" {
+			t.Fatalf("expected [id], got %v", got)
+		}
+	})
+
+	t.Run("parses multiple fields", func(t *testing.T) {
+		got, err := ParseFields("id,name,status", allowed)
+		if err != nil {
+			t.Fatalf("ParseFields returned error: %v", err)
+		}
+		expected := []string{"id", "name", "status"}
+		if len(got) != len(expected) {
+			t.Fatalf("expected %v, got %v", expected, got)
+		}
+		for i := range expected {
+			if got[i] != expected[i] {
+				t.Fatalf("got[%d] = %q, want %q", i, got[i], expected[i])
+			}
+		}
+	})
+
+	t.Run("trims whitespace", func(t *testing.T) {
+		got, err := ParseFields("  id , name ", allowed)
+		if err != nil {
+			t.Fatalf("ParseFields returned error: %v", err)
+		}
+		if len(got) != 2 || got[0] != "id" || got[1] != "name" {
+			t.Fatalf("expected [id name], got %v", got)
+		}
+	})
+
+	t.Run("deduplicates fields", func(t *testing.T) {
+		got, err := ParseFields("id,name,id,status", allowed)
+		if err != nil {
+			t.Fatalf("ParseFields returned error: %v", err)
+		}
+		expected := []string{"id", "name", "status"}
+		if len(got) != len(expected) {
+			t.Fatalf("expected %v, got %v", expected, got)
+		}
+	})
+
+	t.Run("rejects unknown field", func(t *testing.T) {
+		_, err := ParseFields("id,secret", allowed)
+		if err == nil {
+			t.Fatal("expected error for unknown field")
+		}
+		if !strings.Contains(err.Error(), "unknown or forbidden") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("rejects all empty after trimming", func(t *testing.T) {
+		_, err := ParseFields("  ,, ", allowed)
+		if err == nil {
+			t.Fatal("expected error for empty fields")
+		}
+		if !strings.Contains(err.Error(), "at least one") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("rejects invalid field name characters", func(t *testing.T) {
+		_, err := ParseFields("id,<script>", allowed)
+		if err == nil {
+			t.Fatal("expected error for invalid characters")
+		}
+		if !strings.Contains(err.Error(), "not a valid field name") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("all fields allowed", func(t *testing.T) {
+		got, err := ParseFields("id,name,status,amount,currency", allowed)
+		if err != nil {
+			t.Fatalf("ParseFields returned error: %v", err)
+		}
+		if len(got) != 5 {
+			t.Fatalf("expected 5 fields, got %d: %v", len(got), got)
+		}
+	})
+}

@@ -21,7 +21,7 @@ func newMemRepo() *memRepo {
 	return &memRepo{progress: make(map[string]uuid.UUID)}
 }
 
-func (r *memRepo) Store(event *Event) error {
+func (r *memRepo) Store(context.Background(), event *Event) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
@@ -104,7 +104,7 @@ func TestPerPublisherDrain(t *testing.T) {
 	repo := newMemRepo()
 	// create one event
 	e := &Event{ID: uuid.New(), EventType: "test", EventData: []byte(`{"type":"test"}`), OccurredAt: time.Now()}
-	repo.Store(e)
+	repo.Store(context.Background(), e)
 
 	mp := NewMultiPublisher(NewConsolePublisher(), &succeedPublisher{})
 	// replace internal publishers for deterministic names: publisher-0 will be console, publisher-1 succeed
@@ -141,7 +141,7 @@ func TestFailureIsolationAndRecovery(t *testing.T) {
 	repo := newMemRepo()
 	// create one event
 	e := &Event{ID: uuid.New(), EventType: "test", EventData: []byte(`{"type":"test"}`), OccurredAt: time.Now()}
-	repo.Store(e)
+	repo.Store(context.Background(), e)
 
 	mp := NewMultiPublisher(&failPublisher{}, &succeedPublisher{})
 

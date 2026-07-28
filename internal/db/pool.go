@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/middleware"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -53,9 +55,27 @@ func NewPoolConfig(cfg config.Config) (*pgxpool.Config, error) {
 	// ConnectTimeout bounds each individual dial attempt against the database.
 	if poolCfg.ConnConfig != nil {
 		poolCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DBPoolConnectTimeout) * time.Second
+		poolCfg.ConnConfig.Tracer = &timingTracer{}
 	}
 
 	return poolCfg, nil
+}
+
+type queryStartTimeKey struct{}
+
+type timingTracer struct{}
+
+func (t *timingTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	return context.WithValue(ctx, queryStartTimeKey{}, time.Now())
+}
+
+func (t *timingTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryEndData) {
+	startVal := ctx.Value(queryStartTimeKey{})
+	if start, ok := startVal.(time.Time); ok {
+		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+			rec.RecordDB(time.Since(start))
+		}
+	}
 }
 
 // NewPool constructs a pgx connection pool from cfg, applying the DBPool*

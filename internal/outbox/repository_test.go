@@ -110,7 +110,7 @@ func TestPostgresRepository_Store(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMock()
 
-			err := repo.Store(tt.event)
+			err := repo.Store(context.Background(), tt.event)
 
 			if tt.expectedError != "" {
 				assert.Error(t, err)

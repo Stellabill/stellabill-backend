@@ -178,7 +178,7 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 	defer tx.Rollback()
 
 	// Store the event
-	if err := s.repository.Store(event); err != nil {
+	if err := s.repository.Store(ctx, event); err != nil {
 		return fmt.Errorf("failed to store event in transaction: %w", err)
 	}
 
@@ -191,13 +191,13 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 }
 
 // PublishEventWithTx publishes an event within an existing transaction
-func (s *Service) PublishEventWithTx(tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
+func (s *Service) PublishEventWithTx(ctx context.Context, tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
 	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
 
-	if err := s.repository.Store(event); err != nil {
+	if err := s.repository.Store(ctx, event); err != nil {
 		return nil, fmt.Errorf("failed to store event: %w", err)
 	}
 

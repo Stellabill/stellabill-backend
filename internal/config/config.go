@@ -119,6 +119,11 @@ type Config struct {
 	PgBouncerPort           int
 	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
 	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+
+	// GracefulShutdownTimeout controls the maximum time (in seconds) the server
+	// waits for in-flight requests and connection pools to drain before forcing
+	// shutdown.  Defaults to DefaultGracefulShutdownTimeout (30s).
+	GracefulShutdownTimeout int
 }
 
 // ValidationResult holds the result of configuration validation
@@ -264,6 +269,7 @@ func Load(opts ...Option) (Config, error) {
 		PgBouncerPort:            DefaultPgBouncerPort,
 		DBStatementCacheMode:     DefaultDBStatementCacheMode,
 		PgBouncerIdleInTxTimeout: DefaultPgBouncerIdleInTxTimeout,
+		GracefulShutdownTimeout:  DefaultGracefulShutdownTimeout,
 	}
 
 	// Resolve secrets through the provider

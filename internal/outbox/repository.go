@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"stellarbill-backend/internal/db"
+	"strings"
 	"time"
+
+	"stellarbill-backend/internal/db"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -37,8 +40,9 @@ func (r *postgresRepository) Store(event *Event) error {
 		INSERT INTO outbox_events (
 			id, event_type, event_data, aggregate_id, aggregate_type,
 			occurred_at, status, retry_count, max_retries, next_retry_at,
-			error_message, created_at, updated_at, version, deduplication_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			error_message, created_at, updated_at, version, deduplication_id,
+			tenant_id, partition
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`
 
 	_, err := r.db.Exec(query,
@@ -57,6 +61,8 @@ func (r *postgresRepository) Store(event *Event) error {
 		event.UpdatedAt,
 		event.Version,
 		event.DeduplicationID,
+		event.TenantID,
+		event.Partition,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to store outbox event: %w", err)
@@ -70,7 +76,8 @@ func (r *postgresRepository) GetPendingEvents(limit int) ([]*Event, error) {
 	query := `
 		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
+			   error_message, created_at, updated_at, version, deduplication_id,
+			   tenant_id, partition
 		FROM outbox_events
 		WHERE status = $1 OR (status = $2 AND next_retry_at <= $3)
 		ORDER BY occurred_at ASC
@@ -104,7 +111,8 @@ func (r *postgresRepository) GetByID(id uuid.UUID) (*Event, error) {
 	query := `
 		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
+			   error_message, created_at, updated_at, version, deduplication_id,
+			   tenant_id, partition
 		FROM outbox_events
 		WHERE id = $1
 	`
@@ -226,7 +234,8 @@ func (r *postgresRepository) GetPendingEventsForPublisher(publisher string, limi
 	query := `
 		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
+			   error_message, created_at, updated_at, version, deduplication_id,
+			   tenant_id, partition
 		FROM outbox_events e
 		LEFT JOIN outbox_publisher_progress p ON p.publisher = $1
 		WHERE (e.status = $2 OR (e.status = $3 AND e.next_retry_at <= $4))
@@ -348,12 +357,65 @@ func publisherProgressReached(ctx context.Context, exec sqlProgressExecutor, eve
 	return true, nil
 }
 
+// GetPendingEventsForShards returns pending events that belong to any of the
+// given shard (partition) numbers. This is used by the sharded dispatcher to
+// process only events in partitions owned by this instance.
+func (r *postgresRepository) GetPendingEventsForShards(shards []int, limit int) ([]*Event, error) {
+	if len(shards) == 0 {
+		return r.GetPendingEvents(limit)
+	}
+
+	placeholders := make([]string, len(shards))
+	args := make([]interface{}, len(shards))
+	for i, shard := range shards {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = shard
+	}
+
+	n := len(shards)
+	query := fmt.Sprintf(`
+		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			   occurred_at, status, retry_count, max_retries, next_retry_at,
+			   error_message, created_at, updated_at, version, deduplication_id,
+			   tenant_id, partition
+		FROM outbox_events
+		WHERE partition IN (%s)
+		  AND (status = $%d OR (status = $%d AND next_retry_at <= $%d))
+		ORDER BY occurred_at ASC
+		LIMIT $%d
+	`, strings.Join(placeholders, ","), n+1, n+2, n+3, n+4)
+
+	args = append(args, StatusPending, StatusFailed, time.Now(), limit)
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending events for shards: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*Event
+	for rows.Next() {
+		event, err := r.scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating pending events for shards: %w", err)
+	}
+
+	return events, nil
+}
+
 // ListDeadLetteredEvents retrieves dead-lettered (failed) events
 func (r *postgresRepository) ListDeadLetteredEvents(limit int) ([]*Event, error) {
 	query := `
 		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
+			   error_message, created_at, updated_at, version, deduplication_id,
+			   tenant_id, partition
 		FROM dead_letter_events
 		LIMIT $1
 	`
@@ -408,7 +470,7 @@ func (r *postgresRepository) RequeueEvent(id uuid.UUID) error {
 // scanEvent scans a database row into an Event struct
 func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) error }) (*Event, error) {
 	var event Event
-	var aggregateID, aggregateType, errorMessage, deduplicationID sql.NullString
+	var aggregateID, aggregateType, errorMessage, deduplicationID, tenantID sql.NullString
 	var nextRetryAt sql.NullTime
 
 	err := scanner.Scan(
@@ -427,6 +489,8 @@ func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) e
 		&event.UpdatedAt,
 		&event.Version,
 		&deduplicationID,
+		&tenantID,
+		&event.Partition,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan event: %w", err)
@@ -450,6 +514,10 @@ func (r *postgresRepository) scanEvent(scanner interface{ Scan(...interface{}) e
 
 	if errorMessage.Valid {
 		event.ErrorMessage = &errorMessage.String
+	}
+
+	if tenantID.Valid {
+		event.TenantID = &tenantID.String
 	}
 
 	return &event, nil

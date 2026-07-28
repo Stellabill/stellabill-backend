@@ -19,6 +19,7 @@ type Service struct {
 	dispatcher Dispatcher
 	db         *sql.DB
 	jwe        *JWEConfig
+	ring       *ConsistentHashRing
 }
 
 // JWEConfig holds optional JWE encryption settings for sensitive events.
@@ -74,21 +75,41 @@ func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 		publisher = NewJWEPublisher(publisher, config.JWE.Keys, encryptor, sensitive)
 	}
 
-	dispatcher := NewDispatcher(repo, publisher, config.DispatcherConfig)
+	// Create dispatcher: use sharded dispatcher when shard config is set.
+	var dispatcher Dispatcher
+	var ring *ConsistentHashRing
+	if config.DispatcherConfig.ShardCount > 0 {
+		d, err := NewShardedDispatcher(repo, publisher, db, config.DispatcherConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create sharded dispatcher: %w", err)
+		}
+		dispatcher = d
+		ring = NewConsistentHashRing(config.DispatcherConfig.ShardCount, 150)
+	} else {
+		dispatcher = NewDispatcher(repo, publisher, config.DispatcherConfig)
+	}
 
 	return &Service{
 		repository: repo,
 		dispatcher: dispatcher,
 		db:         db,
 		jwe:        config.JWE,
+		ring:       ring,
 	}, nil
 }
 
 // PublishEvent publishes an event using the outbox pattern
 func (s *Service) PublishEvent(ctx context.Context, eventType string, data interface{}, aggregateID, aggregateType *string) error {
-	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
+	tenantID := extractTenantID(ctx)
+
+	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil, tenantID)
 	if err != nil {
 		return fmt.Errorf("failed to create event: %w", err)
+	}
+
+	// Compute partition from tenant_id using the consistent hash ring.
+	if s.ring != nil && event.TenantID != nil {
+		event.Partition = s.ring.GetPartition(*event.TenantID)
 	}
 
 	if err := s.storeEventInTransaction(ctx, event); err != nil {
@@ -99,7 +120,7 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 	return nil
 }
 
-func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, aggregateType *string, deduplicationID *string) (*Event, error) {
+func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, aggregateType *string, deduplicationID *string, tenantID *string) (*Event, error) {
 	subscriberID := ""
 	if aggregateType != nil && aggregateID != nil && *aggregateType == "subscriber" {
 		subscriberID = *aggregateID
@@ -126,6 +147,9 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 		eventData, err = PrepareEncryptedEventData(eventType, data, subscriberID, s.jwe.Keys, encryptor, sensitive)
 	} else {
 		event, createErr := NewEventWithDeduplication(eventType, data, aggregateID, aggregateType, deduplicationID)
+		if event != nil {
+			event.TenantID = tenantID
+		}
 		return event, createErr
 	}
 	if err != nil {
@@ -144,6 +168,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 				UpdatedAt:       time.Now(),
 				Version:         1,
 				DeduplicationID: deduplicationID,
+				TenantID:        tenantID,
 			}
 			errMsg := err.Error()
 			event.ErrorMessage = &errMsg
@@ -166,6 +191,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 		UpdatedAt:       time.Now(),
 		Version:         1,
 		DeduplicationID: deduplicationID,
+		TenantID:        tenantID,
 	}, nil
 }
 
@@ -192,7 +218,7 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 
 // PublishEventWithTx publishes an event within an existing transaction
 func (s *Service) PublishEventWithTx(tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
-	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
+	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
@@ -342,4 +368,18 @@ func mustMarshalEventData(eventType string, data interface{}) json.RawMessage {
 		return raw
 	}
 	return envelope.EventData
+}
+
+// extractTenantID pulls the tenant_id value from the context. The middleware
+// layer is expected to store it under the "tenant_id" key.
+func extractTenantID(ctx context.Context) *string {
+	if ctx == nil {
+		return nil
+	}
+	if v := ctx.Value("tenant_id"); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			return &s
+		}
+	}
+	return nil
 }

@@ -2,10 +2,20 @@ name: CI
 
 on:
   push:
+    branches: [main, master, develop]
   pull_request:
+    branches: [main, master, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  lint:
+    name: Lint & Formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,14 +27,65 @@ jobs:
         run: |
           go install mvdan.cc/gofumpt@latest
           test -z "$(gofumpt -l .)"
-      - name: Unit + contract tests
-        run: go test ./...
       - name: OpenAPI validation
         run: go run ./cmd/openapi-validate
       - name: Migration Safety Validation
         run: go run ./cmd/validate-migrations
       - name: ADR lint (unique numbers + index)
         run: make docs-lint
+
+  test:
+    name: Test (Go ${{ matrix.go }}, PG ${{ matrix.postgres }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.22', '1.23']
+        postgres: ['15', '16', '17']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+      - name: Run tests (JUnit XML)
+        run: |
+          gotestsum --junitfile test-results.xml --format standard-verbose -- ./...
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/test?sslmode=disable
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-go${{ matrix.go }}-pg${{ matrix.postgres }}
+          path: test-results.xml
+
+  coverage:
+    name: Coverage (>= 95%)
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Coverage (>= 95% for non-cmd packages)
         shell: bash
         run: |
@@ -54,7 +115,7 @@ jobs:
       - name: Run baseline benchmarks
         run: |
           go test ./internal/handlers/... -bench=. -benchmem -benchtime=1s -count=1 | tee baseline.txt
-      
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
@@ -62,17 +123,17 @@ jobs:
       - name: Run current benchmarks
         run: |
           go test ./internal/handlers/... -bench=. -benchmem -benchtime=1s -count=1 | tee current.txt
-      
+
       - name: Install benchstat
         run: go install golang.org/x/perf/cmd/benchstat@latest
-      
+
       - name: Compare benchmarks
         run: |
           echo "## Benchmark Comparison" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           benchstat baseline.txt current.txt | tee -a $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-      
+
       - name: Check for regressions
         run: |
           REGRESSION_PCT=20

@@ -3,11 +3,13 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTenantRateLimiter_Allow(t *testing.T) {
@@ -365,4 +367,181 @@ func TestTenantRateLimiter_Refill(t *testing.T) {
 	if !limiter.Allow(tenantID) {
 		t.Error("should allow request after refill")
 	}
+}
+
+func TestTenantRateLimitHeaders_UnixSecondsFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	config := TenantRateLimitConfig{
+		Enabled: true,
+		RPS:     5,
+		Burst:   10,
+	}
+	middleware := TenantRateLimitMiddleware(config)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("tenantID", "test-tenant")
+		c.Next()
+	})
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Verify Reset header is in unix-seconds format
+	resetStr := w.Header().Get("X-RateLimit-Reset")
+	assert.NotEmpty(t, resetStr)
+
+	resetUnix, err := strconv.ParseInt(resetStr, 10, 64)
+	assert.NoError(t, err, "Reset should be unix-seconds (integer)")
+
+	// Verify it's a reasonable timestamp (current time + future)
+	now := time.Now().Unix()
+	assert.Greater(t, resetUnix, now, "Reset should be in the future")
+	assert.Less(t, resetUnix, now+3600, "Reset should be within a reasonable timeframe")
+}
+
+func TestTenantRateLimitHeaders_RetryAfterCalculation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	config := TenantRateLimitConfig{
+		Enabled: true,
+		RPS:     2,
+		Burst:   2,
+	}
+	middleware := TenantRateLimitMiddleware(config)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("tenantID", "test-tenant")
+		c.Next()
+	})
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	// Exhaust the rate limit
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("GET", "/test", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	// Next request should be rate limited with Retry-After
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+
+	retryAfterStr := w.Header().Get("Retry-After")
+	assert.NotEmpty(t, retryAfterStr, "Retry-After should be present on 429")
+
+	retryAfter, err := strconv.Atoi(retryAfterStr)
+	assert.NoError(t, err, "Retry-After should be an integer")
+	assert.GreaterOrEqual(t, retryAfter, 1, "Retry-After should be at least 1 second")
+	assert.LessOrEqual(t, retryAfter, 60, "Retry-After should be reasonable")
+}
+
+func TestTenantRateLimitHeaders_NoNegativeValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	config := TenantRateLimitConfig{
+		Enabled: true,
+		RPS:     1,
+		Burst:   1,
+	}
+	middleware := TenantRateLimitMiddleware(config)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("tenantID", "test-tenant")
+		c.Next()
+	})
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	// Test successful response headers
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	limitStr := w.Header().Get("X-RateLimit-Limit")
+	remainingStr := w.Header().Get("X-RateLimit-Remaining")
+
+	limit, _ := strconv.ParseInt(limitStr, 10, 64)
+	remaining, _ := strconv.ParseInt(remainingStr, 10, 64)
+
+	assert.GreaterOrEqual(t, limit, int64(0), "Limit should never be negative")
+	assert.GreaterOrEqual(t, remaining, int64(0), "Remaining should never be negative")
+
+	// Test rate-limited response headers
+	req2 := httptest.NewRequest("GET", "/test", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	limitStr2 := w2.Header().Get("X-RateLimit-Limit")
+	remainingStr2 := w2.Header().Get("X-RateLimit-Remaining")
+
+	limit2, _ := strconv.ParseInt(limitStr2, 10, 64)
+	remaining2, _ := strconv.ParseInt(remainingStr2, 10, 64)
+
+	assert.GreaterOrEqual(t, limit2, int64(0), "Limit should never be negative on 429")
+	assert.GreaterOrEqual(t, remaining2, int64(0), "Remaining should never be negative on 429")
+}
+
+func TestTenantRateLimitHeaders_SuccessfulResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	config := TenantRateLimitConfig{
+		Enabled: true,
+		RPS:     5,
+		Burst:   10,
+	}
+	middleware := TenantRateLimitMiddleware(config)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("tenantID", "test-tenant")
+		c.Next()
+	})
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Verify all headers are present
+	assert.NotEmpty(t, w.Header().Get("X-RateLimit-Limit"))
+	assert.NotEmpty(t, w.Header().Get("X-RateLimit-Remaining"))
+	assert.NotEmpty(t, w.Header().Get("X-RateLimit-Reset"))
+	assert.Empty(t, w.Header().Get("Retry-After"), "Retry-After should not be present on successful requests")
+
+	// Verify values are reasonable
+	limit, _ := strconv.ParseInt(w.Header().Get("X-RateLimit-Limit"), 10, 64)
+	remaining, _ := strconv.ParseInt(w.Header().Get("X-RateLimit-Remaining"), 10, 64)
+
+	assert.Equal(t, int64(10), limit, "Limit should match burst size")
+	assert.GreaterOrEqual(t, remaining, int64(0), "Remaining should be non-negative")
+	assert.LessOrEqual(t, remaining, limit, "Remaining should not exceed limit")
+}
+
+func TestTenantRateLimiter_GetRateLimitSnapshot(t *testing.T) {
+	limiter := NewTenantRateLimiter(5, 10)
+	defer limiter.Stop()
+
+	snapshot := limiter.getRateLimitSnapshot("test-tenant")
+
+	assert.Greater(t, snapshot.Limit, int64(0), "Limit should be positive")
+	assert.GreaterOrEqual(t, snapshot.Remaining, int64(0), "Remaining should be non-negative")
+	assert.LessOrEqual(t, snapshot.Remaining, snapshot.Limit, "Remaining should not exceed limit")
+	assert.True(t, snapshot.Reset.After(time.Now()), "Reset should be in the future")
 }

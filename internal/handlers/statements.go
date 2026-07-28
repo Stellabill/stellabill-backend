@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 )
 
@@ -32,6 +35,7 @@ const maxLimit = 200
 //	subscription_id – filter by subscription UUID
 //	kind            – filter by statement kind (e.g. "invoice", "credit_note")
 //	status          – filter by lifecycle status (e.g. "open", "paid")
+//	filter          – RSQL/FIQL-style allowlisted predicate, e.g. "amount=gt=100;status=in=(open,paid)"
 //	start_after     – RFC3339 lower bound for statement date (exclusive)
 //	end_before      – RFC3339 upper bound for statement date (exclusive)
 //	limit           – page size, 1–200 (default 20)
@@ -68,6 +72,10 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
+		}
+		if q.Filter != nil {
+			span := trace.SpanFromContext(c.Request.Context())
+			span.SetAttributes(attribute.String("statements.filter.fingerprint", q.Filter.Fingerprint()))
 		}
 
 		result, total, _, err := svc.ListByCustomer(
@@ -195,6 +203,13 @@ func buildStatementQuery(c *gin.Context) (repository.StatementQuery, error) {
 	}
 	if v := c.Query("status"); v != "" {
 		q.Status = v
+	}
+	if v := c.Query("filter"); v != "" {
+		filter, err := requestparams.ParseRSQL(v)
+		if err != nil {
+			return q, err
+		}
+		q.Filter = filter
 	}
 
 	if v := c.Query("start_after"); v != "" {

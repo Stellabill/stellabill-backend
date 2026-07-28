@@ -1,16 +1,19 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/service"
 )
+
 // SSE for Issue #357: Server-Sent Events for live subscription status
 // - Fan-out hub + heartbeats every 15s
 // - Graceful shutdown on context done
@@ -65,6 +68,121 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, sub)
+}
+
+// NewBatchSubscriptionsHandler processes a batch of subscription status updates.
+func NewBatchSubscriptionsHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if svc == nil {
+			RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service is unavailable")
+			return
+		}
+
+		var req struct {
+			Operations []service.BatchSubscriptionOperation `json:"operations"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, "Invalid JSON body")
+			return
+		}
+
+		if len(req.Operations) == 0 {
+			RespondWithValidationError(c, "operations must not be empty", nil)
+			return
+		}
+		if len(req.Operations) > 100 {
+			RespondWithValidationError(c, "batch size exceeds maximum of 100 operations", nil)
+			return
+		}
+
+		tenantID, _ := c.Get("tenantID")
+		callerID, _ := c.Get("callerID")
+		tenantIDStr, _ := tenantID.(string)
+		callerIDStr, _ := callerID.(string)
+
+		results, err := svc.BatchChangeStatus(c.Request.Context(), tenantIDStr, callerIDStr, req.Operations)
+		if err != nil {
+			RespondWithInternalError(c, "Failed to process batch subscription operations")
+			return
+		}
+
+		successCount := 0
+		failureCount := 0
+		for _, result := range results {
+			if result.Success {
+				successCount++
+			} else {
+				failureCount++
+			}
+		}
+
+		statusCode := http.StatusOK
+		if failureCount > 0 {
+			if successCount > 0 {
+				statusCode = http.StatusMultiStatus
+			} else {
+				statusCode = http.StatusUnprocessableEntity
+			}
+		}
+
+		c.JSON(statusCode, gin.H{
+			"api_version": "v1",
+			"data": gin.H{
+				"results": results,
+				"summary": gin.H{"success": successCount, "failed": failureCount},
+			},
+		})
+	}
+}
+
+// NewChangeSubscriptionStatusHandler updates a single subscription status.
+func NewChangeSubscriptionStatusHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if svc == nil {
+			RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service is unavailable")
+			return
+		}
+
+		var req struct {
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, "Invalid JSON body")
+			return
+		}
+
+		status := strings.TrimSpace(req.Status)
+		if status == "" {
+			RespondWithValidationError(c, "status is required", nil)
+			return
+		}
+
+		tenantID, _ := c.Get("tenantID")
+		callerID, _ := c.Get("callerID")
+		tenantIDStr, _ := tenantID.(string)
+		callerIDStr, _ := callerID.(string)
+
+		change, err := svc.ChangeStatus(c.Request.Context(), tenantIDStr, callerIDStr, c.Param("id"), status)
+		if err != nil {
+			switch {
+			case err == service.ErrNotFound:
+				RespondWithError(c, http.StatusNotFound, ErrorCodeNotFound, "subscription not found")
+			case err == service.ErrDeleted:
+				RespondWithError(c, http.StatusGone, ErrorCodeNotFound, "subscription has been deleted")
+			case err == service.ErrForbidden:
+				RespondWithError(c, http.StatusForbidden, ErrorCodeForbidden, "you do not have permission to access this resource")
+			case err == service.ErrInvalidStatus:
+				RespondWithValidationError(c, err.Error(), nil)
+			case err == service.ErrInvalidTransition || err == service.ErrUnknownCurrentState:
+				RespondWithError(c, http.StatusConflict, ErrorCodeConflict, err.Error())
+			default:
+				RespondWithInternalError(c, "Failed to update subscription status")
+			}
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"api_version": "v1", "data": change})
+	}
 }
 
 // NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full

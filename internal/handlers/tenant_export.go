@@ -11,6 +11,19 @@ import (
 	"stellarbill-backend/internal/service"
 )
 
+func getRequiredStringContextValue(c *gin.Context, key, msg string) (string, bool) {
+	value, exists := c.Get(key)
+	if !exists {
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, msg)
+		return "", false
+	}
+	if str, ok := value.(string); ok && str != "" {
+		return str, true
+	}
+	RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, msg)
+	return "", false
+}
+
 // ExportJobManager defines the interface for creating and querying export jobs.
 // The handler depends on this interface rather than a concrete type, making it
 // straightforward to test and swap implementations.
@@ -26,10 +39,25 @@ type createExportResponse struct {
 }
 
 type exportStatusResponse struct {
-	JobID  string                   `json:"job_id"`
-	Status service.ExportJobStatus  `json:"status"`
+	JobID  string                      `json:"job_id"`
+	Status service.ExportJobStatus     `json:"status"`
 	Result *service.TenantExportResult `json:"result,omitempty"`
-	Error  string                   `json:"error,omitempty"`
+	Error  string                      `json:"error,omitempty"`
+}
+
+// getRequiredStringContextValue extracts a required string from the gin context.
+func getRequiredStringContextValue(c *gin.Context, key string, msg string) (string, bool) {
+	val, exists := c.Get(key)
+	if !exists {
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, msg)
+		return "", false
+	}
+	s, ok := val.(string)
+	if !ok {
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, msg)
+		return "", false
+	}
+	return s, true
 }
 
 // NewTenantExportHandler returns a gin.HandlerFunc for POST /api/v1/tenants/me/export.

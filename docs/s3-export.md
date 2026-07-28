@@ -1,5 +1,8 @@
 # S3 Statement Export
 
+> [!TIP]
+> For real-time, synchronous CSV streaming without an intermediate asynchronous S3 export job, use `GET /api/v1/statements` with the `Accept: text/csv` header. See [STATEMENT_CSV_STREAMING.md](file:///c:/Users/PC/Desktop/drips/stellabill-backend/docs/STATEMENT_CSV_STREAMING.md) for details.
+
 ## Endpoint
 
 ```

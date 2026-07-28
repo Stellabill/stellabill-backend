@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -132,6 +133,9 @@ func (stubSubSvc) ListSubscriptions(c *gin.Context) ([]Subscription, error) {
 }
 func (stubSubSvc) GetSubscription(c *gin.Context, id string) (*Subscription, error) {
 	return &Subscription{ID: id}, nil
+}
+func (stubSubSvc) BatchChangeStatus(ctx context.Context, tenantID string, actorID string, operations []service.BatchSubscriptionOperation) ([]service.BatchSubscriptionResult, error) {
+	return nil, nil
 }
 
 func TestCoverage_HandlerListAndGetSubscriptions(t *testing.T) {

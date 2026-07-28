@@ -369,8 +369,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	{
 		v1.GET("/subscriptions", auth.RequirePermission(auth.PermReadSubscriptions), h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", auth.RequirePermission(auth.PermReadSubscriptions), h.GetSubscription)
+		v1.PATCH("/subscriptions/:id", auth.RequirePermission(auth.PermManageSubscriptions), h.PatchSubscription)
+		v1.DELETE("/subscriptions/:id", auth.RequirePermission(auth.PermManageSubscriptions), h.DeleteSubscription)
 		v1.POST("/subscriptions/:id/status", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewChangeSubscriptionStatusHandler(svc))
 		v1.GET("/plans", auth.RequirePermission(auth.PermReadPlans), h.ListPlans)
+		v1.PATCH("/plans/:id", auth.RequirePermission(auth.PermManageSubscriptions), h.PatchPlan)
+		v1.DELETE("/plans/:id", auth.RequirePermission(auth.PermManageSubscriptions), h.DeletePlan)
 		v1.GET("/statements/:id", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewListStatementsHandler(stmtSvc))
 	}
@@ -385,6 +389,16 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 			auth.RequirePermission(auth.PermReadPlans),
 			h.ListPlans,
 		)
+		apiProtected.PATCH("/plans/:id",
+			dep,
+			auth.RequirePermission(auth.PermManageSubscriptions),
+			h.PatchPlan,
+		)
+		apiProtected.DELETE("/plans/:id",
+			dep,
+			auth.RequirePermission(auth.PermManageSubscriptions),
+			h.DeletePlan,
+		)
 
 		apiProtected.GET("/subscriptions",
 			dep,
@@ -396,6 +410,16 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			h.GetSubscription,
+		)
+		apiProtected.PATCH("/subscriptions/:id",
+			dep,
+			auth.RequirePermission(auth.PermManageSubscriptions),
+			h.PatchSubscription,
+		)
+		apiProtected.DELETE("/subscriptions/:id",
+			dep,
+			auth.RequirePermission(auth.PermManageSubscriptions),
+			h.DeleteSubscription,
 		)
 		apiProtected.POST("/subscriptions/:id/status",
 			dep,
@@ -484,6 +508,9 @@ func (m *mockHandlerSubSvc) ListSubscriptions(_ *gin.Context) ([]handlers.Subscr
 			Amount:      r.Amount,
 			Interval:    r.Interval,
 			NextBilling: r.NextBilling,
+			UpdatedAt:   r.UpdatedAt,
+			Version:     r.Version,
+			ETag:        handlers.GenerateETag(r.UpdatedAt, r.Version),
 		})
 	}
 	return out, nil
@@ -502,7 +529,26 @@ func (m *mockHandlerSubSvc) GetSubscription(_ *gin.Context, id string) (*handler
 		Amount:      r.Amount,
 		Interval:    r.Interval,
 		NextBilling: r.NextBilling,
+		UpdatedAt:   r.UpdatedAt,
+		Version:     r.Version,
+		ETag:        handlers.GenerateETag(r.UpdatedAt, r.Version),
 	}, nil
+}
+
+func (m *mockHandlerSubSvc) PatchSubscription(c *gin.Context, id string, sub *handlers.Subscription, expectedVersion int64) error {
+	repoSub := &repository.SubscriptionRow{
+		ID:          id,
+		PlanID:      sub.PlanID,
+		Status:      sub.Status,
+		Amount:      sub.Amount,
+		Interval:    sub.Interval,
+		NextBilling: sub.NextBilling,
+	}
+	return m.repo.Update(c.Request.Context(), repoSub, expectedVersion)
+}
+
+func (m *mockHandlerSubSvc) DeleteSubscription(c *gin.Context, id string, expectedVersion int64) error {
+	return m.repo.Delete(c.Request.Context(), id, "", expectedVersion)
 }
 
 // mockHandlerPlanSvc adapts a PlanRepository to handlers.PlanService.
@@ -524,7 +570,23 @@ func (m *mockHandlerPlanSvc) ListPlans(_ *gin.Context) ([]handlers.Plan, error) 
 			Currency:    r.Currency,
 			Interval:    r.Interval,
 			Description: r.Description,
+			UpdatedAt:   r.UpdatedAt,
+			Version:     r.Version,
+			ETag:        handlers.GenerateETag(r.UpdatedAt, r.Version),
 		})
 	}
 	return out, nil
+}
+
+func (m *mockHandlerPlanSvc) PatchPlan(c *gin.Context, id string, plan *handlers.Plan, expectedVersion int64) error {
+	repoPlan := &repository.PlanRow{
+		ID:          id,
+		Name:        plan.Name,
+		Description: plan.Description,
+	}
+	return m.repo.Update(c.Request.Context(), repoPlan, expectedVersion)
+}
+
+func (m *mockHandlerPlanSvc) DeletePlan(c *gin.Context, id string, expectedVersion int64) error {
+	return m.repo.Delete(c.Request.Context(), id, expectedVersion)
 }

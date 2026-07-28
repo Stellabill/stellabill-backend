@@ -46,6 +46,14 @@ func (m *MockSubscriptionRepo) ListByTenant(_ context.Context, tenantID string) 
 	return result, nil
 }
 
+func (m *MockSubscriptionRepo) All() []*SubscriptionRow {
+	var result []*SubscriptionRow
+	for _, r := range m.records {
+		result = append(result, r)
+	}
+	return result
+}
+
 func (m *MockSubscriptionRepo) UpdateStatus(_ context.Context, id string, tenantID string, status string) error {
 	row, ok := m.records[id]
 	if !ok {
@@ -55,6 +63,37 @@ func (m *MockSubscriptionRepo) UpdateStatus(_ context.Context, id string, tenant
 		return ErrNotFound
 	}
 	row.Status = status
+	return nil
+}
+
+func (m *MockSubscriptionRepo) Update(_ context.Context, sub *SubscriptionRow, expectedVersion int64) error {
+	row, ok := m.records[sub.ID]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.TenantID != sub.TenantID {
+		return ErrNotFound
+	}
+	if row.Version != expectedVersion {
+		return ErrConcurrentUpdate
+	}
+	sub.Version++
+	m.records[sub.ID] = sub
+	return nil
+}
+
+func (m *MockSubscriptionRepo) Delete(_ context.Context, id string, tenantID string, expectedVersion int64) error {
+	row, ok := m.records[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.TenantID != tenantID {
+		return ErrNotFound
+	}
+	if row.Version != expectedVersion {
+		return ErrConcurrentUpdate
+	}
+	delete(m.records, id)
 	return nil
 }
 
@@ -88,6 +127,31 @@ func (m *MockPlanRepo) List(_ context.Context) ([]*PlanRow, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+func (m *MockPlanRepo) Update(_ context.Context, plan *PlanRow, expectedVersion int64) error {
+	row, ok := m.records[plan.ID]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.Version != expectedVersion {
+		return ErrConcurrentUpdate
+	}
+	plan.Version++
+	m.records[plan.ID] = plan
+	return nil
+}
+
+func (m *MockPlanRepo) Delete(_ context.Context, id string, expectedVersion int64) error {
+	row, ok := m.records[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.Version != expectedVersion {
+		return ErrConcurrentUpdate
+	}
+	delete(m.records, id)
+	return nil
 }
 
 // MockStatementRepo is an in-memory StatementRepository for testing.

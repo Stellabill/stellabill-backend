@@ -126,6 +126,18 @@ func DBTimer(operation, table string) func(error) {
 	}
 }
 
+// CacheHitsTotal tracks cache hit/miss events by layer and operation.
+// layer: "redis", "inmemory", etc.
+// op: "get", "set", "delete"
+// result: "hit", "miss", "error"
+var CacheHitsTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "cache_hits_total",
+		Help: "Total number of cache operations by layer, operation, and result",
+	},
+	[]string{"layer", "op", "result"},
+)
+
 func sanitizeLabel(value string) string {
 	if value == "" {
 		return "unknown"

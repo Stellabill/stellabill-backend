@@ -1,6 +1,9 @@
 // Package handlers provides native Go fuzz tests for the swap HTTP handlers.
 //
-// Two fuzz targets are defined:
+// Three fuzz targets are defined:
+//
+//   - FuzzSwapInput    — exercises shared swap request parsing for both exact-in
+//     and exact-out endpoints.
 //
 //   - FuzzSwapExactIn  — exercises POST /api/v1/swap/exact-in JSON body parsing
 //     and the handler's error-mapping logic.
@@ -8,7 +11,7 @@
 //   - FuzzSwapExactOut — exercises POST /api/v1/swap/exact-out JSON body parsing
 //     and the handler's error-mapping logic.
 //
-// Both targets use a deterministic stub router that returns a known good result
+// All targets use a deterministic stub router that returns a known good result
 // for valid inputs, so the fuzzer can distinguish between body-parsing errors
 // (400) and genuine service errors. No real AMM pool or network is needed.
 //

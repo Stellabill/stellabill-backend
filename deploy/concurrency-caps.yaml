@@ -1,0 +1,27 @@
+# Per-Endpoint Concurrency Ceiling Configuration
+#
+# This configuration file defines in-flight concurrency limits per route to prevent
+# resource exhaustion during sudden traffic bursts on expensive endpoints.
+#
+# When an endpoint exceeds its concurrency limit, the middleware immediately sheds
+# excess traffic by returning HTTP 503 Service Unavailable with a Retry-After header.
+
+# Enable or disable concurrency shedding globally (default: true)
+enabled: true
+
+# Default Retry-After duration in seconds sent in HTTP response headers on 503 load shed (default: 5)
+retry_after: 5
+
+# Default concurrency limit applied to routes not explicitly enumerated in the routes map below.
+# Set to 0 to allow unlimited concurrency for unconfigured routes.
+default_limit: 100
+
+# Per-route concurrency limits.
+# Keys correspond to Gin route patterns (e.g., "/api/v1/subscriptions").
+routes:
+  "/api/v1/subscriptions": 50
+  "/api/v1/subscriptions/:id": 30
+  "/api/v1/plans": 100
+  "/api/v1/statements": 20
+  "/api/v1/statements/:id": 20
+  "/webhooks": 50

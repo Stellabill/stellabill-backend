@@ -18,13 +18,16 @@ import (
 // - Graceful shutdown on context done
 // - Ready for outbox dispatcher integration
 type Subscription struct {
-	ID          string `json:"id"`
-	PlanID      string `json:"plan_id"`
-	Customer    string `json:"customer"`
-	Status      string `json:"status"`
-	Amount      string `json:"amount"`
-	Interval    string `json:"interval"`
-	NextBilling string `json:"next_billing,omitempty"`
+	ID          string    `json:"id"`
+	PlanID      string    `json:"plan_id"`
+	Customer    string    `json:"customer"`
+	Status      string    `json:"status"`
+	Amount      string    `json:"amount"`
+	Interval    string    `json:"interval"`
+	NextBilling string    `json:"next_billing,omitempty"`
+	UpdatedAt   time.Time `json:"-"`
+	Version     int64     `json:"-"`
+	ETag        string    `json:"etag"`
 }
 
 func (s Subscription) GetID() string        { return s.ID }
@@ -66,7 +69,55 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
+	
+	etag := GenerateETag(sub.UpdatedAt, sub.Version)
+	c.Header("ETag", etag)
+	
 	c.JSON(http.StatusOK, sub)
+}
+
+func (h *Handler) PatchSubscription(c *gin.Context) {
+	id := c.Param("id")
+	expectedVersion, err := EnsureIfMatch(c)
+	if err != nil {
+		return
+	}
+
+	var req Subscription
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.Subscriptions.PatchSubscription(c, id, &req, expectedVersion); err != nil {
+		if err.Error() == "concurrent update" {
+			c.JSON(http.StatusPreconditionFailed, gin.H{"error": "precondition failed"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "updated"})
+}
+
+func (h *Handler) DeleteSubscription(c *gin.Context) {
+	id := c.Param("id")
+	expectedVersion, err := EnsureIfMatch(c)
+	if err != nil {
+		return
+	}
+
+	if err := h.Subscriptions.DeleteSubscription(c, id, expectedVersion); err != nil {
+		if err.Error() == "concurrent update" {
+			c.JSON(http.StatusPreconditionFailed, gin.H{"error": "precondition failed"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
 
 // NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full

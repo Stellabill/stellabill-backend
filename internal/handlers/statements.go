@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"stellarbill-backend/internal/jsonx"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 )
@@ -94,10 +95,13 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 			statements = []*service.StatementDetail{}
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		// Use jsonx.GinRenderer (sonic on amd64/arm64 with -tags=sonic,
+		// encoding/json elsewhere) to reduce per-request serialisation CPU
+		// on this high-QPS list endpoint. See internal/jsonx for details.
+		c.Render(http.StatusOK, jsonx.GinRenderer{Data: gin.H{
 			"statements": statements,
 			"total":      total,
-		})
+		}})
 	}
 }
 

@@ -43,3 +43,12 @@ type StatementRepository interface {
 	Create(ctx context.Context, stmt *StatementRow) error
 	UpdateArchivedData(ctx context.Context, id string, stmt *StatementRow) error
 }
+
+// PlanTemplateRepository is the interface for plan template operations.
+type PlanTemplateRepository interface {
+	Create(ctx context.Context, template *PlanTemplateRow) error
+	FindByID(ctx context.Context, id string) (*PlanTemplateRow, error)
+	FindByMerchantAndName(ctx context.Context, merchantID string, name string) (*PlanTemplateRow, error)
+	ListByMerchant(ctx context.Context, merchantID string, includeDeprecated bool) ([]*PlanTemplateRow, error)
+	Deprecate(ctx context.Context, id string, merchantID string) error
+}

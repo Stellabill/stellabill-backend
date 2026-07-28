@@ -40,3 +40,17 @@ type StatementRow struct {
 	Status         string
 	DeletedAt      *time.Time
 }
+
+// PlanTemplateRow is the raw DB record for a plan template.
+type PlanTemplateRow struct {
+	ID              string
+	MerchantID      string
+	Name            string
+	AmountCents     int64
+	Currency        string
+	IntervalSeconds int
+	TrialSeconds    int
+	DeprecatedAt    *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}

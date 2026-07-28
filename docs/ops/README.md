@@ -11,6 +11,7 @@ This directory contains incident response runbooks for the Stellabill backend se
 | [auth-failure-runbook.md](./auth-failure-runbook.md) | JWT validation failures, tenant mismatches, admin token errors | 401 rate > 10 % in 5 min |
 | [db-outage-runbook.md](./db-outage-runbook.md) | PostgreSQL outages, connection pool exhaustion, replica lag, slow queries | Health check `"db": "down"` for > 2 min |
 | [elevated-errors-runbook.md](./elevated-errors-runbook.md) | 5xx spike, panics, worker failures, latency degradation | 5xx rate > 5 % in 5 min |
+| [outbox-backlog.md](./runbooks/outbox-backlog.md) | Outbox event backlog growth, publisher lag, DLQ spikes, dispatcher stalls | `outbox_backlog_depth` > 2,500 for 5 min |
 
 ---
 
@@ -43,6 +44,15 @@ This directory contains incident response runbooks for the Stellabill backend se
 | Panic rate (1 min) | > 10 /min | > 25 /min |
 | p99 latency | — | > 3 000 ms |
 | Worker failures | > 5 in 5 min | > 25 in 5 min |
+
+### Outbox Backlog & Publisher Lag
+
+| Threshold | Warning | Critical |
+|-----------|---------|---------|
+| Backlog depth (`outbox_backlog_depth`) | > 500 events | > 2,500 events |
+| Publisher lag (`outbox_publisher_lag_seconds`) | > 60 s | > 300 s |
+| Dead-letter inflow (`dead_letter_events`) | — | >= 5 in 1 min |
+| Dispatcher status | — | Stalled / Stopped |
 
 ---
 

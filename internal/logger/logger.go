@@ -1,24 +1,17 @@
 package logger
 
 import (
-	"fmt"
-
 	"github.com/sirupsen/logrus"
 )
 
 // Log is the package-level logrus instance shared by callers that want a
-// pre-configured JSON logger.
+// pre-configured JSON logger. Helpers were intentionally trimmed because no
+// runtime code paths exercise them today.
 var Log = logrus.New()
 
-// Logger is the interface that statement archive job depends on.
-type Logger interface {
-	Error(msg string, args ...interface{})
-	Warn(msg string, args ...interface{})
-	Info(msg string, args ...interface{})
-}
-
-// SafePrintf logs a formatted message at Info level.
+// SafePrintf writes to the shared logger without panicking when the logger is nil.
 func SafePrintf(format string, args ...interface{}) {
-	Log.Infof(format, args...)
-	fmt.Printf(format+"\n", args...)
+	if Log != nil {
+		Log.Printf(format, args...)
+	}
 }

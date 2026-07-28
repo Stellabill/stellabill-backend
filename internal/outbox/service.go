@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"stellarbill-backend/internal/httpx"
 )
 
 // Service provides the main outbox functionality
@@ -33,23 +35,34 @@ type ServiceConfig struct {
 	PublisherType    string // "console", "http", "multi"
 	HTTPEndpoint     string
 	JWE              *JWEConfig
+	// HTTPPool is the shared connection pool used by the "http" and
+	// "multi" publisher types. Defaults to a package-level shared pool
+	// when nil, so callers only need to set it to share a pool across
+	// multiple services or to override its tuning.
+	HTTPPool *httpx.Pool
 }
 
 // NewService creates a new outbox service
 func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 	repo := NewPostgresRepository(db)
-	
+
+	pool := config.HTTPPool
+	if pool == nil {
+		pool = defaultHTTPPool
+	}
+	httpClient := NewPooledHTTPClient(pool)
+
 	// Create publisher based on configuration
 	var publisher Publisher
 	switch config.PublisherType {
 	case "console":
 		publisher = NewConsolePublisher()
 	case "http":
-		publisher = NewHTTPPublisher(config.HTTPEndpoint, &DefaultHTTPClient{})
+		publisher = NewHTTPPublisher(config.HTTPEndpoint, httpClient)
 	case "multi":
 		publisher = NewMultiPublisher(
 			NewConsolePublisher(),
-			NewHTTPPublisher(config.HTTPEndpoint, &DefaultHTTPClient{}),
+			NewHTTPPublisher(config.HTTPEndpoint, httpClient),
 		)
 	default:
 		publisher = NewConsolePublisher() // Default to console

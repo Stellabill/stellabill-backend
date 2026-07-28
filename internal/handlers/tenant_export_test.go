@@ -18,8 +18,9 @@ import (
 )
 
 type mockExportJobManager struct {
-	createJobFn func(ctx context.Context, tenantID, callerID string, callerRoles []string) (*service.ExportJob, error)
-	getJobFn    func(id string) (*service.ExportJob, error)
+	createJobFn    func(ctx context.Context, tenantID, callerID string, callerRoles []string) (*service.ExportJob, error)
+	getJobFn       func(id string) (*service.ExportJob, error)
+	getOperationFn func(id string) (*service.ExportOperation, error)
 }
 
 func (m *mockExportJobManager) CreateJob(ctx context.Context, tenantID, callerID string, callerRoles []string) (*service.ExportJob, error) {
@@ -49,6 +50,13 @@ func (m *mockExportJobManager) GetJob(id string) (*service.ExportJob, error) {
 	return nil, service.ErrNotFound
 }
 
+func (m *mockExportJobManager) GetOperation(id string) (*service.ExportOperation, error) {
+	if m.getOperationFn != nil {
+		return m.getOperationFn(id)
+	}
+	return nil, service.ErrNotFound
+}
+
 func tenantExportRouter(jobManager ExportJobManager, callerID string, roles []string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -61,6 +69,7 @@ func tenantExportRouter(jobManager ExportJobManager, callerID string, roles []st
 	})
 	r.POST("/api/v1/tenants/me/export", NewTenantExportHandler(jobManager))
 	r.GET("/api/v1/tenants/me/export/:job_id", NewTenantExportStatusHandler(jobManager))
+	r.GET("/api/v1/operations/:id", NewOperationStatusHandler(jobManager))
 	return r
 }
 
@@ -75,6 +84,13 @@ func doExportRequest(r *gin.Engine) *httptest.ResponseRecorder {
 func doExportStatusRequest(r *gin.Engine, jobID string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/v1/tenants/me/export/"+jobID, nil)
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func doOperationStatusRequest(r *gin.Engine, operationID string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/operations/"+operationID, nil)
 	r.ServeHTTP(w, req)
 	return w
 }
@@ -98,6 +114,22 @@ func TestTenantExport_Create_MerchantOwnTenant(t *testing.T) {
 	w := doExportRequest(r)
 
 	require.Equal(t, http.StatusAccepted, w.Code)
+}
+
+func TestTenantExport_Create_ReturnsOperationIDAndOperationURL(t *testing.T) {
+	jm := &mockExportJobManager{
+		createJobFn: func(ctx context.Context, tenantID, callerID string, callerRoles []string) (*service.ExportJob, error) {
+			return &service.ExportJob{ID: uuid.New().String(), OperationID: "op-123", TenantID: tenantID, CallerID: callerID, CallerRoles: callerRoles, Status: service.ExportJobPending}, nil
+		},
+	}
+	r := tenantExportRouter(jm, "tenant-1", []string{"admin"})
+	w := doExportRequest(r)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	var resp createExportResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "op-123", resp.OperationID)
+	assert.Equal(t, "/api/v1/operations/op-123", resp.OperationURL)
 }
 
 func TestTenantExport_Create_MerchantCrossTenant(t *testing.T) {
@@ -192,6 +224,22 @@ func TestTenantExport_Create_NilJobManager(t *testing.T) {
 
 	w := doExportRequest(r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestOperation_Status_HappyPath_Pending(t *testing.T) {
+	jm := &mockExportJobManager{
+		getOperationFn: func(id string) (*service.ExportOperation, error) {
+			return &service.ExportOperation{ID: id, TenantID: "tenant-1", CallerID: "admin", Status: service.OperationPending}, nil
+		},
+	}
+	r := tenantExportRouter(jm, "tenant-1", []string{"admin"})
+	w := doOperationStatusRequest(r, "op-123")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp exportOperationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "op-123", resp.OperationID)
+	assert.Equal(t, service.OperationPending, resp.Status)
 }
 
 func TestTenantExport_Status_HappyPath_Pending(t *testing.T) {

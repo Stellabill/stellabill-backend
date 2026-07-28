@@ -86,6 +86,7 @@ func OpenAPIRequestBodyValidation() gin.HandlerFunc {
 
 		// If body is empty and not required, allow.
 		if len(bytes.TrimSpace(raw)) == 0 {
+
 			if !reqBody.Value.Required {
 				c.Next()
 				return
@@ -143,15 +144,13 @@ func OpenAPIRequestBodyValidation() gin.HandlerFunc {
 	}
 }
 
-
-
 // minimal io.NopCloser alternative to avoid importing io everywhere in this file.
 func ioNopCloser(r *bytes.Reader) *nopCloser { return &nopCloser{r: r} }
 
 type nopCloser struct{ r *bytes.Reader }
 
 func (n *nopCloser) Read(p []byte) (int, error) { return n.r.Read(p) }
-func (n *nopCloser) Close() error              { return nil }
+func (n *nopCloser) Close() error               { return nil }
 
 // ginPathToOpenAPIPath converts Gin route patterns to OpenAPI path patterns.
 // It prefers gin's FullPath() (e.g. /api/v1/items/:id) but can fall back to URL path.
@@ -169,4 +168,3 @@ func ginPathToOpenAPIPath(fullPath string, urlPath string) string {
 	}
 	return strings.Join(parts, "/")
 }
-

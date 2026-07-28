@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"stellarbill-backend/internal/httpx"
 )
 
 const (
@@ -56,12 +58,18 @@ type Client struct {
 	http       HTTPClient
 }
 
+// defaultPool is the shared per-host connection pool backing Client
+// instances created with New. It gives PagerDuty (and any other host
+// dialed through it) its own connection budget, circuit breaker, and
+// DNS-TTL-aware dialing instead of an ad hoc *http.Client.
+var defaultPool = httpx.New(httpx.DefaultConfig())
+
 // New creates a Client. routingKey must be a non-empty PagerDuty integration key.
 func New(routingKey string) *Client {
 	return &Client{
 		routingKey: routingKey,
 		endpoint:   defaultEndpoint,
-		http:       &http.Client{Timeout: 10 * time.Second},
+		http:       defaultPool,
 	}
 }
 

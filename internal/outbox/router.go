@@ -10,7 +10,7 @@ type OutboxEvent struct {
 }
 
 type NotificationChannel interface {
-	Send(ctx context.Context, event OutboxEvent) error
+	Send(ctx context.Context, event Event) error
 }
 
 type NotificationRouter struct {

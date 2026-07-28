@@ -15,7 +15,7 @@ import (
 type memoryRepository struct {
 	mu       sync.Mutex
 	events   map[uuid.UUID]*Event
-	progress map[string]*publisherCursor
+	progress map[string]uuid.UUID
 }
 
 func newMemoryRepository() *memoryRepository {
@@ -138,26 +138,39 @@ func (m *memoryRepository) RequeueEvent(id uuid.UUID) error {
 
 func (m *memoryRepository) EnsurePublisherProgressTable() error { return nil }
 
-func (m *memoryRepository) GetPublisherProgress(publisher string) (*time.Time, *uuid.UUID, error) {
+func (m *memoryRepository) GetPublisherProgress(publisher string) (*uuid.UUID, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.progress == nil {
-		return nil, nil, nil
-	}
-	p, ok := m.progress[publisher]
+	id, ok := m.progress[publisher]
 	if !ok {
-		return nil, nil, nil
+		return nil, nil
 	}
-	return p.lastAt, p.lastID, nil
+	idCopy := id
+	return &idCopy, nil
 }
 
-func (m *memoryRepository) UpdatePublisherProgress(publisher string, lastProcessedAt time.Time, lastProcessedID uuid.UUID) error {
+// MarkPublished records publisher's high-water mark for event and, once
+// every named publisher has reached it, completes the event. Mirrors the
+// upsert-then-check-all-reached semantics of postgresRepository.MarkPublished.
+func (m *memoryRepository) MarkPublished(publisher string, event *Event, publishers []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.progress == nil {
-		m.progress = make(map[string]*publisherCursor)
+
+	if current, ok := m.progress[publisher]; !ok || event.ID.String() > current.String() {
+		m.progress[publisher] = event.ID
 	}
-	m.progress[publisher] = &publisherCursor{lastAt: &lastProcessedAt, lastID: &lastProcessedID}
+
+	for _, name := range publishers {
+		last, ok := m.progress[name]
+		if !ok || last.String() < event.ID.String() {
+			return nil
+		}
+	}
+
+	if ev, ok := m.events[event.ID]; ok {
+		ev.Status = StatusCompleted
+		ev.UpdatedAt = time.Now()
+	}
 	return nil
 }
 

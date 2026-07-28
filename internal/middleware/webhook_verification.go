@@ -4,11 +4,6 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
-	"io"
-	"net/http"
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
 	"errors"
@@ -29,6 +24,20 @@ const (
 	// webhookBodyKey is the gin context key under which the raw body is stored
 	// so downstream handlers can re-read it after middleware consumption.
 	webhookBodyKey = "webhook_raw_body"
+
+	// Webhook signature verification default settings
+	DefaultSignatureHeader  = "X-Webhook-Signature"
+	DefaultTimestampHeader  = "X-Webhook-Timestamp"
+	DefaultEventIDHeader    = "X-Webhook-Event-Id"
+	DefaultSignatureVersion = "v2"
+	DefaultMaxSignatureAge  = 5 * time.Minute
+	DefaultTimestampSkew    = 300 // 5 minutes in seconds
+	DefaultMaxBodySize      uint64 = 1024 * 1024 * 5 // 5MB
+
+	// Provider-specific defaults
+	StripeSignatureHeader   = "Stripe-Signature"
+	StripeSignaturePrefix   = "v1="
+	DefaultWebhookTolerance = 300 // 5 minutes
 )
 
 // WebhookVerification returns a middleware that validates the HMAC-SHA256
@@ -87,18 +96,21 @@ func WebhookVerification(secret string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+const (
 	// Webhook signature verification default settings
-	DefaultSignatureHeader        = "X-Webhook-Signature"
-	DefaultTimestampHeader        = "X-Webhook-Timestamp"
-	DefaultEventIDHeader          = "X-Webhook-Event-Id"
-	DefaultSignatureVersion       = "v2"
-	DefaultMaxSignatureAge        = 5 * time.Minute
-	DefaultTimestampSkew          = 300 // 5 minutes in seconds
-	DefaultMaxBodySize     uint64 = 1024 * 1024 * 5 // 5MB
+	DefaultSignatureHeader  = "X-Webhook-Signature"
+	DefaultTimestampHeader  = "X-Webhook-Timestamp"
+	DefaultEventIDHeader    = "X-Webhook-Event-Id"
+	DefaultSignatureVersion = "v2"
+	DefaultMaxSignatureAge  = 5 * time.Minute
+	DefaultTimestampSkew    = 300 // 5 minutes in seconds
+	DefaultMaxBodySize      = uint64(1024 * 1024 * 5) // 5MB
 
 	// Provider-specific defaults
-	StripeSignatureHeader   = "Stripe-Signature"
-	StripeSignaturePrefix   = "v1="
+	StripeSignatureHeader = "Stripe-Signature"
+	StripeSignaturePrefix = "v1="
 	DefaultWebhookTolerance = 300 // 5 minutes
 )
 

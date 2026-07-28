@@ -3,6 +3,10 @@ package repository
 import (
 	"context"
 	"errors"
+
+	"github.com/Masterminds/squirrel"
+
+	"stellarbill-backend/internal/requestparams"
 )
 
 // ErrNotFound is returned when a requested record does not exist.
@@ -34,6 +38,8 @@ type StatementQuery struct {
 	EndingBefore   string // cursor for backward pagination
 	Limit          int    // replaces PageSize
 	Order          string // e.g. "asc", "desc"
+	Filter         *requestparams.RSQLFilter
+	FilterSQL      squirrel.Sqlizer
 }
 
 // StatementRepository is the read interface used by the service.

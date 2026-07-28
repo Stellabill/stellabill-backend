@@ -53,6 +53,7 @@ type Config struct {
 	IdleTimeout    int
 	AllowedOrigins string
 	AdminToken     string
+	DBReplicaConn  string
 	// Rate limiting configuration
 	RateLimitEnabled   bool
 	RateLimitMode      string
@@ -63,9 +64,16 @@ type Config struct {
 	TracingExporter    string
 	TracingServiceName string
 	SecurityFrameAncestors string
+	SpiffeSocketPath   string
+	SpiffeTrustDomain  string
 	MaxRequestSize         int64
 	MaxGzipUncompressed    int64
 	MaxGzipRatio           float64
+	// RedisURL configures the Redis cache backend. When empty, an in-memory
+	// cache is used instead.
+	RedisURL   string
+	CacheTTL   int // seconds; default 60
+
 	// DB connection pool tuning.
 	// All durations are in seconds to keep env-var parsing uniform.
 	//
@@ -169,6 +177,7 @@ var secretKeys = []string{
 	"DATABASE_URL",
 	"JWT_SECRET",
 	"ADMIN_TOKEN",
+	"REDIS_URL",
 }
 
 // Load loads configuration from environment variables with validation.
@@ -194,10 +203,15 @@ func Load(opts ...Option) (Config, error) {
 		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		SpiffeSocketPath:   getEnv("SPIFFE_ENDPOINT_SOCKET", ""),
+		SpiffeTrustDomain:  getEnv("SPIFFE_TRUST_DOMAIN", "example.org"),
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10), // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
 		// DB pool — safe production defaults
+		DBReplicaConn:    getEnv("DB_REPLICA_URL", ""),
+		RedisURL:         getEnv("REDIS_URL", ""),
+		CacheTTL:         getEnvInt("CACHE_TTL", 60), // 60 second default
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
 		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
@@ -598,6 +612,16 @@ func maskSecret(secret string) string {
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+// getEnvInt retrieves an environment variable as int with a fallback value.
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
 	}
 	return fallback
 }

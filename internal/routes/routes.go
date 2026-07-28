@@ -132,6 +132,9 @@ func Register(r *gin.Engine) {
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
 	webhookHandler := handlers.NewWebhookHandler()
 	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
+	// Admin login (no JWT required — uses admin token directly)
+	r.POST("/api/admin/login", adminHandler.Login)
+
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 

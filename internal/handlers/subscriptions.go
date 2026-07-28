@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -72,6 +74,82 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"id": c.Param("id")})
+	}
+}
+
+// NewChangeSubscriptionStatusHandler updates a single subscription status.
+func NewChangeSubscriptionStatusHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var payload struct {
+			Status string `json:"status"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeValidationFailed, "invalid request body")
+			return
+		}
+
+		status := strings.TrimSpace(payload.Status)
+		if status == "" {
+			RespondWithError(c, http.StatusUnprocessableEntity, ErrorCodeValidationFailed, "status is required")
+			return
+		}
+
+		tenantID := c.GetString("tenantID")
+		if tenantID == "" {
+			RespondWithAuthError(c, "missing tenant context")
+			return
+		}
+
+		change, err := svc.ChangeStatus(c.Request.Context(), tenantID, c.GetString("callerID"), c.Param("id"), status)
+		if err != nil {
+			statusCode, code, message := MapServiceErrorToResponse(err)
+			if errors.Is(err, service.ErrInvalidStatus) || errors.Is(err, service.ErrInvalidTransition) || errors.Is(err, service.ErrUnknownCurrentState) {
+				statusCode = http.StatusConflict
+				code = ErrorCodeConflict
+				if errors.Is(err, service.ErrInvalidStatus) {
+					statusCode = http.StatusUnprocessableEntity
+					code = ErrorCodeValidationFailed
+				}
+			}
+			RespondWithError(c, statusCode, code, message)
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"api_version": "v1", "data": change})
+	}
+}
+
+// NewBatchSubscriptionHandler accepts a batch of subscription status updates and returns
+// per-item status codes in a 207 Multi-Status response.
+func NewBatchSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req service.BatchSubscriptionRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeValidationFailed, "invalid request body")
+			return
+		}
+
+		results, err := svc.ProcessBatch(c.Request.Context(), c.GetString("tenantID"), c.GetString("callerID"), req.Operations)
+		if err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeValidationFailed, err.Error())
+			return
+		}
+
+		response := service.BatchSubscriptionResponse{Results: results}
+		statusCode := http.StatusOK
+		if len(results) > 0 {
+			for _, result := range results {
+				if result.StatusCode >= http.StatusBadRequest {
+					statusCode = http.StatusMultiStatus
+					break
+				}
+			}
+		}
+		if statusCode == http.StatusMultiStatus {
+			c.JSON(statusCode, response)
+			return
+		}
+		c.JSON(statusCode, response)
 	}
 }
 

@@ -369,6 +369,7 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	{
 		v1.GET("/subscriptions", auth.RequirePermission(auth.PermReadSubscriptions), h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", auth.RequirePermission(auth.PermReadSubscriptions), h.GetSubscription)
+		v1.POST("/subscriptions:batch", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewBatchSubscriptionHandler(svc))
 		v1.POST("/subscriptions/:id/status", auth.RequirePermission(auth.PermManageSubscriptions), handlers.NewChangeSubscriptionStatusHandler(svc))
 		v1.GET("/plans", auth.RequirePermission(auth.PermReadPlans), h.ListPlans)
 		v1.GET("/statements/:id", auth.RequirePermission(auth.PermReadSubscriptions), handlers.NewGetStatementHandler(stmtSvc))
@@ -396,6 +397,11 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 			dep,
 			auth.RequirePermission(auth.PermReadSubscriptions),
 			h.GetSubscription,
+		)
+		apiProtected.POST("/subscriptions:batch",
+			dep,
+			auth.RequirePermission(auth.PermManageSubscriptions),
+			handlers.NewBatchSubscriptionHandler(svc),
 		)
 		apiProtected.POST("/subscriptions/:id/status",
 			dep,

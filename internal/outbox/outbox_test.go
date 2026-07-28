@@ -193,7 +193,7 @@ func (suite *OutboxTestSuite) TestRepositoryStoreAndGet() {
 	event, err := NewEvent("test.event", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(suite.T(), err)
 
-	err = suite.repository.Store(event)
+	err = suite.repository.Store(context.Background(), event)
 	require.NoError(suite.T(), err)
 
 	retrieved, err := suite.repository.GetByID(event.ID)
@@ -208,7 +208,7 @@ func (suite *OutboxTestSuite) TestRepositoryGetPendingEvents() {
 	for i := 0; i < 5; i++ {
 		event, err := NewEvent("test.event", map[string]int{"index": i}, nil, nil)
 		require.NoError(suite.T(), err)
-		err = suite.repository.Store(event)
+		err = suite.repository.Store(context.Background(), event)
 		require.NoError(suite.T(), err)
 	}
 
@@ -225,7 +225,7 @@ func (suite *OutboxTestSuite) TestRepositoryUpdateStatus() {
 	event, err := NewEvent("test.event", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(suite.T(), err)
 
-	err = suite.repository.Store(event)
+	err = suite.repository.Store(context.Background(), event)
 	require.NoError(suite.T(), err)
 
 	err = suite.repository.UpdateStatus(event.ID, StatusCompleted, nil)
@@ -240,7 +240,7 @@ func (suite *OutboxTestSuite) TestRepositoryMarkAsProcessing() {
 	event, err := NewEvent("test.event", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(suite.T(), err)
 
-	err = suite.repository.Store(event)
+	err = suite.repository.Store(context.Background(), event)
 	require.NoError(suite.T(), err)
 
 	err = suite.repository.MarkAsProcessing(event.ID)
@@ -255,7 +255,7 @@ func (suite *OutboxTestSuite) TestRepositoryIncrementRetryCount() {
 	event, err := NewEvent("test.event", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(suite.T(), err)
 
-	err = suite.repository.Store(event)
+	err = suite.repository.Store(context.Background(), event)
 	require.NoError(suite.T(), err)
 
 	nextRetryAt := time.Now().Add(1 * time.Hour)
@@ -312,7 +312,7 @@ func (suite *OutboxTestSuite) TestDispatcherProcessEvents() {
 	for i := 0; i < 3; i++ {
 		event, err := NewEvent("test.event", map[string]int{"index": i}, nil, nil)
 		require.NoError(suite.T(), err)
-		err = suite.repository.Store(event)
+		err = suite.repository.Store(context.Background(), event)
 		require.NoError(suite.T(), err)
 	}
 
@@ -340,7 +340,7 @@ func (suite *OutboxTestSuite) TestDispatcherProcessEvents() {
 func (suite *OutboxTestSuite) TestDispatcherRetryMechanism() {
 	event, err := NewEvent("test.event", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(suite.T(), err)
-	err = suite.repository.Store(event)
+	err = suite.repository.Store(context.Background(), event)
 	require.NoError(suite.T(), err)
 
 	suite.publisher.SetPublishError(event.ID, &TimeoutError{msg: "timeout"})
@@ -375,7 +375,7 @@ func (suite *OutboxTestSuite) TestDispatcherRetryMechanism() {
 func (suite *OutboxTestSuite) TestDispatcherMaxRetries() {
 	event, err := NewEvent("test.event", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(suite.T(), err)
-	err = suite.repository.Store(event)
+	err = suite.repository.Store(context.Background(), event)
 	require.NoError(suite.T(), err)
 
 	persistentError := &TimeoutError{msg: "persistent error"}
@@ -436,7 +436,7 @@ func (suite *OutboxTestSuite) TestCrashRecoveryPendingEvents() {
 	for i := 0; i < 5; i++ {
 		event, err := NewEvent("test.event", map[string]int{"index": i}, nil, nil)
 		require.NoError(suite.T(), err)
-		err = suite.repository.Store(event)
+		err = suite.repository.Store(context.Background(), event)
 		require.NoError(suite.T(), err)
 	}
 
@@ -462,7 +462,7 @@ func (suite *OutboxTestSuite) TestCrashRecoveryPendingEvents() {
 func (suite *OutboxTestSuite) TestCrashRecoveryProcessingEvents() {
 	event, err := NewEvent("test.event", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(suite.T(), err)
-	err = suite.repository.Store(event)
+	err = suite.repository.Store(context.Background(), event)
 	require.NoError(suite.T(), err)
 
 	err = suite.repository.MarkAsProcessing(event.ID)
@@ -491,7 +491,7 @@ func (suite *OutboxTestSuite) TestCrashRecoveryProcessingEvents() {
 func (suite *OutboxTestSuite) TestIdempotency() {
 	event, err := NewEvent("test.event", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(suite.T(), err)
-	err = suite.repository.Store(event)
+	err = suite.repository.Store(context.Background(), event)
 	require.NoError(suite.T(), err)
 
 	err = suite.repository.MarkAsProcessing(event.ID)

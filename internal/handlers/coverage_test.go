@@ -81,6 +81,10 @@ func TestCoverage_ErrorResponses(t *testing.T) {
 	_, _, _ = MapServiceErrorToResponse(service.ErrDeleted)
 	_, _, _ = MapServiceErrorToResponse(service.ErrForbidden)
 	_, _, _ = MapServiceErrorToResponse(service.ErrBillingParse)
+	_, _, _ = MapServiceErrorToResponse(service.ErrInvalidTransition)
+	_, _, _ = MapServiceErrorToResponse(service.ErrUnknownCurrentState)
+	_, _, _ = MapServiceErrorToResponse(service.ErrInvalidStatus)
+	_, _, _ = MapServiceErrorToResponse(service.ErrExportInProgress)
 }
 
 func TestCoverage_NewGetSubscriptionHandler(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"stellarbill-backend/internal/errcode"
 	"stellarbill-backend/internal/service"
 	"strings"
 	"testing"
@@ -77,10 +78,10 @@ func TestErrorEnvelope_NotFound(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if envelope.Code != string(ErrorCodeNotFound) {
-		t.Errorf("Expected error code %s, got %s", ErrorCodeNotFound, envelope.Code)
+	if envelope.Code != string(errcode.CodeSubscriptionNotFound) {
+		t.Errorf("Expected error code %s, got %s", errcode.CodeSubscriptionNotFound, envelope.Code)
 	}
-	if envelope.Message != "The requested resource was not found" {
+	if envelope.Message != "The requested subscription was not found" {
 		t.Errorf("Expected proper message, got %s", envelope.Message)
 	}
 	if envelope.TraceID != "test-trace-123" {
@@ -110,8 +111,8 @@ func TestErrorEnvelope_Deleted(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if envelope.Code != string(ErrorCodeNotFound) {
-		t.Errorf("Expected error code %s, got %s", ErrorCodeNotFound, envelope.Code)
+	if envelope.Code != string(errcode.CodeSubscriptionSoftDeleted) {
+		t.Errorf("Expected error code %s, got %s", errcode.CodeSubscriptionSoftDeleted, envelope.Code)
 	}
 	if envelope.TraceID == "" {
 		t.Error("Expected trace ID to be present")
@@ -140,10 +141,10 @@ func TestErrorEnvelope_Forbidden(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if envelope.Code != string(ErrorCodeForbidden) {
-		t.Errorf("Expected error code %s, got %s", ErrorCodeForbidden, envelope.Code)
+	if envelope.Code != string(errcode.CodeSubscriptionForbidden) {
+		t.Errorf("Expected error code %s, got %s", errcode.CodeSubscriptionForbidden, envelope.Code)
 	}
-	if envelope.Message != "You do not have permission to access this resource" {
+	if envelope.Message != "You do not have permission to access this subscription" {
 		t.Errorf("Expected proper message, got %s", envelope.Message)
 	}
 }
@@ -170,8 +171,8 @@ func TestErrorEnvelope_BillingParse(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if envelope.Code != string(ErrorCodeInternalError) {
-		t.Errorf("Expected error code %s, got %s", ErrorCodeInternalError, envelope.Code)
+	if envelope.Code != string(errcode.CodeBillingParseError) {
+		t.Errorf("Expected error code %s, got %s", errcode.CodeBillingParseError, envelope.Code)
 	}
 }
 
@@ -335,7 +336,7 @@ func TestErrorEnvelope_PIIRedaction(t *testing.T) {
 			"amount":      1234.56,
 			"safe_field":  "ok",
 		}
-		RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeBadRequest,
+		RespondWithErrorDetails(c, http.StatusBadRequest, errcode.CodeBadRequest,
 			"Failed processing customer_cust_sensitive123 with amount 1234.56", details)
 	})
 

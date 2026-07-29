@@ -1,0 +1,25 @@
+{{- $components := list "api" "worker" -}}
+{{- range $component := $components }}
+{{- $values := index $.Values $component -}}
+{{- if $values.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $values.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "stellabill.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  {{- if $values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ $values.podDisruptionBudget.maxUnavailable }}
+  {{- else if $values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ $values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "stellabill.componentSelectorLabels" (dict "Chart" $.Chart "Release" $.Release "component" $component) | nindent 6 }}
+      tier: {{ $values.labels.tier }}
+{{- end }}
+{{- end }}

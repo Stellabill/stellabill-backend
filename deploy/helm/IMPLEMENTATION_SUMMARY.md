@@ -1,8 +1,97 @@
-# NetworkPolicy Implementation Summary
+# Helm Chart Implementation Summary
 
 ## Overview
 
-This document summarizes the Kubernetes NetworkPolicy implementation for Stellabill, which restricts pod-to-pod traffic according to the required connectivity matrix.
+This document summarizes the Helm chart implementation for Stellabill, covering NetworkPolicies, PodDisruptionBudgets (PDB), topology spread constraints, and HorizontalPodAutoscalers (HPA).
+
+**Git Branch**: `devops/pdb-topology`  
+**Status**: ✅ Complete - `helm template` validates successfully
+
+---
+
+## PDB & Topology Spread Implementation
+
+### PodDisruptionBudgets (`pdb.yaml`)
+
+Guarantees minimum availability during voluntary disruptions (e.g., node maintenance, cluster upgrades).
+
+**Templates**: Both `api` and `worker` components get their own PDB.
+
+**Default behavior**:
+- `minAvailable: 1` (with HPA `minReplicas=2`, allows 1 pod to be disrupted)
+- `maxUnavailable: null` (not set by default)
+
+**Single-node dev cluster override**:
+```bash
+helm install stellabill ./deploy/helm/stellabill \
+  --set api.podDisruptionBudget.minAvailable=0 \
+  --set api.podDisruptionBudget.maxUnavailable=1 \
+  --set worker.podDisruptionBudget.minAvailable=0 \
+  --set worker.podDisruptionBudget.maxUnavailable=1
+```
+
+Renders `maxUnavailable: 1` instead of `minAvailable: 1`.
+
+**Key design decision**: `minAvailable` must always respect HPA `minReplicas`. Default `minReplicas=2` → `minAvailable=1` ensures at least one replica stays up during disruptions.
+
+### Topology Spread Constraints (`deployment.yaml`)
+
+Spreads replicas across zones/nodes to achieve high availability during infrastructure failures.
+
+**Default configuration**:
+- `maxSkew: 1` — even distribution (at most 1 replica difference between zones)
+- `topologyKey: topology.kubernetes.io/zone` — spread across availability zones
+- `whenUnsatisfiable: ScheduleAnyway` — still schedule pods even if spread can't be achieved
+
+**Node-level spread** (override for smaller clusters):
+```yaml
+topologySpread:
+  topologyKey: kubernetes.io/hostname
+```
+
+Both API and Worker deployments include topology spread constraints with label selectors scoped to their component.
+
+### HorizontalPodAutoscalers (`hpa.yaml`)
+
+Autoscaling v2 with CPU and memory utilization targets.
+
+**Default configuration**:
+- `minReplicas: 2` — minimum two replicas for HA
+- `maxReplicas: 20` — upper bound for cost control
+- `targetCPUUtilizationPercentage: 80` — scale up at 80% CPU
+- `targetMemoryUtilizationPercentage: 80` — scale up at 80% memory
+- Configurable `behavior` block for advanced scaling policies
+
+**PDB alignment**: `minAvailable: 1` is deliberately < `minReplicas: 2` so that HPA can scale down without violating PDB constraints.
+
+### Common Labels (`_helpers.tpl`)
+
+Reusable template functions:
+- `stellabill.labels` — standard Kubernetes recommended labels (name, instance, version, managed-by)
+- `stellabill.selectorLabels` — name + instance for pod selectors
+- `stellabill.componentLabels` — selectorLabels + component label
+- `stellabill.componentSelectorLabels` — scoped selector for component-specific matching
+- `stellabill.componentName` — resolves to the component's configured name
+
+### Files Created/Modified
+
+**New templates**:
+- `deploy/helm/stellabill/templates/_helpers.tpl` — reusable label/selector definitions
+- `deploy/helm/stellabill/templates/deployment.yaml` — deployments with topology spread constraints
+- `deploy/helm/stellabill/templates/hpa.yaml` — HorizontalPodAutoscaler definitions
+- `deploy/helm/stellabill/templates/pdb.yaml` — PodDisruptionBudget definitions
+
+**Updated**:
+- `deploy/helm/stellabill/values.yaml` — added image, autoscaling, PDB, topology spread, resource, and probe configuration sections
+- `deploy/helm/stellabill/Chart.yaml` — updated description to reflect PDB and topology spread
+
+## NetworkPolicy Implementation
+
+The following sections cover the previously implemented NetworkPolicy components.
+
+### Overview
+
+This Kubernetes NetworkPolicy implementation restricts pod-to-pod traffic according to the required connectivity matrix.
 
 **Git Branch**: `devops/network-policies`  
 **Commit**: `5c7b135b003d7d1744353a8af032933f44fb70de`  

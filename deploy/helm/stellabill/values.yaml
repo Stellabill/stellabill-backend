@@ -1,6 +1,12 @@
 # Default values for stellabill
 # This is a YAML-formatted file.
 
+# Global image configuration
+image:
+  repository: stellabill/backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
 # Network Policy Configuration
 networkPolicy:
   enabled: true
@@ -21,6 +27,48 @@ api:
     tier: api
     component: backend
   port: 8080
+  serviceAccountName: ""
+  imagePullSecrets: []
+  container:
+    portName: http
+    port: 8080
+    command: []
+    args: []
+    env: []
+    envFrom: []
+    volumeMounts: []
+    volumes: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  livenessProbe: {}
+  readinessProbe: {}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+    behavior: {}
+  podDisruptionBudget:
+    enabled: true
+    # minAvailable must respect HPA minReplicas (minReplicas=2 => minAvailable=1)
+    # For single-node dev clusters, override with maxUnavailable: 1
+    minAvailable: 1
+    maxUnavailable: null
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    # For node-level spread, use: topologyKey: kubernetes.io/hostname
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 # Worker Service Configuration
 worker:
@@ -30,6 +78,45 @@ worker:
     app: stellabill
     tier: worker
     component: background-jobs
+  serviceAccountName: ""
+  imagePullSecrets: []
+  container:
+    portName: http
+    port: 8080
+    command: []
+    args: []
+    env: []
+    envFrom: []
+    volumeMounts: []
+    volumes: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  livenessProbe: {}
+  readinessProbe: {}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+    behavior: {}
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: null
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 # Database Configuration
 database:

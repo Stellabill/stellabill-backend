@@ -1,3 +1,35 @@
+# Exclude the .git directory and scratch artefacts so the build context stays small
+# and reproducible.
+.git
+.gitignore
+.github
+
+# Local config and secrets (env files must never ship in the image).
+.env
+.env.*
+*.pem
+*.key
+audit.log
+coverage.out
+coverage.html
+
+# CI / development helpers
+scripts
+tools
+tests/integration
+staging
+tmp
+
+# Editor / OS junk
+.DS_Store
+*.swp
+*.swo
+
+# Coverage profiles and reports (regenerated in CI).
+*.coverprofile
+
+# Built binary (regenerated in Dockerfile).
+stellarbill-backend
 .git
 .github
 docs

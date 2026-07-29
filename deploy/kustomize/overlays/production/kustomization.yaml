@@ -1,0 +1,43 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stellabill-production
+
+bases:
+  - ../../base
+
+# Production-specific patches
+patches:
+  # Production replica count
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+    target:
+      kind: Deployment
+      name: stellabill-api
+
+  # Production resource limits (higher than base defaults)
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "512Mi"
+    target:
+      kind: Deployment
+      name: stellabill-api
+
+  # Production PgBouncer pool size (match Postgres max_connections budget)
+  - path: patch-pgbouncer-config.yaml
+
+# Override images with production tags (managed by CI/CD pipeline)
+images:
+  - name: stellabill-backend
+    newTag: production-latest
+  - name: pgbouncer/pgbouncer
+    newTag: "1.23.1"

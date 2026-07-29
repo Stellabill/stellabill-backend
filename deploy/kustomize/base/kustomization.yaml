@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base resources for the stellabill API deployment with PgBouncer sidecar.
+# Overlays in overlays/staging and overlays/production customize image tags,
+# replica counts, and resource limits without duplicating the base manifests.
+resources:
+  - deployment.yaml
+  - configmap-pgbouncer.yaml
+  - secret-pgbouncer.yaml
+  - networkpolicy-pgbouncer.yaml

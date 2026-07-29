@@ -19,6 +19,10 @@ import (
 // per subscriber host instead of one ad hoc *http.Client per publisher.
 var defaultHTTPPool = httpx.New(httpx.DefaultConfig())
 
+// httpClient is the default HTTP client used by service.go when creating
+// HTTP publishers. It routes through the shared connection pool.
+var httpClient HTTPClient = NewPooledHTTPClient(defaultHTTPPool)
+
 // PooledHTTPClient adapts an httpx.Pool to the outbox HTTPClient interface.
 type PooledHTTPClient struct {
 	pool *httpx.Pool

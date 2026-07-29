@@ -26,6 +26,7 @@ func NewManager(db *sql.DB, cfg config.Config) (*Manager, error) {
 			CleanupInterval:    time.Hour,
 			CompletedEventTTL:  time.Hour,
 			ProcessingTimeout:  time.Minute,
+			HeartbeatInterval:  30 * time.Second,
 		},
 		PublisherType: "console",
 		HTTPEndpoint:  "",
@@ -34,6 +35,38 @@ func NewManager(db *sql.DB, cfg config.Config) (*Manager, error) {
 	service, err := NewService(db, serviceConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create outbox service: %w", err)
+	}
+
+	return &Manager{
+		service: service,
+		db:      db,
+	}, nil
+}
+
+// NewShardedManager creates a new outbox manager with shard-aware dispatching.
+// ownedShards is the list of partition numbers this instance is responsible for.
+// shardCount is the total number of partitions.
+func NewShardedManager(db *sql.DB, cfg config.Config, shardCount int, ownedShards []int, instanceID string) (*Manager, error) {
+	serviceConfig := ServiceConfig{
+		DispatcherConfig: DispatcherConfig{
+			PollInterval:       time.Second,
+			BatchSize:          100,
+			MaxRetries:         3,
+			RetryBackoffFactor: 2.0,
+			CleanupInterval:    time.Hour,
+			CompletedEventTTL:  time.Hour,
+			ProcessingTimeout:  time.Minute,
+			ShardCount:         shardCount,
+			OwnedShards:        ownedShards,
+			HeartbeatInterval:  30 * time.Second,
+		},
+		PublisherType: "console",
+		HTTPEndpoint:  "",
+	}
+
+	service, err := NewService(db, serviceConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sharded outbox service: %w", err)
 	}
 
 	return &Manager{
@@ -132,12 +165,16 @@ func (m *Manager) createOutboxTable() error {
 			error_message TEXT,
 			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-			version INTEGER NOT NULL DEFAULT 1
+			version INTEGER NOT NULL DEFAULT 1,
+			tenant_id VARCHAR(255),
+			partition INTEGER NOT NULL DEFAULT 0
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_outbox_events_status ON outbox_events(status);
 		CREATE INDEX IF NOT EXISTS idx_outbox_events_next_retry ON outbox_events(next_retry_at) WHERE next_retry_at IS NOT NULL;
 		CREATE INDEX IF NOT EXISTS idx_outbox_events_occurred_at ON outbox_events(occurred_at);
+		CREATE INDEX IF NOT EXISTS idx_outbox_events_partition ON outbox_events(partition);
+		CREATE INDEX IF NOT EXISTS idx_outbox_events_tenant_id ON outbox_events(tenant_id);
 
 		-- publisher progress table for per-publisher cursors
 		CREATE TABLE IF NOT EXISTS outbox_publisher_progress (

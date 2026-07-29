@@ -4,36 +4,27 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/repository/postgres"
+	"strings"
 	"time"
 )
 
-const findPlanByIDQuery = `
-	SELECT id, tenant_id, name, amount_cents::text, currency, interval, description, updated_at, version
-	FROM plans
-	WHERE id = $1`
-
-const listPlansQuery = `
-	SELECT id, tenant_id, name, amount_cents::text, currency, interval, description, updated_at, version
-	FROM plans
-	ORDER BY name, id`
-
-type planDB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// PostgresPlanRepo implements PlanRepository using PostgreSQL via database/sql.
+// PostgresPlanRepo implements PlanRepository using PostgreSQL via sqlc.
 type PostgresPlanRepo struct {
-	db planDB
+	queries *postgres.Queries
+	db      *sql.DB
 }
 
 var _ PlanRepository = (*PostgresPlanRepo)(nil)
 
 // NewPostgresPlanRepo returns a PostgreSQL-backed PlanRepository.
-func NewPostgresPlanRepo(db planDB) *PostgresPlanRepo {
-	return &PostgresPlanRepo{db: db}
+func NewPostgresPlanRepo(db *sql.DB) *PostgresPlanRepo {
+	return &PostgresPlanRepo{
+		queries: postgres.New(db),
+		db:      db,
+	}
 }
 
 // ApplySQLDBPoolConfig applies validated DB_POOL_* settings to database/sql.
@@ -50,20 +41,7 @@ func ApplySQLDBPoolConfig(db *sql.DB, cfg config.Config) {
 
 // FindByID fetches a plan by ID, returning ErrNotFound when it does not exist.
 func (r *PostgresPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, error) {
-	var row PlanRow
-	var description sql.NullString
-
-	err := r.db.QueryRowContext(ctx, findPlanByIDQuery, id).Scan(
-		&row.ID,
-		&row.TenantID,
-		&row.Name,
-		&row.Amount,
-		&row.Currency,
-		&row.Interval,
-		&description,
-		&row.UpdatedAt,
-		&row.Version,
-	)
+	plan, err := r.queries.FindPlanByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -71,44 +49,98 @@ func (r *PostgresPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 		return nil, err
 	}
 
-	row.Description = nullableDescription(description)
-	return &row, nil
+	return &PlanRow{
+		ID:          plan.ID,
+		TenantID:    plan.TenantID,
+		Name:        plan.Name,
+		Amount:      plan.Amount,
+		Currency:    plan.Currency,
+		Interval:    plan.Interval,
+		Description: nullableDescription(plan.Description),
+		UpdatedAt:   plan.UpdatedAt,
+		Version:     plan.Version,
+	}, nil
 }
 
-// List returns all plans ordered deterministically for stable API responses.
-func (r *PostgresPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
-	rows, err := r.db.QueryContext(ctx, listPlansQuery)
+// FindByIDs fetches multiple plans by IDs in a single batch IN query.
+func (r *PostgresPlanRepo) FindByIDs(ctx context.Context, ids []string) ([]*PlanRow, error) {
+	return r.FindByIDsAndTenant(ctx, ids, "")
+}
+
+// FindByIDsAndTenant fetches multiple plans by IDs and optional tenantID in a single batch IN query.
+func (r *PostgresPlanRepo) FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*PlanRow, error) {
+	if len(ids) == 0 {
+		return []*PlanRow{}, nil
+	}
+	if r.db == nil {
+		return []*PlanRow{}, nil
+	}
+	args := make([]interface{}, 0, len(ids)+1)
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, id)
+	}
+	q := "SELECT id, tenant_id, name, amount_cents::text as amount, currency, interval, description, updated_at, version FROM plans WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	if tenantID != "" {
+		args = append(args, tenantID)
+		q += fmt.Sprintf(" AND tenant_id = $%d", len(args))
+	}
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	plans := make([]*PlanRow, 0)
+	var result []*PlanRow
 	for rows.Next() {
-		plan, err := scanPlanRow(rows)
-		if err != nil {
+		var p PlanRow
+		var desc sql.NullString
+		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.Amount, &p.Currency, &p.Interval, &desc, &p.UpdatedAt, &p.Version); err != nil {
 			return nil, err
 		}
-		plans = append(plans, plan)
+		p.Description = nullableDescription(desc)
+		result = append(result, &p)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	return result, nil
+}
 
-	return plans, nil
+// List returns all plans ordered deterministically for stable API responses.
+func (r *PostgresPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
+	plans, err := r.queries.ListPlans(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*PlanRow, len(plans))
+	for i, plan := range plans {
+		result[i] = &PlanRow{
+			ID:          plan.ID,
+			TenantID:    plan.TenantID,
+			Name:        plan.Name,
+			Amount:      plan.Amount,
+			Currency:    plan.Currency,
+			Interval:    plan.Interval,
+			Description: nullableDescription(plan.Description),
+			UpdatedAt:   plan.UpdatedAt,
+			Version:     plan.Version,
+		}
+	}
+
+	return result, nil
 }
 
 func (r *PostgresPlanRepo) Update(ctx context.Context, plan *PlanRow, expectedVersion int64) error {
-	const query = `
-		UPDATE plans
-		SET name = $1, description = $2, version = version + 1
-		WHERE id = $3 AND version = $4
-	`
-	res, err := r.db.ExecContext(ctx, query, plan.Name, plan.Description, plan.ID, expectedVersion)
-	if err != nil {
-		return err
-	}
-	affected, err := res.RowsAffected()
+	affected, err := r.queries.UpdatePlan(ctx, postgres.UpdatePlanParams{
+		Name:        plan.Name,
+		Description: sql.NullString{String: plan.Description, Valid: plan.Description != ""},
+		ID:          plan.ID,
+		Version:     expectedVersion,
+	})
 	if err != nil {
 		return err
 	}
@@ -119,15 +151,10 @@ func (r *PostgresPlanRepo) Update(ctx context.Context, plan *PlanRow, expectedVe
 }
 
 func (r *PostgresPlanRepo) Delete(ctx context.Context, id string, expectedVersion int64) error {
-	const query = `
-		DELETE FROM plans
-		WHERE id = $1 AND version = $2
-	`
-	res, err := r.db.ExecContext(ctx, query, id, expectedVersion)
-	if err != nil {
-		return err
-	}
-	affected, err := res.RowsAffected()
+	affected, err := r.queries.DeletePlan(ctx, postgres.DeletePlanParams{
+		ID:      id,
+		Version: expectedVersion,
+	})
 	if err != nil {
 		return err
 	}
@@ -135,28 +162,6 @@ func (r *PostgresPlanRepo) Delete(ctx context.Context, id string, expectedVersio
 		return ErrConcurrentUpdate
 	}
 	return nil
-}
-
-func scanPlanRow(scanner interface{ Scan(dest ...any) error }) (*PlanRow, error) {
-	var row PlanRow
-	var description sql.NullString
-
-	if err := scanner.Scan(
-		&row.ID,
-		&row.TenantID,
-		&row.Name,
-		&row.Amount,
-		&row.Currency,
-		&row.Interval,
-		&description,
-		&row.UpdatedAt,
-		&row.Version,
-	); err != nil {
-		return nil, err
-	}
-
-	row.Description = nullableDescription(description)
-	return &row, nil
 }
 
 func nullableDescription(description sql.NullString) string {

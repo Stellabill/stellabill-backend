@@ -95,3 +95,10 @@ func runHTTPServer(
 func printConfigError(err error) {
 	fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 }
+
+// stdLogger adapts the standard log package to the worker's logger interface.
+type stdLogger struct{}
+
+func (stdLogger) Error(msg string, keysAndValues ...any) {
+	log.Println(append([]any{"ERROR: " + msg}, keysAndValues...)...)
+}

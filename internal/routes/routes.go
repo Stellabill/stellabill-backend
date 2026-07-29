@@ -66,6 +66,8 @@ func Register(r *gin.Engine) {
 	planRepo := repository.NewMockPlanRepo()
 	stmtRepo := repository.NewMockStatementRepo()
 
+	r.Use(middleware.DataLoaderMiddleware(planRepo, subRepo))
+
 	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
 	svc := service.NewSubscriptionService(subRepo, planRepo)
 

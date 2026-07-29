@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
@@ -60,7 +61,12 @@ func (v *spiffeVerifier) Verify(ctx context.Context, tokenString string) (*Claim
 		return nil, errors.New("SPIFFE verifier is disabled")
 	}
 
-	svid, err := workloadapi.ParseJWTSVID(ctx, tokenString, v.source, []string{v.trustDomain.IDString()})
+	bundle, err := v.source.GetJWTBundleForTrustDomain(v.trustDomain)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get JWT bundle: %w", err)
+	}
+
+	svid, err := jwtsvid.ParseAndValidate(tokenString, bundle, []string{v.trustDomain.IDString()})
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse or validate JWT-SVID: %w", err)
 	}
@@ -69,10 +75,9 @@ func (v *spiffeVerifier) Verify(ctx context.Context, tokenString string) (*Claim
 		return nil, errors.New("trust domain mismatch")
 	}
 
-	// Map SPIFFE SVID to internal Claims.
 	claims := &Claims{
 		UserID: svid.ID.String(),
-		Role:   RoleAdmin, // Default for internal mesh traffic
+		Role:   RoleAdmin,
 	}
 
 	return claims, nil
@@ -83,7 +88,7 @@ func (v *spiffeVerifier) FetchJWTSVID(ctx context.Context, audience string) (str
 	if v.disabled {
 		return "", errors.New("SPIFFE is disabled")
 	}
-	svid, err := v.source.FetchJWTSVID(ctx, []string{audience})
+	svid, err := v.source.FetchJWTSVID(ctx, jwtsvid.Params{Audience: audience})
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch JWT-SVID: %w", err)
 	}

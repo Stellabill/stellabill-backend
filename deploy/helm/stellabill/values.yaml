@@ -1,6 +1,12 @@
 # Default values for stellabill
 # This is a YAML-formatted file.
 
+# Global image configuration
+image:
+  repository: stellabill/backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
 # Network Policy Configuration
 networkPolicy:
   enabled: true
@@ -21,6 +27,48 @@ api:
     tier: api
     component: backend
   port: 8080
+  serviceAccountName: ""
+  imagePullSecrets: []
+  container:
+    portName: http
+    port: 8080
+    command: []
+    args: []
+    env: []
+    envFrom: []
+    volumeMounts: []
+    volumes: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  livenessProbe: {}
+  readinessProbe: {}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+    behavior: {}
+  podDisruptionBudget:
+    enabled: true
+    # minAvailable must respect HPA minReplicas (minReplicas=2 => minAvailable=1)
+    # For single-node dev clusters, override with maxUnavailable: 1
+    minAvailable: 1
+    maxUnavailable: null
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    # For node-level spread, use: topologyKey: kubernetes.io/hostname
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 # Worker Service Configuration
 worker:
@@ -30,6 +78,45 @@ worker:
     app: stellabill
     tier: worker
     component: background-jobs
+  serviceAccountName: ""
+  imagePullSecrets: []
+  container:
+    portName: http
+    port: 8080
+    command: []
+    args: []
+    env: []
+    envFrom: []
+    volumeMounts: []
+    volumes: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  livenessProbe: {}
+  readinessProbe: {}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+    behavior: {}
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: null
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 # Database Configuration
 database:
@@ -57,3 +144,54 @@ kafka:
     tier: messaging
     component: kafka
   port: 9092
+
+# PgBouncer Sidecar Configuration
+pgbouncer:
+  # enabled: when true, the deployment template injects the PgBouncer sidecar
+  # and sets DB_STATEMENT_CACHE_MODE=describe on the application container.
+  enabled: false
+
+  # image: use an immutable tag in production; update via CI/CD pipeline.
+  image: pgbouncer/pgbouncer
+  imageTag: "1.23.1"
+
+  # credentials: name of the Secret that holds db-host, db-port, db-name,
+  # db-user, db-password, and database-url keys.
+  # The Secret must exist before the Deployment is applied.
+  credentialsSecret: pgbouncer-credentials
+
+  # listen: address and port the sidecar binds to inside the pod.
+  # Keep 127.0.0.1 (loopback) so no other pod can reach the pooler.
+  listenAddr: "127.0.0.1"
+  listenPort: 5432
+
+  # pooling
+  poolMode: transaction
+  maxClientConn: 100
+  defaultPoolSize: 25
+  minPoolSize: 2
+  reservePoolSize: 5
+  reservePoolTimeout: 3
+
+  # timeouts (seconds)
+  serverIdleTimeout: 600
+  serverLifetime: 3600
+  queryWaitTimeout: 120
+  idleTransactionTimeout: 30
+
+  # auth
+  authType: scram-sha-256
+
+  # logging (0=off, 1=errors, 2=connections, 5=debug)
+  logConnections: 0
+  logDisconnections: 0
+  logPoolerErrors: 1
+
+  # resources for the sidecar container
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "32Mi"
+    limits:
+      cpu: "200m"
+      memory: "64Mi"

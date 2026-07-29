@@ -20,6 +20,13 @@ type DispatcherConfig struct {
 	CleanupInterval    time.Duration
 	CompletedEventTTL  time.Duration
 	ProcessingTimeout  time.Duration
+
+	// Shard configuration. When ShardCount > 0 the dispatcher operates in
+	// sharded mode: it only processes events whose partition is in OwnedShards.
+	// Advisory locks are used to coordinate ownership across instances.
+	ShardCount        int           // total number of partitions (0 = no sharding)
+	OwnedShards       []int         // partitions this instance owns
+	HeartbeatInterval time.Duration // how often to verify advisory lock health
 }
 
 // DefaultDispatcherConfig returns default configuration
@@ -32,6 +39,7 @@ func DefaultDispatcherConfig() DispatcherConfig {
 		CleanupInterval:    1 * time.Hour,
 		CompletedEventTTL:  24 * time.Hour,
 		ProcessingTimeout:  30 * time.Second,
+		HeartbeatInterval:  30 * time.Second,
 	}
 }
 
@@ -118,15 +126,16 @@ func (d *dispatcher) Start() error {
 // Stop stops the dispatcher
 func (d *dispatcher) Stop() error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	if !d.running {
-		return nil // Already stopped
+		d.mu.Unlock()
+		return nil
 	}
 
 	d.cancel()
-	d.wg.Wait()
 	d.running = false
+	d.mu.Unlock()
+
+	d.wg.Wait()
 
 	log.Printf("%s", security.MaskPII("Outbox dispatcher stopped"))
 	return nil

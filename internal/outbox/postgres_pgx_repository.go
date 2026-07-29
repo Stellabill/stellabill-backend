@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"stellarbill-backend/internal/db"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +19,7 @@ type pgxPool interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Begin(ctx context.Context) (pgx.Tx, error)
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
 }
 
 // PostgresPgxRepository implements Repository using pgx
@@ -40,16 +41,59 @@ func (r *PostgresPgxRepository) Store(event *Event) error {
 		INSERT INTO outbox_events (
 			id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			occurred_at, status, retry_count, max_retries, next_retry_at,
-			error_message, created_at, updated_at, version, deduplication_id
+			error_message, created_at, updated_at, version, deduplication_id,
+			partition
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 
 	_, err := r.pool.Exec(ctx, query,
 		event.ID, event.TenantID, event.EventType, event.EventData, event.AggregateID, event.AggregateType,
 		event.OccurredAt, event.Status, event.RetryCount, event.MaxRetries, event.NextRetryAt,
 		event.ErrorMessage, event.CreatedAt, event.UpdatedAt, event.Version, event.DeduplicationID,
+		event.Partition,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to store outbox event: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresPgxRepository) BulkInsert(ctx context.Context, events []*Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	if len(events) == 1 {
+		return r.Store(events[0])
+	}
+
+	tenantID := events[0].TenantID
+	for _, e := range events[1:] {
+		if e.TenantID != tenantID {
+			tenantID = ""
+			break
+		}
+	}
+	if tenantID != "" {
+		ctx = db.ContextWithTenantID(ctx, tenantID)
+	}
+
+	columnNames := []string{
+		"id", "tenant_id", "event_type", "event_data", "aggregate_id", "aggregate_type",
+		"occurred_at", "status", "retry_count", "max_retries", "next_retry_at",
+		"error_message", "created_at", "updated_at", "version", "deduplication_id",
+	}
+
+	rows := make([][]any, len(events))
+	for i, e := range events {
+		rows[i] = []any{
+			e.ID, e.TenantID, e.EventType, e.EventData, e.AggregateID, e.AggregateType,
+			e.OccurredAt, e.Status, e.RetryCount, e.MaxRetries, e.NextRetryAt,
+			e.ErrorMessage, e.CreatedAt, e.UpdatedAt, e.Version, e.DeduplicationID,
+		}
+	}
+
+	_, err := r.pool.CopyFrom(ctx, pgx.Identifier{"outbox_events"}, columnNames, pgx.CopyFromRows(rows))
+	if err != nil {
+		return fmt.Errorf("failed to bulk insert outbox events: %w", err)
 	}
 	return nil
 }
@@ -59,7 +103,8 @@ func (r *PostgresPgxRepository) GetPendingEvents(limit int) ([]*Event, error) {
 	query := `
 		SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
+			   error_message, created_at, updated_at, version, deduplication_id,
+			   tenant_id, partition
 		FROM outbox_events
 		WHERE status = $1 OR (status = $2 AND next_retry_at <= $3)
 		ORDER BY occurred_at ASC
@@ -87,7 +132,8 @@ func (r *PostgresPgxRepository) GetByID(id uuid.UUID) (*Event, error) {
 	query := `
 		SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 			   occurred_at, status, retry_count, max_retries, next_retry_at,
-			   error_message, created_at, updated_at, version, deduplication_id
+			   error_message, created_at, updated_at, version, deduplication_id,
+			   tenant_id, partition
 		FROM outbox_events WHERE id = $1`
 	return r.scanEvent(r.pool.QueryRow(ctx, query, id))
 }
@@ -221,7 +267,8 @@ func (r *PostgresPgxRepository) GetPendingEventsSince(since *time.Time, lastID *
 		rows, err = r.pool.Query(ctx, `
 			SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 				   occurred_at, status, retry_count, max_retries, next_retry_at,
-				   error_message, created_at, updated_at, version, deduplication_id
+				   error_message, created_at, updated_at, version, deduplication_id,
+				   tenant_id, partition
 			FROM outbox_events
 			WHERE status=$1 AND (occurred_at > $2 OR (occurred_at = $2 AND id > $3))
 			ORDER BY occurred_at ASC, id ASC LIMIT $4`,
@@ -230,7 +277,8 @@ func (r *PostgresPgxRepository) GetPendingEventsSince(since *time.Time, lastID *
 		rows, err = r.pool.Query(ctx, `
 			SELECT id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
 				   occurred_at, status, retry_count, max_retries, next_retry_at,
-				   error_message, created_at, updated_at, version, deduplication_id
+				   error_message, created_at, updated_at, version, deduplication_id,
+				   tenant_id, partition
 			FROM outbox_events WHERE status=$1
 			ORDER BY occurred_at ASC, id ASC LIMIT $2`,
 			StatusPending, limit)
@@ -252,8 +300,7 @@ func (r *PostgresPgxRepository) GetPendingEventsSince(since *time.Time, lastID *
 
 func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 	var event Event
-	var tenantID sql.NullString
-	var aggregateID, aggregateType, errorMessage, deduplicationID sql.NullString
+	var aggregateID, aggregateType, errorMessage, deduplicationID, tenantID sql.NullString
 	var nextRetryAt sql.NullTime
 
 	err := row.Scan(
@@ -262,6 +309,7 @@ func (r *PostgresPgxRepository) scanEvent(row pgx.Row) (*Event, error) {
 		&event.OccurredAt, &event.Status, &event.RetryCount, &event.MaxRetries,
 		&nextRetryAt, &errorMessage,
 		&event.CreatedAt, &event.UpdatedAt, &event.Version, &deduplicationID,
+		&tenantID, &event.Partition,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan event: %w", err)
@@ -293,4 +341,89 @@ func (r *PostgresPgxRepository) GetPendingEventsForPublisher(publisher string, l
 
 func (r *PostgresPgxRepository) MarkPublished(publisher string, event *Event, publishers []string) error {
 	return nil
+}
+
+func (r *PostgresPgxRepository) GetPendingEventsForShards(shards []int, limit int) ([]*Event, error) {
+	if len(shards) == 0 {
+		return r.GetPendingEvents(limit)
+	}
+
+	ctx := context.Background()
+	placeholders := make([]string, len(shards))
+	args := make([]interface{}, len(shards))
+	for i, shard := range shards {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = shard
+	}
+
+	n := len(shards)
+	query := fmt.Sprintf(`
+		SELECT id, event_type, event_data, aggregate_id, aggregate_type,
+			   occurred_at, status, retry_count, max_retries, next_retry_at,
+			   error_message, created_at, updated_at, version, deduplication_id,
+			   tenant_id, partition
+		FROM outbox_events
+		WHERE partition IN (%s)
+		  AND (status = $%d OR (status = $%d AND next_retry_at <= $%d))
+		ORDER BY occurred_at ASC
+		LIMIT $%d
+	`, strings.Join(placeholders, ","), n+1, n+2, n+3, n+4)
+
+	args = append(args, StatusPending, StatusFailed, time.Now(), limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending events for shards: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*Event
+	for rows.Next() {
+		event, err := r.scanEventPgxRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating pending events for shards: %w", err)
+	}
+	return events, nil
+}
+
+func (r *PostgresPgxRepository) scanEventPgxRows(rows pgx.Rows) (*Event, error) {
+	var event Event
+	var aggregateID, aggregateType, errorMessage, deduplicationID, tenantID sql.NullString
+	var nextRetryAt sql.NullTime
+
+	err := rows.Scan(
+		&event.ID, &event.EventType, &event.EventData,
+		&aggregateID, &aggregateType,
+		&event.OccurredAt, &event.Status, &event.RetryCount, &event.MaxRetries,
+		&nextRetryAt, &errorMessage,
+		&event.CreatedAt, &event.UpdatedAt, &event.Version, &deduplicationID,
+		&tenantID, &event.Partition,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan event: %w", err)
+	}
+	if tenantID.Valid {
+		event.TenantID = tenantID.String
+	}
+	if deduplicationID.Valid {
+		event.DeduplicationID = &deduplicationID.String
+	}
+	if aggregateID.Valid {
+		event.AggregateID = &aggregateID.String
+	}
+	if aggregateType.Valid {
+		event.AggregateType = &aggregateType.String
+	}
+	if nextRetryAt.Valid {
+		event.NextRetryAt = &nextRetryAt.Time
+	}
+	if errorMessage.Valid {
+		event.ErrorMessage = &errorMessage.String
+	}
+	return &event, nil
 }

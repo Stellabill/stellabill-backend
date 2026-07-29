@@ -227,3 +227,16 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 		}
 	})
 }
+
+func TestHandler_GetSubscriptionEvents_NoWS(t *testing.T) {
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "id", Value: "sub_123"}}
+	c.Request = httptest.NewRequest("GET", "/api/v1/subscriptions/sub_123/events", nil)
+	
+	h.GetSubscriptionEvents(c)
+	
+	// Since we are not sending WS headers, upgrader should fail with Bad Request
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

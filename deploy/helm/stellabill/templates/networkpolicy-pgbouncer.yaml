@@ -1,0 +1,50 @@
+{{- if and .Values.networkPolicy.enabled .Values.pgbouncer.enabled }}
+---
+# NetworkPolicy: PgBouncer sidecar egress to Postgres
+#
+# PgBouncer binds to 127.0.0.1 (loopback) only, so no NetworkPolicy is needed
+# to restrict inbound access to the pooler — loopback traffic within a pod is
+# not subject to NetworkPolicy enforcement.
+#
+# This policy documents and enforces that the PgBouncer sidecar (which shares
+# the pod network namespace with the API container) may egress to the Postgres
+# backend. It is additive to the existing api-egress policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-pgbouncer-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app: stellabill
+    component: pgbouncer
+    policy-type: allowlist
+  annotations:
+    # PgBouncer binds to 127.0.0.1 only. No ingress NetworkPolicy is needed.
+    # This egress rule covers the sidecar's outbound connection to Postgres.
+    stellabill.io/note: >
+      PgBouncer uses the pod's network namespace. Egress to Postgres is allowed
+      under the same pod selector as the API tier egress policy. This manifest
+      is kept explicit so future policy refactoring does not silently drop access.
+spec:
+  # Apply to API pods (which run the PgBouncer sidecar as a co-located container).
+  podSelector:
+    matchLabels:
+      tier: {{ .Values.api.labels.tier }}
+      component: {{ .Values.api.labels.component }}
+  policyTypes:
+    - Egress
+  egress:
+    # Allow egress from the sidecar to the Postgres backend.
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.database.labels.tier }}
+              component: {{ .Values.database.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+{{- end }}

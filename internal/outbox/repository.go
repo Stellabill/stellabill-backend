@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"stellarbill-backend/internal/db"
+	"stellarbill-backend/internal/middleware"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,7 +34,13 @@ func NewPostgresRepository(executor db.DBTX) Repository {
 }
 
 // Store stores a new outbox event
-func (r *postgresRepository) Store(event *Event) error {
+func (r *postgresRepository) Store(ctx context.Context, event *Event) error {
+	start := time.Now()
+	defer func() {
+		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+			rec.RecordOutbox(time.Since(start))
+		}
+	}()
 	query := `
 		INSERT INTO outbox_events (
 			id, tenant_id, event_type, event_data, aggregate_id, aggregate_type,
@@ -42,7 +49,7 @@ func (r *postgresRepository) Store(event *Event) error {
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`
 
-	_, err := r.db.Exec(query,
+	_, err := r.db.ExecContext(ctx, query,
 		event.ID,
 		event.TenantID,
 		event.EventType,
@@ -64,6 +71,15 @@ func (r *postgresRepository) Store(event *Event) error {
 		return fmt.Errorf("failed to store outbox event: %w", err)
 	}
 
+	return nil
+}
+
+func (r *postgresRepository) BulkInsert(ctx context.Context, events []*Event) error {
+	for _, e := range events {
+		if err := r.Store(e); err != nil {
+			return fmt.Errorf("failed to bulk insert event %s: %w", e.ID, err)
+		}
+	}
 	return nil
 }
 

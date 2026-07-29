@@ -8,6 +8,7 @@ import (
 	"stellarbill-backend/internal/service"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCoordinator_HappyPath(t *testing.T) {
@@ -686,5 +687,317 @@ func TestCancelSubscriptionFlow_CompensationSucceeds_WithRestorableState(t *test
 	}
 	if loadedSaga.Status != saga.SagaCompensated {
 		t.Errorf("expected saga compensated, got %s", loadedSaga.Status)
+	}
+}
+
+func TestCoordinator_StepRetry_SucceedsOnSecondAttempt(t *testing.T) {
+	store := saga.NewMemoryStore()
+	coord := saga.NewCoordinator(store, nil)
+
+	attempts := 0
+	retryPolicy := &saga.RetryPolicy{
+		MaxAttempts: 2,
+		BaseDelay:   time.Millisecond,
+		Jitter:      0,
+	}
+
+	s := &saga.Saga{
+		ID:      "saga-retry-1",
+		Name:    "test_retry_success",
+		Context: saga.NewSagaContext(nil),
+		Steps: []saga.Step{
+			{
+				Key: "step_retry",
+				Execute: func(ctx context.Context, sc saga.SagaContext) error {
+					attempts++
+					if attempts < 2 {
+						return errors.New("temporary failure")
+					}
+					return nil
+				},
+				Compensate: func(ctx context.Context, sc saga.SagaContext) error {
+					return nil
+				},
+				RetryPolicy: retryPolicy,
+			},
+		},
+	}
+
+	err := coord.Execute(context.Background(), s)
+	if err != nil {
+		t.Fatalf("expected no error after retry, got %v", err)
+	}
+
+	if attempts != 2 {
+		t.Errorf("expected 2 attempts, got %d", attempts)
+	}
+
+	loaded, results, err := store.Load(context.Background(), "saga-retry-1")
+	if err != nil {
+		t.Fatalf("load saga: %v", err)
+	}
+	if loaded.Status != saga.SagaCompleted {
+		t.Errorf("expected saga completed, got %s", loaded.Status)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 step result, got %d", len(results))
+	}
+	if results[0].Status != saga.StepCompleted {
+		t.Errorf("expected step completed, got %s", results[0].Status)
+	}
+}
+
+func TestCoordinator_StepRetry_ExhaustedCompensates(t *testing.T) {
+	store := saga.NewMemoryStore()
+	coord := saga.NewCoordinator(store, nil)
+
+	attempts := 0
+	compensated := false
+	retryPolicy := &saga.RetryPolicy{
+		MaxAttempts: 2,
+		BaseDelay:   time.Millisecond,
+		Jitter:      0,
+	}
+
+	s := &saga.Saga{
+		ID:      "saga-retry-2",
+		Name:    "test_retry_exhausted",
+		Context: saga.NewSagaContext(nil),
+		Steps: []saga.Step{
+			{
+				Key: "step_a",
+				Execute: func(ctx context.Context, sc saga.SagaContext) error {
+					return nil
+				},
+				Compensate: func(ctx context.Context, sc saga.SagaContext) error {
+					compensated = true
+					return nil
+				},
+				RetryPolicy: nil,
+			},
+			{
+				Key: "step_b",
+				Execute: func(ctx context.Context, sc saga.SagaContext) error {
+					attempts++
+					return errors.New("persistent failure")
+				},
+				Compensate: func(ctx context.Context, sc saga.SagaContext) error {
+					return nil
+				},
+				RetryPolicy: retryPolicy,
+			},
+		},
+	}
+
+	err := coord.Execute(context.Background(), s)
+	if err == nil {
+		t.Fatal("expected error after retries exhausted")
+	}
+
+	if attempts != 2 {
+		t.Errorf("expected 2 attempts, got %d", attempts)
+	}
+	if !compensated {
+		t.Error("expected step_a to be compensated after step_b retries exhausted")
+	}
+
+	loaded, results, err := store.Load(context.Background(), "saga-retry-2")
+	if err != nil {
+		t.Fatalf("load saga: %v", err)
+	}
+	if loaded.Status != saga.SagaCompensated {
+		t.Errorf("expected saga compensated, got %s", loaded.Status)
+	}
+
+	for _, r := range results {
+		if r.StepKey == "step_b" {
+			if r.Status != saga.StepFailed {
+				t.Errorf("expected step_b failed after retries, got %s", r.Status)
+			}
+		}
+	}
+}
+
+func TestCoordinator_StepRetry_NoRetryPolicy(t *testing.T) {
+	store := saga.NewMemoryStore()
+	coord := saga.NewCoordinator(store, nil)
+
+	s := &saga.Saga{
+		ID:      "saga-noretry",
+		Name:    "test_no_retry",
+		Context: saga.NewSagaContext(nil),
+		Steps: []saga.Step{
+			{
+				Key: "step_a",
+				Execute: func(ctx context.Context, sc saga.SagaContext) error {
+					return errors.New("fails immediately")
+				},
+				Compensate: func(ctx context.Context, sc saga.SagaContext) error {
+					return nil
+				},
+			},
+		},
+	}
+
+	err := coord.Execute(context.Background(), s)
+	if err == nil {
+		t.Fatal("expected error for step with no retry policy")
+	}
+
+	loaded, _, err := store.Load(context.Background(), "saga-noretry")
+	if err != nil {
+		t.Fatalf("load saga: %v", err)
+	}
+	if loaded.Status != saga.SagaCompensated {
+		t.Errorf("expected saga compensated (no preceding step to compensate), got %s", loaded.Status)
+	}
+}
+
+func TestCoordinator_StepRetry_ResumeAfterRetryState(t *testing.T) {
+	store := saga.NewMemoryStore()
+
+	sagaID := "saga-retry-resume"
+	ctx := saga.NewSagaContext(nil)
+	partial := &saga.Saga{
+		ID:      sagaID,
+		Name:    "test_retry_resume",
+		Status:  saga.SagaRunning,
+		Context: ctx,
+	}
+	if err := store.Save(context.Background(), partial); err != nil {
+		t.Fatalf("save partial saga: %v", err)
+	}
+	if err := store.SaveStepResult(context.Background(), sagaID, &saga.StepResult{
+		SagaID:  sagaID,
+		StepKey: "step_a",
+		Status:  saga.StepCompleted,
+	}); err != nil {
+		t.Fatalf("save step_a result: %v", err)
+	}
+	if err := store.SaveStepResult(context.Background(), sagaID, &saga.StepResult{
+		SagaID:  sagaID,
+		StepKey: "step_b",
+		Status:  saga.StepRetrying,
+	}); err != nil {
+		t.Fatalf("save step_b result: %v", err)
+	}
+
+	attempts := 0
+	constructor := func(ctx context.Context, s *saga.Saga) (*saga.Saga, error) {
+		s.Steps = []saga.Step{
+			{
+				Key: "step_a",
+				Execute: func(ctx context.Context, sc saga.SagaContext) error {
+					return nil
+				},
+				Compensate: func(ctx context.Context, sc saga.SagaContext) error {
+					return nil
+				},
+			},
+			{
+				Key: "step_b",
+				Execute: func(ctx context.Context, sc saga.SagaContext) error {
+					attempts++
+					if attempts < 2 {
+						return errors.New("still failing")
+					}
+					sc.Set("step_b_retried", true)
+					return nil
+				},
+				Compensate: func(ctx context.Context, sc saga.SagaContext) error {
+					return nil
+				},
+				RetryPolicy: &saga.RetryPolicy{
+					MaxAttempts: 3,
+					BaseDelay:   time.Millisecond,
+					Jitter:      0,
+				},
+			},
+		}
+		return s, nil
+	}
+
+	coord := saga.NewCoordinator(store, constructor)
+	err := coord.Resume(context.Background(), sagaID)
+	if err != nil {
+		t.Fatalf("resume saga: %v", err)
+	}
+
+	loaded, results, err := store.Load(context.Background(), sagaID)
+	if err != nil {
+		t.Fatalf("load saga after resume: %v", err)
+	}
+	if loaded.Status != saga.SagaCompleted {
+		t.Errorf("expected saga completed after resume, got %s", loaded.Status)
+	}
+
+	v, ok := loaded.Context.Get("step_b_retried")
+	if !ok || v != true {
+		t.Error("step_b should have eventually succeeded")
+	}
+
+	for _, r := range results {
+		if r.StepKey == "step_b" && r.Status != saga.StepCompleted {
+			t.Errorf("expected step_b completed, got %s", r.Status)
+		}
+	}
+}
+
+func TestPolicies_DefaultRetry(t *testing.T) {
+	p := saga.DefaultRetry()
+	if p.MaxAttempts != 3 {
+		t.Errorf("expected MaxAttempts=3, got %d", p.MaxAttempts)
+	}
+	if p.BaseDelay != 100*time.Millisecond {
+		t.Errorf("expected BaseDelay=100ms, got %s", p.BaseDelay)
+	}
+}
+
+func TestPolicies_ShouldRetry(t *testing.T) {
+	p := &saga.RetryPolicy{MaxAttempts: 3}
+	if !p.ShouldRetry(1) {
+		t.Error("ShouldRetry(1) should be true for MaxAttempts=3")
+	}
+	if !p.ShouldRetry(2) {
+		t.Error("ShouldRetry(2) should be true for MaxAttempts=3 (2 retries)")
+	}
+	if p.ShouldRetry(3) {
+		t.Error("ShouldRetry(3) should be false for MaxAttempts=3")
+	}
+}
+
+func TestPolicies_NoRetry(t *testing.T) {
+	p := &saga.RetryPolicy{MaxAttempts: 1}
+	if p.ShouldRetry(1) {
+		t.Error("ShouldRetry(1) should be false for MaxAttempts=1")
+	}
+}
+
+func TestPolicies_NilPolicy(t *testing.T) {
+	var p *saga.RetryPolicy
+	if p.ShouldRetry(0) {
+		t.Error("nil policy should not retry")
+	}
+	if p.NextDelay(1) != 0 {
+		t.Error("nil policy should have zero delay")
+	}
+}
+
+func TestPolicies_NextDelay(t *testing.T) {
+	p := &saga.RetryPolicy{
+		MaxAttempts: 3,
+		BaseDelay:   100 * time.Millisecond,
+		MaxDelay:    5 * time.Second,
+		Jitter:      0,
+	}
+
+	d1 := p.NextDelay(1)
+	if d1 < 50*time.Millisecond || d1 > 150*time.Millisecond {
+		t.Errorf("expected first delay ~100ms, got %s", d1)
+	}
+
+	d2 := p.NextDelay(2)
+	if d2 < 150*time.Millisecond || d2 > 250*time.Millisecond {
+		t.Errorf("expected second delay ~200ms, got %s", d2)
 	}
 }

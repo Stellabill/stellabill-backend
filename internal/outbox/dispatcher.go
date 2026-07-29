@@ -115,6 +115,10 @@ func (d *dispatcher) Start() error {
 	d.wg.Add(1)
 	go d.cleanupLoop()
 
+	// Publish outbox_backlog_depth for KEDA / Prometheus scraping.
+	d.wg.Add(1)
+	go d.backlogMetricsLoop()
+
 	log.Println("Outbox dispatcher started")
 	return nil
 }
@@ -169,6 +173,43 @@ func (d *dispatcher) cleanupLoop() {
 			d.cleanupCompletedEvents()
 		}
 	}
+}
+
+// backlogMetricsSampleLimit bounds how many pending rows are scanned when
+// refreshing outbox_backlog_depth. Deep enough for KEDA scale-up decisions
+// without unbounded memory use on pathological backlogs.
+const backlogMetricsSampleLimit = 10000
+
+// backlogMetricsLoop periodically refreshes outbox_backlog_depth{tenant}.
+func (d *dispatcher) backlogMetricsLoop() {
+	defer d.wg.Done()
+
+	interval := d.config.PollInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	d.refreshBacklogMetrics()
+
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-ticker.C:
+			d.refreshBacklogMetrics()
+		}
+	}
+}
+
+func (d *dispatcher) refreshBacklogMetrics() {
+	events, err := d.repository.GetPendingEvents(backlogMetricsSampleLimit)
+	if err != nil {
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to refresh outbox backlog metrics: %v", err)))
+		return
+	}
+	ObserveOutboxBacklogDepth(CountPendingByTenant(events))
 }
 
 // publisherDrain processes events for a single publisher using its own cursor

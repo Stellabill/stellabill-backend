@@ -1,0 +1,394 @@
+openapi: 3.0.3
+info:
+  title: Stellabill Backend API
+  description: |
+    Stellabill backend HTTP API.
+
+    This specification covers all implemented `/api/*` routes.
+
+    Notes:
+      - Preflight CORS requests (`OPTIONS`) are handled by middleware and return `204`.
+  version: 0.2.0
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: Health
+  - name: Plans
+  - name: Subscriptions
+  - name: ContractEvents
+  - name: Idempotency
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v1/plans:
+    get:
+      tags: [Plans]
+      summary: List billing plans
+      operationId: listPlans
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor for the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+          description: Maximum number of items to return
+          example: 20
+      responses:
+        "200":
+          description: Plans list
+          headers:
+            Link:
+              $ref: "#/components/headers/Link"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlansResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List subscriptions
+      operationId: listSubscriptions
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor for the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+          description: Maximum number of items to return
+          example: 20
+      responses:
+        "200":
+          description: Subscriptions list
+          headers:
+            Link:
+              $ref: "#/components/headers/Link"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/subscriptions/{id}:
+    get:
+      tags: [Subscriptions]
+      summary: Get one subscription
+      operationId: getSubscriptionV1
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Subscription identifier
+          example: "sub_123"
+      responses:
+        "200":
+          description: Subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/idempotency/{key}:
+    get:
+      tags: [Idempotency]
+      summary: Inspect an idempotency key
+      operationId: inspectIdempotencyKey
+      description: |
+        Returns the stored metadata for a previously recorded idempotency key.
+
+        Results are **tenant-scoped**: a caller can only inspect keys that were
+        created under their own tenant/caller identity. Keys that have expired
+        or were never recorded return `404`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 255
+          description: The idempotency key to inspect.
+          example: "order-abc-123"
+      responses:
+        "200":
+          description: Key found — returns stored metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdempotencyKeyRecord"
+              example:
+                key: "order-abc-123"
+                used_at: "2026-07-27T10:00:00Z"
+                expires_at: "2026-07-28T10:00:00Z"
+                status_code: 201
+                request_fingerprint: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  headers:
+    Link:
+      description: |
+        RFC 5988 (RFC 8288) Link header for cursor pagination. Always
+        includes rel="first"; includes rel="prev" when the request was not
+        for the first page, and rel="next" when more results are available.
+        Provided alongside the `pagination` object in the response body so
+        generic HTTP clients can walk the collection without parsing JSON.
+      schema:
+        type: string
+      example: '<https://api.example.com/api/v1/plans?limit=20>; rel="first", <https://api.example.com/api/v1/plans?limit=20&cursor=abc>; rel="next"'
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor for pagination
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return
+      schema:
+        type: integer
+        default: 10
+        maximum: 100
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error, message, code]
+      properties:
+        error:
+          type: string
+          description: High-level error type
+        message:
+          type: string
+          description: Human-readable error detail
+        code:
+          type: string
+          description: Machine-readable error code
+    Pagination:
+      type: object
+      additionalProperties: false
+      required: [has_more]
+      properties:
+        next_cursor:
+          type: string
+          description: Opaque token to retrieve the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        has_more:
+          type: boolean
+          description: Indicates if there are more results available
+          example: true
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: stellarbill-backend
+    Plan:
+      type: object
+      additionalProperties: false
+      required: [id, name, amount, currency, interval]
+      properties:
+        id:
+          type: string
+          example: plan_basic
+        name:
+          type: string
+          example: Basic
+        amount:
+          type: string
+          example: "1000"
+        currency:
+          type: string
+          example: NGN
+        interval:
+          type: string
+          example: monthly
+        description:
+          type: string
+          example: Starter plan
+    PlansResponse:
+      type: object
+      additionalProperties: false
+      required: [plans, pagination]
+      properties:
+        plans:
+          type: array
+          items:
+            $ref: "#/components/schemas/Plan"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    Subscription:
+      type: object
+      additionalProperties: false
+      required: [id, plan_id, customer, status, amount, interval]
+      properties:
+        id:
+          type: string
+          example: sub_123
+        plan_id:
+          type: string
+          example: plan_basic
+        customer:
+          type: string
+          example: customer_123
+        status:
+          type: string
+          example: active
+        amount:
+          type: string
+          example: "1000"
+        interval:
+          type: string
+          example: monthly
+        next_billing:
+          type: string
+          example: "2026-04-01T00:00:00Z"
+    SubscriptionsResponse:
+      type: object
+      additionalProperties: false
+      required: [subscriptions, pagination]
+      properties:
+        subscriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Subscription"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    IdempotencyKeyRecord:
+      type: object
+      additionalProperties: false
+      required: [key, used_at, expires_at, status_code, request_fingerprint]
+      description: Metadata for a stored idempotency key, scoped to the authenticated caller's tenant.
+      properties:
+        key:
+          type: string
+          description: The idempotency key that was queried.
+          example: "order-abc-123"
+        used_at:
+          type: string
+          format: date-time
+          description: When the key was first recorded (RFC 3339 UTC).
+          example: "2026-07-27T10:00:00Z"
+        expires_at:
+          type: string
+          format: date-time
+          description: When the key will be purged (RFC 3339 UTC).
+          example: "2026-07-28T10:00:00Z"
+        status_code:
+          type: integer
+          description: |
+            HTTP status code stored with the completed response.
+            `0` indicates the original request is still in-flight.
+          example: 201
+        request_fingerprint:
+          type: string
+          description: SHA-256 hex digest of the original request body, used to detect key reuse with a different payload.
+          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  responses:
+    BadRequest:
+      description: Validation or client error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            PaginationLimitExceeded:
+              value:
+                error: "Bad Request"
+                message: "Pagination limit cannot exceed 100 items."
+                code: "validation_error"
+            InvalidCursorFormat:
+              value:
+                error: "Bad Request"
+                message: "Invalid pagination cursor format provided."
+                code: "invalid_cursor"
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            TokenMissing:
+              value:
+                error: "Unauthorized"
+                message: "Authentication token is missing or invalid."
+                code: "auth_unauthorized"
+            TokenExpired:
+              value:
+                error: "Unauthorized"
+                message: "Authentication token has expired."
+                code: "auth_token_expired"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            AccessDenied:
+              value:
+                error: "Forbidden"
+                message: "You do not have permission to access this resource."
+                code: "auth_forbidden"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            ResourceNotFound:
+              value:
+                error: "Not Found"
+                message: "The requested subscription could not be found."
+                code: "resource_not_found"

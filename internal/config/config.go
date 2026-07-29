@@ -41,37 +41,43 @@ func (e *ConfigError) Error() string {
 
 // Config holds all application configuration
 type Config struct {
-	Env       string
-	Port      int
-	DBConn    string
-	JWTSecret string
-	// Add additional secure defaults for optional configs
-	MaxHeaderBytes int
-	ReadTimeout    int
-	WriteTimeout   int
-	IdleTimeout    int
-	AllowedOrigins string
-	AdminToken     string
-	DBReplicaConn  string
+	Env                    string   `json:"env"`
+	Port                   int      `json:"port"`
+	DBConn                 string   `json:"db_conn" secret:"true"`
+	JWTSecret              string   `json:"jwt_secret" secret:"true"`
+	MaxHeaderBytes         int      `json:"max_header_bytes"`
+	ReadTimeout            int      `json:"read_timeout"`
+	WriteTimeout           int      `json:"write_timeout"`
+	IdleTimeout            int      `json:"idle_timeout"`
+	AllowedOrigins         string   `json:"allowed_origins"`
+	AdminToken             string   `json:"admin_token" secret:"true"`
+	DBReplicaConn          string   `json:"db_replica_conn" secret:"true"`
 	// Rate limiting configuration
-	RateLimitEnabled   bool
-	RateLimitMode      string
-	RateLimitRPS       int
-	RateLimitBurst     int
-	RateLimitWhitelist []string
+	RateLimitEnabled   bool     `json:"rate_limit_enabled"`
+	RateLimitMode      string   `json:"rate_limit_mode"`
+	RateLimitRPS       int      `json:"rate_limit_rps"`
+	RateLimitBurst     int      `json:"rate_limit_burst"`
+	RateLimitWhitelist []string `json:"rate_limit_whitelist"`
 	// Tracing configuration
-	TracingExporter        string
-	TracingServiceName     string
-	SecurityFrameAncestors string
-	SpiffeSocketPath   string
-	SpiffeTrustDomain  string
-	MaxRequestSize         int64
-	MaxGzipUncompressed    int64
-	MaxGzipRatio           float64
+	TracingExporter        string  `json:"tracing_exporter"`
+	TracingServiceName     string  `json:"tracing_service_name"`
+	SecurityFrameAncestors string  `json:"security_frame_ancestors"`
+	SpiffeSocketPath       string  `json:"spiffe_socket_path"`
+	SpiffeTrustDomain      string  `json:"spiffe_trust_domain"`
+	MaxRequestSize         int64   `json:"max_request_size"`
+	MaxGzipUncompressed    int64   `json:"max_gzip_uncompressed"`
+	MaxGzipRatio           float64 `json:"max_gzip_ratio"`
+	// OTelLogsEnabled enables the OTel Logs bridge when true.
+	// Controlled by OTEL_LOGS_ENABLED (default: false).
+	// When enabled, structured log records are shipped to an OTLP endpoint
+	// alongside traces.  Set OTEL_EXPORTER_OTLP_ENDPOINT (or
+	// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) to point at your collector.
+	OTelLogsEnabled bool `json:"otel_logs_enabled"`
+
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
-	RedisURL   string
-	CacheTTL   int // seconds; default 60
+	RedisURL string `json:"redis_url" secret:"true"`
+	CacheTTL int    `json:"cache_ttl"`
 
 	// DB connection pool tuning.
 	// All durations are in seconds to keep env-var parsing uniform.
@@ -87,13 +93,13 @@ type Config struct {
 	//   DB_POOL_HEALTH_CHECK_PERIOD  (default 30)  – how often pgxpool probes idle conns.
 	//   DB_POOL_METRICS_INTERVAL     (default 15)  – how often pool stats are scraped
 	//                                                 into Prometheus gauges.
-	DBPoolMaxConns          int
-	DBPoolMinConns          int
-	DBPoolMaxConnLifetime   int // seconds
-	DBPoolMaxConnIdleTime   int // seconds
-	DBPoolConnectTimeout    int // seconds
-	DBPoolHealthCheckPeriod int // seconds
-	DBPoolMetricsInterval   int // seconds
+	DBPoolMaxConns          int `json:"db_pool_max_conns"`
+	DBPoolMinConns          int `json:"db_pool_min_conns"`
+	DBPoolMaxConnLifetime   int `json:"db_pool_max_conn_lifetime"`
+	DBPoolMaxConnIdleTime   int `json:"db_pool_max_conn_idle_time"`
+	DBPoolConnectTimeout    int `json:"db_pool_connect_timeout"`
+	DBPoolHealthCheckPeriod int `json:"db_pool_health_check_period"`
+	DBPoolMetricsInterval   int `json:"db_pool_metrics_interval"`
 
 	// PgBouncer sidecar configuration.
 	//
@@ -114,11 +120,16 @@ type Config struct {
 	//   PGBOUNCER_MAX_CONN_IDLE_IN_TRANSACTION  (default 30) – idle-in-transaction
 	//                             server-side timeout forwarded into pgbouncer.ini
 	//                             as query_wait_timeout / idle_transaction_timeout.
-	PgBouncerEnabled        bool
-	PgBouncerHost           string
-	PgBouncerPort           int
-	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
-	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+	PgBouncerEnabled         bool   `json:"pgbouncer_enabled"`
+	PgBouncerHost            string `json:"pgbouncer_host"`
+	PgBouncerPort            int    `json:"pgbouncer_port"`
+	DBStatementCacheMode     string `json:"db_statement_cache_mode"`
+	PgBouncerIdleInTxTimeout int    `json:"pgbouncer_idle_in_tx_timeout"`
+
+	// GracefulShutdownTimeout controls the maximum time (in seconds) the server
+	// waits for in-flight requests and connection pools to drain before forcing
+	// shutdown.  Defaults to DefaultGracefulShutdownTimeout (30s).
+	GracefulShutdownTimeout int `json:"graceful_shutdown_timeout"`
 }
 
 // ValidationResult holds the result of configuration validation
@@ -243,6 +254,7 @@ func Load(opts ...Option) (Config, error) {
 		IdleTimeout:            DefaultIdleTimeout,
 		TracingExporter:        getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName:     getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		OTelLogsEnabled:        getEnvBool("OTEL_LOGS_ENABLED", false),
 		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
@@ -264,6 +276,7 @@ func Load(opts ...Option) (Config, error) {
 		PgBouncerPort:            DefaultPgBouncerPort,
 		DBStatementCacheMode:     DefaultDBStatementCacheMode,
 		PgBouncerIdleInTxTimeout: DefaultPgBouncerIdleInTxTimeout,
+		GracefulShutdownTimeout:  DefaultGracefulShutdownTimeout,
 	}
 
 	// Resolve secrets through the provider
@@ -693,6 +706,16 @@ func getEnvInt64(key string, fallback int64) int64 {
 	if v := os.Getenv(key); v != "" {
 		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return i
+		}
+	}
+	return fallback
+}
+
+// getEnvBool retrieves an environment variable as bool with a fallback value.
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return fallback

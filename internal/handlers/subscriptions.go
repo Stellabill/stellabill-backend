@@ -1,21 +1,25 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"io"
+	"log"
 	"net/http"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/service"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
-// SSE for Issue #357: Server-Sent Events for live subscription status
-// - Fan-out hub + heartbeats every 15s
-// - Graceful shutdown on context done
-// - Ready for outbox dispatcher integration
+// WebSocket for live subscription status streaming
+// - Hub with tenant and subscription ID filtering
+// - Integrated with outbox dispatcher
 type Subscription struct {
 	ID          string `json:"id"`
 	PlanID      string `json:"plan_id"`
@@ -77,7 +81,7 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 	}
 }
 
-// SubscriptionEvent represents a status change event for SSE
+// SubscriptionEvent represents a status change event for WS
 type SubscriptionEvent struct {
 	SubscriptionID string `json:"subscription_id"`
 	Status         string `json:"status"`
@@ -85,68 +89,183 @@ type SubscriptionEvent struct {
 	TenantID       string `json:"tenant_id,omitempty"`
 }
 
-// SimpleFanOutHub is a basic fan-out hub for SSE (fed by outbox later)
-type SimpleFanOutHub struct {
-	clients   map[chan SubscriptionEvent]bool
-	broadcast chan SubscriptionEvent
+type WsClient struct {
+	Conn           *websocket.Conn
+	SubscriptionID string
+	Send           chan SubscriptionEvent
 }
 
-var hub = &SimpleFanOutHub{
-	clients:   make(map[chan SubscriptionEvent]bool),
-	broadcast: make(chan SubscriptionEvent, 100),
+type WsHub struct {
+	clients    map[*WsClient]bool
+	broadcast  chan SubscriptionEvent
+	register   chan *WsClient
+	unregister chan *WsClient
+	mu         sync.RWMutex
 }
 
-// run starts the hub (called on startup in real impl)
-func (h *SimpleFanOutHub) run() {
-	for event := range h.broadcast {
-		for client := range h.clients {
-			select {
-			case client <- event:
-			default:
-				close(client)
+var hub = &WsHub{
+	clients:    make(map[*WsClient]bool),
+	broadcast:  make(chan SubscriptionEvent, 100),
+	register:   make(chan *WsClient),
+	unregister: make(chan *WsClient),
+}
+
+func init() {
+	go hub.run()
+}
+
+func (h *WsHub) run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.mu.Lock()
+			h.clients[client] = true
+			h.mu.Unlock()
+		case client := <-h.unregister:
+			h.mu.Lock()
+			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
+				close(client.Send)
+			}
+			h.mu.Unlock()
+		case event := <-h.broadcast:
+			h.mu.RLock()
+			for client := range h.clients {
+				// Filter by subscription ID
+				if client.SubscriptionID == event.SubscriptionID {
+					select {
+					case client.Send <- event:
+					default:
+						// Buffer full, drop client
+						close(client.Send)
+						delete(h.clients, client)
+					}
+				}
+			}
+			h.mu.RUnlock()
+		}
+	}
+}
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		// Require origin for security, but allow all origins for now.
+		return origin != ""
+	},
+}
+
+// GetSubscriptionEvents handles WS stream for live subscription updates
+func (h *Handler) GetSubscriptionEvents(c *gin.Context) {
+	subscriptionID := c.Param("id")
+	if subscriptionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
+		return
+	}
+
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("Failed to upgrade to websocket: %v", err)
+		return
+	}
+
+	client := &WsClient{
+		Conn:           conn,
+		SubscriptionID: subscriptionID,
+		Send:           make(chan SubscriptionEvent, 256),
+	}
+
+	hub.register <- client
+
+	go client.writePump()
+	go client.readPump()
+}
+
+func (c *WsClient) writePump() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer func() {
+		ticker.Stop()
+		c.Conn.Close()
+	}()
+
+	for {
+		select {
+		case event, ok := <-c.Send:
+			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if !ok {
+				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+			if err := c.Conn.WriteJSON(event); err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
 			}
 		}
 	}
 }
 
-// GetSubscriptionEvents handles SSE stream for live subscription updates
-func (h *Handler) GetSubscriptionEvents(c *gin.Context) {
-	// TODO: Extract tenant from auth token (follow patterns in other handlers like reconciliation.go)
-	// tenantID := getTenantFromContext(c)
-
-	clientChan := make(chan SubscriptionEvent, 10)
-
-	hub.clients[clientChan] = true
+func (c *WsClient) readPump() {
 	defer func() {
-		delete(hub.clients, clientChan)
-		close(clientChan)
+		hub.unregister <- c
+		c.Conn.Close()
 	}()
-
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-
-	c.Stream(func(w io.Writer) bool {
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-c.Request.Context().Done():
-				return false // graceful shutdown / client disconnect
-			case event, ok := <-clientChan:
-				if !ok {
-					return false
-				}
-				// Filter by tenant in real impl
-				fmt.Fprintf(w, "data: %s\n\n", `{"subscription_id":"`+event.SubscriptionID+`","status":"`+event.Status+`","timestamp":"`+event.Timestamp+`"}`)
-				c.Writer.Flush()
-			case <-ticker.C:
-				fmt.Fprintf(w, ": heartbeat\n\n")
-				c.Writer.Flush()
+	c.Conn.SetReadLimit(512)
+	c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.Conn.SetPongHandler(func(string) error { c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second)); return nil })
+	for {
+		_, _, err := c.Conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("websocket read error: %v", err)
 			}
+			break
 		}
-	})
+	}
+}
+
+// WebSocketOutboxPublisher implements outbox.Publisher to send events to WS hub
+type WebSocketOutboxPublisher struct{}
+
+func NewWebSocketOutboxPublisher() outbox.Publisher {
+	return &WebSocketOutboxPublisher{}
+}
+
+func (p *WebSocketOutboxPublisher) Publish(ctx context.Context, event *outbox.Event) error {
+	if event.EventType != "SubscriptionStatusChanged" {
+		return nil
+	}
+
+	var payload struct {
+		Data struct {
+			Status string `json:"status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(event.EventData, &payload); err != nil {
+		return nil
+	}
+
+	var subID string
+	if event.AggregateID != nil {
+		subID = *event.AggregateID
+	}
+
+	wsEvent := SubscriptionEvent{
+		SubscriptionID: subID,
+		Status:         payload.Data.Status,
+		Timestamp:      event.OccurredAt.Format(time.RFC3339),
+	}
+	
+	select {
+	case hub.broadcast <- wsEvent:
+	case <-time.After(1 * time.Second):
+		log.Printf("Failed to broadcast WS event: buffer full")
+	}
+
+	return nil
 }

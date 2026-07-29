@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -65,6 +66,21 @@ func ValidateUUID(id string) error {
 	err := validate.Var(id, "required,uuid")
 	if err != nil {
 		return fmt.Errorf("invalid UUID format")
+	}
+	return nil
+}
+
+// ValidateMergePatch validates a JSON merge-patch payload by rejecting unknown
+// fields while permitting explicit nulls and omitting unchanged values.
+func ValidateMergePatch(payload map[string]json.RawMessage, allowedFields []string) error {
+	allowed := make(map[string]struct{}, len(allowedFields))
+	for _, field := range allowedFields {
+		allowed[field] = struct{}{}
+	}
+	for field := range payload {
+		if _, ok := allowed[field]; !ok {
+			return fmt.Errorf("unknown field %q", field)
+		}
 	}
 	return nil
 }

@@ -73,6 +73,61 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 	c.JSON(http.StatusOK, sub)
 }
 
+// PatchSubscription applies a partial update to a subscription using JSON Merge Patch.
+func (h *Handler) PatchSubscription(c *gin.Context) {
+	id := c.Param("id")
+	contentType, err := parseMediaType(c.GetHeader("Content-Type"))
+	if err != nil {
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
+		return
+	}
+
+	var payload map[string]json.RawMessage
+	if contentType == "application/merge-patch+json" {
+		payload, err = decodeJSONPatchPayload(c.Request.Body, []string{"status", "plan_id", "customer", "amount", "interval", "next_billing"})
+		if err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
+			return
+		}
+	} else {
+		RespondWithError(c, http.StatusUnsupportedMediaType, ErrorCodeBadRequest, "unsupported content type")
+		return
+	}
+
+	var status string
+	var nextBilling string
+	var hasStatus bool
+	var hasNextBilling bool
+
+	if raw, ok := payload["status"]; ok {
+		if value, present, err := decodePatchStringValue(raw); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
+			return
+		} else if present {
+			status = value
+			hasStatus = true
+		}
+	}
+	if raw, ok := payload["next_billing"]; ok {
+		if value, present, err := decodePatchStringValue(raw); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
+			return
+		} else if present {
+			nextBilling = value
+			hasNextBilling = true
+		}
+	}
+
+	response := map[string]interface{}{"id": id}
+	if hasStatus {
+		response["status"] = status
+	}
+	if hasNextBilling {
+		response["next_billing"] = nextBilling
+	}
+	c.JSON(http.StatusOK, response)
+}
+
 // NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full
 // subscription detail using the provided SubscriptionService.
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {

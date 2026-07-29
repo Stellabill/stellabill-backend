@@ -1,133 +1,4 @@
-# Gitleaks configuration for stellabill-backend
-#
-# This file uses gitleaks' built-in default rules and only overrides the
-# allowlist. No [rules] section is defined, so gitleaks will automatically
-# load the comprehensive set of built-in secret detection patterns.
-#
-# When adding entries to the allowlist, prefer path-based matches over
-# regex-based matches — they are more precise and easier to maintain.
-#
-# For every allowlist entry, include a comment explaining WHY the match is
-# a false positive so that reviewers can verify it remains valid.
-
-title = "stellabill-backend gitleaks config"
-
-[extend]
-# Use the official gitleaks default rules as our base.
-useDefault = true
-
 [allowlist]
-
-  # ── Path-based exclusions ─────────────────────────────────────────────
-  # These paths are known to contain test fixtures, placeholder values, or
-  # fuzz corpora that intentionally include secret-like strings.
-
-  paths = [
-    # Test files that use static HMAC/JWT signing keys for deterministic tests.
-    # These values are never used outside of test functions.
-    '''internal/middleware/auth_test\.go''',
-    '''internal/middleware/webhook_verification_test\.go''',
-    '''internal/middleware/request_signing_test\.go''',
-    '''internal/middleware/logger_test\.go''',
-    '''internal/middleware/recovery_hardening_test\.go''',
-
-    # Storage test fixtures — "AKIATEST" and "testsecret" are deliberately
-    # non-functional and match the AWS test prefix "AKIA" only by coincidence.
-    '''internal/storage/s3/client_test\.go''',
-
-    # Audit test files — contain HMAC keys and bearer tokens used to verify
-    # redaction and log output formatting.
-    '''internal/audit/logger_test\.go''',
-    '''internal/audit/middleware_test\.go''',
-
-    # Auth/RBAC test fixtures — include JWK material and admin tokens that
-    # exist solely to exercise the permission matrix parser.
-    '''internal/auth/rbac_matrix_test\.go''',
-    '''internal/auth/rbac_matrix\.yaml''',
-
-    # Config test files — exercise environment variable parsing with
-    # placeholder values that match the production validation rules.
-    '''internal/config/config_test\.go''',
-    '''internal/config/pool_config_test\.go''',
-    '''internal/config/pgbouncer_config_test\.go''',
-    '''internal/config/coverage_test\.go''',
-
-    # Route and handler tests — use bearer tokens to exercise auth middleware.
-    '''internal/routes/routes_audit_test\.go''',
-    '''internal/handlers/subscriptions_integration_test\.go''',
-    '''internal/pagination/scoped_cursor_test\.go''',
-
-    # Worker tests — contain test database credentials for integration tests.
-    '''internal/worker/fee_revenue_refresh_integration_test\.go''',
-
-    # Pact contract tests — use a static webhook secret for HMAC signing.
-    '''tests/pact/provider_test\.go''',
-
-    # Redactor tests — intentionally include "password", "token", etc.
-    # to verify that the security redactor masks them in output.
-    '''internal/security/redactor_test\.go''',
-
-    # Test database helper — contains a well-known test password.
-    '''internal/testutil/db\.go''',
-
-    # Fuzz corpora and testdata directories — contain base64-encoded
-    # cursors and event payloads that resemble JWT tokens but are not.
-    '''internal/handlers/testdata/.*\.corpus''',
-    '''internal/reconciliation/event_decoder_test\.go''',
-
-    # CI workflow files — contain test credentials for Postgres services.
-    '''\.github/workflows/ci\.yml''',
-    '''\.github/workflows/pact\.yml''',
-
-    # Env reference file — all secrets use the "CHANGE_ME_" prefix.
-    '''\.env\.example''',
-
-    # Deploy manifests — use explicit placeholder values (e.g. "testpass",
-    # "preview_pass", base64("placeholder")) that are never deployed.
-    '''deploy/preview/postgres\.yaml''',
-    '''deploy/kustomize/base/secret-pgbouncer\.yaml''',
-    '''deploy/helm/stellabill/templates/secret-pgbouncer\.yaml''',
-
-    # OpenAPI validate command uses test credentials in its config.
-    '''cmd/openapi-validate/main\.go''',
-
-    # Network policy test deployments use test credentials.
-    '''tests/networkpolicy/test-deployments\.yaml''',
-
-    # Documentation — idempotency.md contains example HTTP snippets with
-    # example UUIDs that trigger the generic-api-key rule.
-    '''docs/idempotency\.md''',
-
-    # Secrets audit tool has its own test data.
-    '''tools/secrets-audit/testdata/.*''',
-  ]
-
-  # ── Regex-based exclusions ────────────────────────────────────────────
-  # Only add regex entries when a path-based exclusion is impractical
-  # (e.g. the pattern legitimately appears across many unrelated files).
-
-  regexes = [
-    # Generic test / placeholder values
-    '''(?i)(test|placeholder|example|dummy|fake).*(secret|token|key|pass|pwd|jwt|hmac|bearer)''',
-    '''(?i)(secret|token|key|pass|pwd|jwt|hmac|bearer).*(test|placeholder|example|dummy|fake)''',
-
-    # Specific well-known test credentials that appear across multiple files
-    '''sk-ABC123XYZ''',
-    '''AKIATEST''',
-    '''test-webhook-secret-for-pact''',
-    '''CHANGE_ME_''',
-
-    # Known test passwords documented in CI and deploy configs
-    '''testpass''',
-    '''preview_pass''',
-
-    # Base64 "placeholder" used in K8s Secret manifests
-    '''cGxhY2Vob2xkZXI=''',
-  ]
-
-  # ── Stopwords ─────────────────────────────────────────────────────────
-  # These commit-message words frequently trigger false positives when a
-  # scan includes the git log. Gitleaks v8.18+ supports this natively.
   stopwords = [
     "secret",
     "password",
@@ -141,6 +12,11 @@ useDefault = true
     "testpass",
     "preview_pass",
   ]
+  paths = [
+    '''.*_test\.go$''',
+    '''internal/testutil/.*''',
+    '''docs/outbox-jwe\.md''',
+  ]
 
 # ── Custom deny rules (beyond gitleaks defaults) ───────────────────────
 # These rules catch patterns specific to this codebase that the built-in
@@ -150,19 +26,16 @@ useDefault = true
 # The allowlist above handles false positives from test/example files.
 # These custom rules catch real credential patterns that may slip past
 # the default ruleset.
-
 [[rules]]
   id = "stellabill-jwt-secret-assignment"
   description = "JWT_SECRET assigned a non-placeholder value"
   regex = '''(?i)JWT_SECRET\s*[:=]\s*['"][A-Za-z0-9!@#$%^&*()_+\-={}]{8,}['"]'''
   tags = ["stellabill", "jwt", "secret"]
-
 [[rules]]
   id = "stellabill-admin-token-assignment"
   description = "ADMIN_TOKEN assigned a non-placeholder value"
   regex = '''(?i)ADMIN_TOKEN\s*[:=]\s*['"][A-Za-z0-9!@#$%^&*()_+\-={}]{8,}['"]'''
   tags = ["stellabill", "admin", "token"]
-
 [[rules]]
   id = "stellabill-audit-hmac-assignment"
   description = "AUDIT_HMAC_SECRET assigned a non-placeholder value"

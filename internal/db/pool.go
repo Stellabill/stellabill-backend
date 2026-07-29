@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/servertiming"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -98,7 +98,7 @@ func (t *timingTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.T
 func (t *timingTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryEndData) {
 	startVal := ctx.Value(queryStartTimeKey{})
 	if start, ok := startVal.(time.Time); ok {
-		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+		if rec := servertiming.FromContext(ctx); rec != nil {
 			rec.RecordDB(time.Since(start))
 		}
 	}

@@ -1,0 +1,75 @@
+name: Trivy Container Scan
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/trivy-scan.yml'
+      - '.trivyignore'
+  pull_request:
+    branches: [main, master, develop]
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 06:00 UTC
+
+permissions:
+  contents: read
+  security-events: write  # Required for SARIF upload to code scanning
+
+concurrency:
+  group: trivy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-scan:
+    name: Trivy Image Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build Go binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-s -w" \
+            -trimpath \
+            -o /tmp/server \
+            ./cmd/server
+
+      - name: Build Docker image
+        run: |
+          docker build -t stellabill:ci -f Dockerfile .
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: image
+          image-ref: stellabill:ci
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          ignore-unfixed: false
+          vuln-type: os,library
+          cache-dir: /tmp/.trivy-cache
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.trivy-cache
+          key: trivy-db-${{ runner.os }}
+
+      - name: Upload Trivy results to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy

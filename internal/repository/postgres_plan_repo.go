@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/repository/postgres"
+	"strings"
 	"time"
 )
 
@@ -13,11 +15,6 @@ import (
 type PostgresPlanRepo struct {
 	queries *postgres.Queries
 	db      *sql.DB
-}
-
-// PostgresPlanRepo implements PlanRepository using PostgreSQL via database/sql.
-type PostgresPlanRepo struct {
-	db planDB
 }
 
 var _ PlanRepository = (*PostgresPlanRepo)(nil)
@@ -63,6 +60,53 @@ func (r *PostgresPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 		UpdatedAt:   plan.UpdatedAt,
 		Version:     plan.Version,
 	}, nil
+}
+
+// FindByIDs fetches multiple plans by IDs in a single batch IN query.
+func (r *PostgresPlanRepo) FindByIDs(ctx context.Context, ids []string) ([]*PlanRow, error) {
+	return r.FindByIDsAndTenant(ctx, ids, "")
+}
+
+// FindByIDsAndTenant fetches multiple plans by IDs and optional tenantID in a single batch IN query.
+func (r *PostgresPlanRepo) FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*PlanRow, error) {
+	if len(ids) == 0 {
+		return []*PlanRow{}, nil
+	}
+	if r.db == nil {
+		return []*PlanRow{}, nil
+	}
+	args := make([]interface{}, 0, len(ids)+1)
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, id)
+	}
+	q := "SELECT id, tenant_id, name, amount_cents::text as amount, currency, interval, description, updated_at, version FROM plans WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	if tenantID != "" {
+		args = append(args, tenantID)
+		q += fmt.Sprintf(" AND tenant_id = $%d", len(args))
+	}
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*PlanRow
+	for rows.Next() {
+		var p PlanRow
+		var desc sql.NullString
+		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.Amount, &p.Currency, &p.Interval, &desc, &p.UpdatedAt, &p.Version); err != nil {
+			return nil, err
+		}
+		p.Description = nullableDescription(desc)
+		result = append(result, &p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // List returns all plans ordered deterministically for stable API responses.

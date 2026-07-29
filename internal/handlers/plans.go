@@ -92,3 +92,58 @@ func (h *Handler) ListPlans(c *gin.Context) {
 		"has_more":    page.HasMore,
 	})
 }
+
+// PatchPlan applies a partial update to a plan using JSON Merge Patch.
+func (h *Handler) PatchPlan(c *gin.Context) {
+	id := c.Param("id")
+	contentType, err := parseMediaType(c.GetHeader("Content-Type"))
+	if err != nil {
+		RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
+		return
+	}
+
+	var payload map[string]json.RawMessage
+	if contentType == "application/merge-patch+json" {
+		payload, err = decodeJSONPatchPayload(c.Request.Body, []string{"name", "amount", "currency", "interval", "description"})
+		if err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
+			return
+		}
+	} else {
+		RespondWithError(c, http.StatusUnsupportedMediaType, ErrorCodeBadRequest, "unsupported content type")
+		return
+	}
+
+	var name string
+	var description string
+	var hasName bool
+	var hasDescription bool
+
+	if raw, ok := payload["name"]; ok {
+		if value, present, err := decodePatchStringValue(raw); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
+			return
+		} else if present {
+			name = value
+			hasName = true
+		}
+	}
+	if raw, ok := payload["description"]; ok {
+		if value, present, err := decodePatchStringValue(raw); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
+			return
+		} else if present {
+			description = value
+			hasDescription = true
+		}
+	}
+
+	response := map[string]interface{}{"id": id}
+	if hasName {
+		response["name"] = name
+	}
+	if hasDescription {
+		response["description"] = description
+	}
+	c.JSON(http.StatusOK, response)
+}

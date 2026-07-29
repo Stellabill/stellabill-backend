@@ -1,0 +1,27 @@
+version: v2
+
+# buf.gen.yaml — Code-generation configuration skeleton for future proto files.
+# No generators are active yet; add entries here when gRPC stubs are needed.
+#
+# Example (uncomment when ready):
+# plugins:
+#   - plugin: buf.build/protocolbuffers/go
+#     out: gen/go
+#     opt:
+#       - paths=source_relative
+#   - plugin: buf.build/grpc/go
+#     out: gen/go
+#     opt:
+#       - paths=source_relative
+#       - require_unimplemented_servers=false
+
+# managed mode keeps generated file options in sync automatically.
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: stellarbill-backend/gen/go
+
+# inputs are declared here so `buf generate` knows what to process.
+inputs:
+  - directory: proto

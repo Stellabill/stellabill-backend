@@ -31,6 +31,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: "ok"
+                service: "stellarbill-backend"
   /api/v1/plans:
     get:
       tags: [Plans]
@@ -60,6 +63,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlansResponse"
+              example:
+                plans:
+                  - id: "plan_basic"
+                    name: "Basic"
+                    amount: "1000"
+                    currency: "NGN"
+                    interval: "monthly"
+                    description: "Starter plan"
+                  - id: "plan_pro"
+                    name: "Pro"
+                    amount: "5000"
+                    currency: "NGN"
+                    interval: "monthly"
+                    description: "Professional plan"
+                pagination:
+                  has_more: false
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -93,6 +112,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubscriptionsResponse"
+              example:
+                subscriptions:
+                  - id: "sub_123"
+                    plan_id: "plan_basic"
+                    customer: "customer_123"
+                    status: "active"
+                    amount: "1000"
+                    interval: "monthly"
+                    next_billing: "2026-08-01T00:00:00Z"
+                pagination:
+                  has_more: false
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -119,12 +149,104 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+              example:
+                id: "sub_123"
+                plan_id: "plan_basic"
+                customer: "customer_123"
+                status: "active"
+                amount: "1000"
+                interval: "monthly"
+                next_billing: "2026-08-01T00:00:00Z"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Subscriptions]
+      summary: Partially update a subscription using JSON Merge Patch
+      operationId: patchSubscriptionV1
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Subscription identifier
+          example: "sub_123"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionPatch"
+      responses:
+        "200":
+          description: Subscription updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+  /api/v1/plans:
+    get:
+      tags: [Plans]
+      summary: List billing plans
+      operationId: listPlans
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor for the next page of results
+          example: "Y3Vyc29yX25leHRfcGFnZQ=="
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+          description: Maximum number of items to return
+          example: 20
+      responses:
+        "200":
+          description: Plans list
+          headers:
+            Link:
+              $ref: "#/components/headers/Link"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlansResponse"
+              example:
+                plans:
+                  - id: "plan_basic"
+                    name: "Basic"
+                    amount: "1000"
+                    currency: "NGN"
+                    interval: "monthly"
+                    description: "Starter plan"
+                  - id: "plan_pro"
+                    name: "Pro"
+                    amount: "5000"
+                    currency: "NGN"
+                    interval: "monthly"
+                    description: "Professional plan"
+                pagination:
+                  has_more: false
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/v1/idempotency/{key}:
     get:
       tags: [Idempotency]
@@ -167,6 +289,13 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 components:
+  responses:
+    UnsupportedMediaType:
+      description: Unsupported content type
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   headers:
     Link:
       description: |
@@ -194,6 +323,22 @@ components:
         default: 10
         maximum: 100
   schemas:
+    SubscriptionPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+        plan_id:
+          type: string
+        customer:
+          type: string
+        amount:
+          type: string
+        interval:
+          type: string
+        next_billing:
+          type: [string, 'null']
     Error:
       type: object
       additionalProperties: false

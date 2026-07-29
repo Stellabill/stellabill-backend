@@ -1,0 +1,30 @@
+version: v2
+
+# buf.yaml — Buf configuration for stellabill-backend
+# Manages OpenAPI spec linting (via buf plugins) and future proto files.
+# See docs/buf.md for conventions and CI integration notes.
+
+modules:
+  # Future proto source root. Add .proto files here when gRPC is introduced.
+  - path: proto
+    excludes: []
+
+# Lint rules enforce naming and style conventions across all managed specs.
+lint:
+  use:
+    - DEFAULT
+  except:
+    # FIELD_LOWER_SNAKE_CASE is relaxed for OpenAPI-generated stubs where
+    # camelCase names are canonical on the wire.
+    - FIELD_LOWER_SNAKE_CASE
+  enum_zero_value_suffix: _UNSPECIFIED
+  rpc_allow_same_request_response: false
+  rpc_allow_google_protobuf_empty_requests: false
+  rpc_allow_google_protobuf_empty_responses: false
+
+# Breaking-change detection compares against the main branch.
+# Blocking rules: field removal, type change, enum value removal.
+breaking:
+  use:
+    - FILE
+  ignore_unstable_packages: true

@@ -18,6 +18,10 @@
 //
 //	PACT_BROKER_URL=https://your-broker.example.com
 //	PACT_BROKER_TOKEN=<token>
+//
+// When PACT_BROKER_URL is set, the verifier fetches pacts from the broker,
+// verifies each interaction, and publishes the verification result back
+// to the broker.
 package pact
 
 import (
@@ -25,6 +29,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -57,28 +62,6 @@ func computeHMAC(secret, body string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-type PactInteraction struct {
-	Description   string `json:"description"`
-	ProviderState string `json:"providerState"`
-	Request       struct {
-		Method  string            `json:"method"`
-		Path    string            `json:"path"`
-		Headers map[string]string `json:"headers"`
-		Body    interface{}       `json:"body"`
-	} `json:"request"`
-	Response struct {
-		Status  int               `json:"status"`
-		Headers map[string]string `json:"headers"`
-		Body    interface{}       `json:"body"`
-	} `json:"response"`
-}
-
-type PactFile struct {
-	Consumer     struct{ Name string } `json:"consumer"`
-	Provider     struct{ Name string } `json:"provider"`
-	Interactions []PactInteraction     `json:"interactions"`
-}
-
 func loadFixtures(t *testing.T) []PactInteraction {
 	t.Helper()
 	dir := filepath.Join("fixtures")
@@ -104,6 +87,22 @@ func loadFixtures(t *testing.T) []PactInteraction {
 	return all
 }
 
+func loadInteractionsFromBroker(t *testing.T, broker *BrokerConfig) []PactInteraction {
+	t.Helper()
+	pacts, err := broker.FetchLatestPacts()
+	if err != nil {
+		t.Fatalf("failed to fetch pacts from broker: %v", err)
+	}
+	var all []PactInteraction
+	for _, pact := range pacts {
+		all = append(all, pact.Interactions...)
+	}
+	if len(all) == 0 {
+		t.Fatal("no pact interactions found from broker")
+	}
+	return all
+}
+
 func applyProviderState(t *testing.T, state string) {
 	t.Helper()
 	switch state {
@@ -114,79 +113,125 @@ func applyProviderState(t *testing.T, state string) {
 	}
 }
 
+func verifyInteraction(t *testing.T, server *gin.Engine, interaction PactInteraction) {
+	t.Helper()
+
+	bodyBytes, err := json.Marshal(interaction.Request.Body)
+	if err != nil {
+		t.Fatalf("failed to marshal request body: %v", err)
+	}
+	bodyStr := string(bodyBytes)
+
+	sig := computeHMAC(testWebhookSecret, bodyStr)
+
+	req := httptest.NewRequest(
+		interaction.Request.Method,
+		interaction.Request.Path,
+		strings.NewReader(bodyStr),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(middleware.WebhookSignatureHeader, sig)
+
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != interaction.Response.Status {
+		t.Errorf("interaction %q: expected status %d, got %d\nbody: %s",
+			interaction.Description,
+			interaction.Response.Status,
+			rec.Code,
+			rec.Body.String(),
+		)
+	}
+
+	if interaction.Response.Body != nil {
+		var got map[string]interface{}
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatalf("interaction %q: failed to decode response: %v", interaction.Description, err)
+		}
+		expected, ok := interaction.Response.Body.(map[string]interface{})
+		if !ok {
+			t.Fatalf("interaction %q: fixture response body is not an object", interaction.Description)
+		}
+		for key, wantVal := range expected {
+			gotVal, exists := got[key]
+			if !exists {
+				t.Errorf("interaction %q: response missing field %q", interaction.Description, key)
+				continue
+			}
+			if wantVal != gotVal {
+				t.Errorf("interaction %q: field %q = %v, want %v",
+					interaction.Description, key, gotVal, wantVal)
+			}
+		}
+	}
+}
+
 func TestWebhookProviderPact(t *testing.T) {
-	interactions := loadFixtures(t)
-	if len(interactions) == 0 {
-		t.Fatal("no pact interactions found in fixtures/")
+	broker := BrokerFromEnv()
+
+	var interactions []PactInteraction
+	if broker != nil {
+		t.Log("using Pact Broker at", broker.BaseURL)
+		interactions = loadInteractionsFromBroker(t, broker)
+	} else {
+		t.Log("using local fixtures")
+		interactions = loadFixtures(t)
 	}
 
 	server := buildTestServer()
+	allPassed := true
 
 	for _, interaction := range interactions {
 		interaction := interaction
 		t.Run(interaction.Description, func(t *testing.T) {
 			applyProviderState(t, interaction.ProviderState)
-
-			// Serialize the request body to JSON
-			bodyBytes, err := json.Marshal(interaction.Request.Body)
-			if err != nil {
-				t.Fatalf("failed to marshal request body: %v", err)
-			}
-			bodyStr := string(bodyBytes)
-
-			// Compute real HMAC for this body
-			sig := computeHMAC(testWebhookSecret, bodyStr)
-
-			// Build the HTTP request
-			req := httptest.NewRequest(
-				interaction.Request.Method,
-				interaction.Request.Path,
-				strings.NewReader(bodyStr),
-			)
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set(middleware.WebhookSignatureHeader, sig)
-
-			rec := httptest.NewRecorder()
-			server.ServeHTTP(rec, req)
-
-			// Assert status code
-			if rec.Code != interaction.Response.Status {
-				t.Errorf("interaction %q: expected status %d, got %d\nbody: %s",
-					interaction.Description,
-					interaction.Response.Status,
-					rec.Code,
-					rec.Body.String(),
-				)
-			}
-
-			// Assert response body fields match expectations
-			if interaction.Response.Body != nil {
-				var got map[string]interface{}
-				if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
-					t.Fatalf("interaction %q: failed to decode response: %v", interaction.Description, err)
-				}
-				expected, ok := interaction.Response.Body.(map[string]interface{})
-				if !ok {
-					t.Fatalf("interaction %q: fixture response body is not an object", interaction.Description)
-				}
-				for key, wantVal := range expected {
-					gotVal, exists := got[key]
-					if !exists {
-						t.Errorf("interaction %q: response missing field %q", interaction.Description, key)
-						continue
-					}
-					if wantVal != gotVal {
-						t.Errorf("interaction %q: field %q = %v, want %v",
-							interaction.Description, key, gotVal, wantVal)
-					}
-				}
+			verifyInteraction(t, server, interaction)
+			if t.Failed() {
+				allPassed = false
 			}
 		})
 	}
+
+	// Publish verification results to broker when configured.
+	if broker != nil {
+		// Use the GIT_COMMIT env var set by CI, or a fallback tag.
+		providerVersion := os.Getenv("GIT_COMMIT")
+		if providerVersion == "" {
+			providerVersion = "local-verification"
+		}
+
+		for _, pact := range getConsumersFromBroker(t, broker) {
+			if err := broker.PublishVerificationResult(pact, allPassed); err != nil {
+				t.Logf("warning: failed to publish verification result for %s: %v", pact, err)
+			} else {
+				t.Logf("verification result published to broker for consumer %s (success=%v)", pact, allPassed)
+			}
+		}
+	}
 }
 
-// TestWebhookProviderPact_MissingSignature verifies that requests without
-// the signature header are rejected with 401.
+func getConsumersFromBroker(t *testing.T, broker *BrokerConfig) []string {
+	t.Helper()
+	pacts, err := broker.FetchLatestPacts()
+	if err != nil {
+		t.Fatalf("failed to list consumers from broker: %v", err)
+	}
+	var consumers []string
+	seen := make(map[string]bool)
+	for _, p := range pacts {
+		name := p.Consumer.Name
+		if !seen[name] {
+			consumers = append(consumers, name)
+			seen[name] = true
+		}
+	}
+	if len(consumers) == 0 {
+		consumers = append(consumers, "stellabill-webhook-consumer")
+	}
+	return consumers
+}
+
 func TestWebhookProviderPact_MissingSignature(t *testing.T) {
 	server := buildTestServer()
 
@@ -209,8 +254,6 @@ func TestWebhookProviderPact_MissingSignature(t *testing.T) {
 	}
 }
 
-// TestWebhookProviderPact_InvalidSignature verifies that requests with a
-// wrong signature are rejected with 401.
 func TestWebhookProviderPact_InvalidSignature(t *testing.T) {
 	server := buildTestServer()
 
@@ -227,8 +270,6 @@ func TestWebhookProviderPact_InvalidSignature(t *testing.T) {
 	}
 }
 
-// TestWebhookProviderPact_UnknownEventType verifies that an unknown event_type
-// returns 422 with a clear error so consumers get an explicit diff.
 func TestWebhookProviderPact_UnknownEventType(t *testing.T) {
 	server := buildTestServer()
 
@@ -253,8 +294,6 @@ func TestWebhookProviderPact_UnknownEventType(t *testing.T) {
 	}
 }
 
-// TestWebhookProviderPact_SubscriptionCreated_MissingID verifies that a
-// subscription.created event without subscription_id returns 400.
 func TestWebhookProviderPact_SubscriptionCreated_MissingID(t *testing.T) {
 	server := buildTestServer()
 
@@ -273,8 +312,6 @@ func TestWebhookProviderPact_SubscriptionCreated_MissingID(t *testing.T) {
 	}
 }
 
-// TestWebhookProviderPact_StatementIssued_MissingID verifies that a
-// statement.issued event without statement_id returns 400.
 func TestWebhookProviderPact_StatementIssued_MissingID(t *testing.T) {
 	server := buildTestServer()
 
@@ -293,5 +330,6 @@ func TestWebhookProviderPact_StatementIssued_MissingID(t *testing.T) {
 	}
 }
 
-// Ensure io is used (body drain helper kept for future broker integration).
+// Ensure unused imports compile.
+var _ = fmt.Sprintf
 var _ io.Reader = strings.NewReader("")

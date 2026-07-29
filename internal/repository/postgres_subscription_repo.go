@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"stellarbill-backend/internal/repository/postgres"
+	"strings"
 	"time"
 )
 
@@ -46,6 +48,59 @@ func (r *PostgresSubscriptionRepo) FindByIDAndTenant(ctx context.Context, id str
 		return nil, err
 	}
 	return mapFindSubscriptionByTenantRow(sub), nil
+}
+
+// FindByIDsAndTenant queries subscriptions by multiple IDs and optional tenant_id in SQL.
+func (r *PostgresSubscriptionRepo) FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*SubscriptionRow, error) {
+	if len(ids) == 0 {
+		return []*SubscriptionRow{}, nil
+	}
+	if r.db == nil {
+		return []*SubscriptionRow{}, nil
+	}
+	args := make([]interface{}, 0, len(ids)+1)
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, id)
+	}
+	q := "SELECT id, plan_id, tenant_id, customer_id, status, amount, currency, interval, next_billing, updated_at, version, deleted_at FROM subscriptions WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	if tenantID != "" {
+		args = append(args, tenantID)
+		q += fmt.Sprintf(" AND tenant_id = $%d", len(args))
+	}
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*SubscriptionRow
+	for rows.Next() {
+		var s SubscriptionRow
+		var nextBilling sql.NullTime
+		var deletedAt sql.NullTime
+		if err := rows.Scan(
+			&s.ID, &s.PlanID, &s.TenantID, &s.CustomerID, &s.Status,
+			&s.Amount, &s.Currency, &s.Interval, &nextBilling,
+			&s.UpdatedAt, &s.Version, &deletedAt,
+		); err != nil {
+			return nil, err
+		}
+		if nextBilling.Valid {
+			s.NextBilling = nextBilling.Time.UTC().Format(time.RFC3339)
+		}
+		if deletedAt.Valid {
+			t := deletedAt.Time.UTC()
+			s.DeletedAt = &t
+		}
+		result = append(result, &s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // ListByTenant lists subscriptions for a given tenant.

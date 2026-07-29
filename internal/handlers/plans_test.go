@@ -5,12 +5,49 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+func TestHandler_PatchPlan_MergePatch(t *testing.T) {
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "id", Value: "plan_123"}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/plans/plan_123", strings.NewReader(`{"name":"Enterprise","description":null}`))
+	c.Request.Header.Set("Content-Type", "application/merge-patch+json")
+
+	h.PatchPlan(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "plan_123", response["id"])
+	assert.Equal(t, "Enterprise", response["name"])
+	assert.Equal(t, "", response["description"])
+}
+
+func TestHandler_PatchPlan_RejectsUnknownFields(t *testing.T) {
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "id", Value: "plan_123"}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/plans/plan_123", strings.NewReader(`{"name":"Enterprise","unexpected":true}`))
+	c.Request.Header.Set("Content-Type", "application/merge-patch+json")
+
+	h.PatchPlan(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "BAD_REQUEST", response["code"])
+}
 
 func TestListPlans(t *testing.T) {
 	gin.SetMode(gin.TestMode)

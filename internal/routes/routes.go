@@ -66,6 +66,8 @@ func Register(r *gin.Engine) {
 	planRepo := repository.NewMockPlanRepo()
 	stmtRepo := repository.NewMockStatementRepo()
 
+	r.Use(middleware.DataLoaderMiddleware(planRepo, subRepo))
+
 	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
 	svc := service.NewSubscriptionService(subRepo, planRepo)
 
@@ -100,7 +102,10 @@ func Register(r *gin.Engine) {
 	{
 		v1.GET("/subscriptions", h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
+		v1.PATCH("/subscriptions/:id", h.PatchSubscription)
+		v1.GET("/subscriptions/:id/events", h.GetSubscriptionEvents)
 		v1.GET("/plans", h.ListPlans)
+		v1.PATCH("/plans/:id", h.PatchPlan)
 		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 		v1.POST("/tenants/me/export", handlers.NewTenantExportHandler(exportJobManager))
@@ -149,6 +154,9 @@ func Register(r *gin.Engine) {
 	// Admin login (no JWT required — uses admin token directly)
 	r.POST("/api/admin/login", adminHandler.Login)
 
+	// Redacted config dump — accessible via admin JWT or admin token header
+	r.GET("/internal/config-dump", handlers.ConfigDumpHandler(&cfg))
+
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 
@@ -157,6 +165,9 @@ func Register(r *gin.Engine) {
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
+
+		// Redacted config dump under admin group with RBAC
+		admin.GET("/config-dump", auth.RequirePermission(auth.PermManageSubscriptions), handlers.ConfigDumpHandler(&cfg))
 
 		// Reconciliation — scoped by RBAC and tenant
 		adapter := reconciliation.NewMemoryAdapter()

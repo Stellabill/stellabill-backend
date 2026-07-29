@@ -107,6 +107,15 @@ func Register(r *gin.Engine) {
 		v1.GET("/operations/:id", handlers.NewOperationStatusHandler(exportJobManager))
 	}
 
+	// CSP violation reports — public (no auth; browsers send without tokens),
+	// but per-tenant rate limited to prevent DoS amplification.
+	cspRateLimiter := middleware.TenantRateLimitMiddleware(middleware.TenantRateLimitConfig{
+		Enabled: true,
+		RPS:     cfg.CSPReportRPS,
+		Burst:   cfg.CSPReportBurst,
+	})
+	v1.POST("/csp-reports", cspRateLimiter, middleware.CSPReportHandler())
+
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
 	apiProtected.Use(authMiddleware)

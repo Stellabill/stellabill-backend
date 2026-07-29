@@ -63,6 +63,16 @@ type Config struct {
 	TracingExporter        string
 	TracingServiceName     string
 	SecurityFrameAncestors string
+	// SecurityCSPReportURI is the endpoint browsers will POST CSP violation
+	// reports to. Set to the /api/v1/csp-reports sink. Leave empty to omit
+	// the report-uri directive (no collection).
+	SecurityCSPReportURI string
+	// CSPReportRPS is the per-tenant sustained rate (requests per second)
+	// allowed on the /api/v1/csp-reports endpoint. Default: 5.
+	CSPReportRPS int
+	// CSPReportBurst is the per-tenant burst size for /api/v1/csp-reports.
+	// Default: 10.
+	CSPReportBurst int
 	SpiffeSocketPath   string
 	SpiffeTrustDomain  string
 	MaxRequestSize         int64
@@ -119,6 +129,10 @@ type Config struct {
 	PgBouncerPort           int
 	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
 	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+	// GracefulShutdownTimeout is the maximum seconds the server waits for
+	// in-flight requests to complete before forcing shutdown. Env:
+	// GRACEFUL_SHUTDOWN_TIMEOUT (default: DefaultGracefulShutdownTimeout).
+	GracefulShutdownTimeout int // seconds
 }
 
 // ValidationResult holds the result of configuration validation
@@ -244,6 +258,9 @@ func Load(opts ...Option) (Config, error) {
 		TracingExporter:        getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName:     getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		SecurityCSPReportURI:   getEnv("SECURITY_CSP_REPORT_URI", "/api/v1/csp-reports"),
+		CSPReportRPS:           getEnvInt("CSP_REPORT_RPS", 5),
+		CSPReportBurst:         getEnvInt("CSP_REPORT_BURST", 10),
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
@@ -264,6 +281,7 @@ func Load(opts ...Option) (Config, error) {
 		PgBouncerPort:            DefaultPgBouncerPort,
 		DBStatementCacheMode:     DefaultDBStatementCacheMode,
 		PgBouncerIdleInTxTimeout: DefaultPgBouncerIdleInTxTimeout,
+		GracefulShutdownTimeout:  DefaultGracefulShutdownTimeout,
 	}
 
 	// Resolve secrets through the provider

@@ -172,6 +172,17 @@ var ShutdownDuration = promauto.NewHistogram(
 	},
 )
 
+// CSPReportsTotal counts CSP violations received by the /api/v1/csp-reports
+// sink. The "directive" label carries the violated-directive value extracted
+// from the report body, or "unknown" when the field is absent or unparseable.
+var CSPReportsTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "csp_reports_total",
+		Help: "Total number of CSP violation reports received, by violated directive",
+	},
+	[]string{"directive"},
+)
+
 func sanitizeLabel(value string) string {
 	if value == "" {
 		return "unknown"

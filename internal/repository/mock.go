@@ -36,6 +36,20 @@ func (m *MockSubscriptionRepo) FindByIDAndTenant(_ context.Context, id string, t
 	return row, nil
 }
 
+func (m *MockSubscriptionRepo) FindByIDsAndTenant(_ context.Context, ids []string, tenantID string) ([]*SubscriptionRow, error) {
+	idMap := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idMap[id] = true
+	}
+	var result []*SubscriptionRow
+	for _, r := range m.records {
+		if idMap[r.ID] && (tenantID == "" || r.TenantID == tenantID) {
+			result = append(result, r)
+		}
+	}
+	return result, nil
+}
+
 func (m *MockSubscriptionRepo) ListByTenant(_ context.Context, tenantID string) ([]*SubscriptionRow, error) {
 	var result []*SubscriptionRow
 	for _, r := range m.records {
@@ -79,6 +93,36 @@ func (m *MockPlanRepo) FindByID(_ context.Context, id string) (*PlanRow, error) 
 		return nil, ErrNotFound
 	}
 	return row, nil
+}
+
+// FindByIDs returns PlanRows matching any of the given IDs.
+func (m *MockPlanRepo) FindByIDs(_ context.Context, ids []string) ([]*PlanRow, error) {
+	idMap := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idMap[id] = true
+	}
+	var result []*PlanRow
+	for _, r := range m.records {
+		if idMap[r.ID] {
+			result = append(result, r)
+		}
+	}
+	return result, nil
+}
+
+// FindByIDsAndTenant returns PlanRows matching any of the given IDs for a tenant.
+func (m *MockPlanRepo) FindByIDsAndTenant(_ context.Context, ids []string, tenantID string) ([]*PlanRow, error) {
+	idMap := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idMap[id] = true
+	}
+	var result []*PlanRow
+	for _, r := range m.records {
+		if idMap[r.ID] && (tenantID == "" || r.TenantID == tenantID) {
+			result = append(result, r)
+		}
+	}
+	return result, nil
 }
 
 // List returns all PlanRows stored in the mock repository.

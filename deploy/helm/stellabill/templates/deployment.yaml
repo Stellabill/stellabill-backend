@@ -1,0 +1,96 @@
+{{- $components := list "api" "worker" -}}
+{{- range $component := $components }}
+{{- $values := index $.Values $component -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $values.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "stellabill.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+    tier: {{ $values.labels.tier }}
+spec:
+  replicas: {{ $values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "stellabill.componentSelectorLabels" (dict "Chart" $.Chart "Release" $.Release "component" $component) | nindent 6 }}
+      tier: {{ $values.labels.tier }}
+  template:
+    metadata:
+      labels:
+        {{- include "stellabill.componentLabels" (dict "Chart" $.Chart "Release" $.Release "component" $component) | nindent 8 }}
+        tier: {{ $values.labels.tier }}
+        component: {{ $values.labels.component }}
+    spec:
+      {{- with $values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ $values.topologySpread.maxSkew }}
+          topologyKey: {{ $values.topologySpread.topologyKey }}
+          whenUnsatisfiable: {{ $values.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "stellabill.componentSelectorLabels" (dict "Chart" $.Chart "Release" $.Release "component" $component) | nindent 14 }}
+              tier: {{ $values.labels.tier }}
+      {{- end }}
+      containers:
+        - name: {{ $component }}
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- with $values.container.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $values.container.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: {{ $values.container.portName }}
+              containerPort: {{ $values.container.port }}
+              protocol: TCP
+          {{- with $values.container.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $values.container.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml $values.resources | nindent 12 }}
+          {{- with $values.container.volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with $values.container.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ $values.serviceAccountName | default (printf "%s-%s" $.Release.Name $component) }}
+{{- end }}

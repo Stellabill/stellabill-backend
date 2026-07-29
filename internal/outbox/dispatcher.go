@@ -20,6 +20,13 @@ type DispatcherConfig struct {
 	CleanupInterval    time.Duration
 	CompletedEventTTL  time.Duration
 	ProcessingTimeout  time.Duration
+
+	// Shard configuration. When ShardCount > 0 the dispatcher operates in
+	// sharded mode: it only processes events whose partition is in OwnedShards.
+	// Advisory locks are used to coordinate ownership across instances.
+	ShardCount        int           // total number of partitions (0 = no sharding)
+	OwnedShards       []int         // partitions this instance owns
+	HeartbeatInterval time.Duration // how often to verify advisory lock health
 }
 
 // DefaultDispatcherConfig returns default configuration
@@ -32,6 +39,7 @@ func DefaultDispatcherConfig() DispatcherConfig {
 		CleanupInterval:    1 * time.Hour,
 		CompletedEventTTL:  24 * time.Hour,
 		ProcessingTimeout:  30 * time.Second,
+		HeartbeatInterval:  30 * time.Second,
 	}
 }
 
@@ -107,6 +115,10 @@ func (d *dispatcher) Start() error {
 	d.wg.Add(1)
 	go d.cleanupLoop()
 
+	// Publish outbox_backlog_depth for KEDA / Prometheus scraping.
+	d.wg.Add(1)
+	go d.backlogMetricsLoop()
+
 	log.Println("Outbox dispatcher started")
 	return nil
 }
@@ -114,15 +126,16 @@ func (d *dispatcher) Start() error {
 // Stop stops the dispatcher
 func (d *dispatcher) Stop() error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	if !d.running {
-		return nil // Already stopped
+		d.mu.Unlock()
+		return nil
 	}
 
 	d.cancel()
-	d.wg.Wait()
 	d.running = false
+	d.mu.Unlock()
+
+	d.wg.Wait()
 
 	log.Printf("%s", security.MaskPII("Outbox dispatcher stopped"))
 	return nil
@@ -160,6 +173,43 @@ func (d *dispatcher) cleanupLoop() {
 			d.cleanupCompletedEvents()
 		}
 	}
+}
+
+// backlogMetricsSampleLimit bounds how many pending rows are scanned when
+// refreshing outbox_backlog_depth. Deep enough for KEDA scale-up decisions
+// without unbounded memory use on pathological backlogs.
+const backlogMetricsSampleLimit = 10000
+
+// backlogMetricsLoop periodically refreshes outbox_backlog_depth{tenant}.
+func (d *dispatcher) backlogMetricsLoop() {
+	defer d.wg.Done()
+
+	interval := d.config.PollInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	d.refreshBacklogMetrics()
+
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-ticker.C:
+			d.refreshBacklogMetrics()
+		}
+	}
+}
+
+func (d *dispatcher) refreshBacklogMetrics() {
+	events, err := d.repository.GetPendingEvents(backlogMetricsSampleLimit)
+	if err != nil {
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to refresh outbox backlog metrics: %v", err)))
+		return
+	}
+	ObserveOutboxBacklogDepth(CountPendingByTenant(events))
 }
 
 // publisherDrain processes events for a single publisher using its own cursor

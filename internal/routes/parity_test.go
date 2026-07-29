@@ -28,6 +28,8 @@ var exemptedRoutes = map[string]map[string]string{
 		"/api/admin/diagnostics":     "Internal diagnostic logs endpoint, requires strict admin tokens",
 		"/api/admin/reports":         "Internal reconciliation reports, operational use only",
 		"/api/admin/feature-flags":   "Internal feature flags endpoint",
+		"/api/admin/config-dump":     "Internal redacted config dump, operational use only",
+		"/internal/config-dump":      "Internal redacted config dump, operational use only",
 		"/api/metrics":               "Metrics endpoint",
 	},
 	"POST": {

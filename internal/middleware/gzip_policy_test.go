@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/brotli"
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestGzipPolicy_NoEncoding(t *testing.T) {
@@ -660,5 +662,380 @@ func TestGzipPolicy_ChunkedTransfer(t *testing.T) {
 	}
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200 for chunked gzip, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestCompressionResponse_Zstd(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain", []byte(strings.Repeat("hello world", 100)))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "zstd")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	if res.Header().Get("Content-Encoding") != "zstd" {
+		t.Fatalf("expected Content-Encoding: zstd, got %s", res.Header().Get("Content-Encoding"))
+	}
+
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("create zstd reader: %v", err)
+	}
+	defer decoder.Close()
+	decoded, err := decoder.DecodeAll(res.Body.Bytes(), nil)
+	if err != nil {
+		t.Fatalf("decompress zstd: %v", err)
+	}
+	if expected := strings.Repeat("hello world", 100); string(decoded) != expected {
+		t.Fatalf("expected %q, got %q", expected, string(decoded))
+	}
+}
+
+func TestCompressionResponse_Brotli(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain", []byte(strings.Repeat("hello world", 100)))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "br")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	if res.Header().Get("Content-Encoding") != "br" {
+		t.Fatalf("expected Content-Encoding: br, got %s", res.Header().Get("Content-Encoding"))
+	}
+
+	decoded, err := io.ReadAll(brotli.NewReader(res.Body))
+	if err != nil {
+		t.Fatalf("decompress brotli: %v", err)
+	}
+	if expected := strings.Repeat("hello world", 100); string(decoded) != expected {
+		t.Fatalf("expected %q, got %q", expected, string(decoded))
+	}
+}
+
+func TestCompressionResponse_Gzip(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain", []byte(strings.Repeat("hello world", 100)))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	if res.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("expected Content-Encoding: gzip, got %s", res.Header().Get("Content-Encoding"))
+	}
+
+	zr, err := gzip.NewReader(res.Body)
+	if err != nil {
+		t.Fatalf("create gzip reader: %v", err)
+	}
+	defer zr.Close()
+	decoded, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("decompress gzip: %v", err)
+	}
+	if expected := strings.Repeat("hello world", 100); string(decoded) != expected {
+		t.Fatalf("expected %q, got %q", expected, string(decoded))
+	}
+}
+
+func TestCompressionResponse_Negotiation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		accept   string
+		expected string
+	}{
+		{"prefer zstd over br", "zstd, br, gzip", "zstd"},
+		{"prefer br over gzip", "br, gzip", "br"},
+		{"gzip only", "gzip", "gzip"},
+		{"zstd with quality", "zstd;q=1.0, br;q=0.8", "zstd"},
+		{"no encoding", "", ""},
+		{"identity", "identity", ""},
+		{"wildcard should not match", "*/*", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+			router.GET("/test", func(c *gin.Context) {
+				c.Data(http.StatusOK, "text/plain", []byte(strings.Repeat("x", 500)))
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set("Accept-Encoding", tt.accept)
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+
+			if tt.expected == "" {
+				if res.Header().Get("Content-Encoding") != "" {
+					t.Errorf("expected no Content-Encoding, got %s", res.Header().Get("Content-Encoding"))
+				}
+			} else {
+				if res.Header().Get("Content-Encoding") != tt.expected {
+					t.Errorf("expected Content-Encoding: %s, got %s", tt.expected, res.Header().Get("Content-Encoding"))
+				}
+			}
+		})
+	}
+}
+
+func TestCompressionResponse_MinSize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 500}))
+	router.GET("/small", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain", []byte("small body"))
+	})
+	router.GET("/large", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain", []byte(strings.Repeat("large body ", 100)))
+	})
+
+	t.Run("small body not compressed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/small", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+
+		if res.Header().Get("Content-Encoding") != "" {
+			t.Fatalf("expected no compression for small body, got %s", res.Header().Get("Content-Encoding"))
+		}
+		if body := res.Body.String(); body != "small body" {
+			t.Fatalf("expected 'small body', got %q", body)
+		}
+	})
+
+	t.Run("large body compressed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/large", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+
+		if res.Header().Get("Content-Encoding") != "gzip" {
+			t.Fatalf("expected gzip compression for large body, got %s", res.Header().Get("Content-Encoding"))
+		}
+		zr, _ := gzip.NewReader(res.Body)
+		decoded, _ := io.ReadAll(zr)
+		zr.Close()
+		if expected := strings.Repeat("large body ", 100); string(decoded) != expected {
+			t.Fatalf("decompressed body mismatch")
+		}
+	})
+}
+
+func TestCompressionResponse_SkipCompressedContentType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []string{
+		"image/png",
+		"video/mp4",
+		"audio/mpeg",
+		"application/zip",
+		"application/pdf",
+		"font/woff2",
+	}
+
+	for _, ct := range tests {
+		t.Run(ct, func(t *testing.T) {
+			router := gin.New()
+			router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+			router.GET("/test", func(c *gin.Context) {
+				c.Data(http.StatusOK, ct, []byte(strings.Repeat("x", 1000)))
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set("Accept-Encoding", "gzip")
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+
+			if res.Header().Get("Content-Encoding") != "" {
+				t.Fatalf("expected no compression for %s, got Content-Encoding: %s", ct, res.Header().Get("Content-Encoding"))
+			}
+		})
+	}
+}
+
+func TestCompressionResponse_SkipWhenContentEncodingSet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Header("Content-Encoding", "identity")
+		c.Data(http.StatusOK, "text/plain", []byte(strings.Repeat("x", 1000)))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Header().Get("Content-Encoding") != "identity" {
+		t.Fatalf("expected Content-Encoding: identity, got %s", res.Header().Get("Content-Encoding"))
+	}
+}
+
+func TestCompressionResponse_RequestDecompressionStillWorks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 10000,
+		ResponseCompression:  true,
+		MinCompressBytes:     1,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		body, _ := io.ReadAll(c.Request.Body)
+		c.Data(http.StatusOK, "text/plain", append([]byte("echo: "), body...))
+	})
+
+	original := []byte(`{"hello":"world"}`)
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	w.Write(original)
+	w.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(buf.Bytes()))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Accept-Encoding", "zstd")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+
+	if res.Header().Get("Content-Encoding") != "zstd" {
+		t.Fatalf("expected Content-Encoding: zstd, got %s", res.Header().Get("Content-Encoding"))
+	}
+
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("create zstd reader: %v", err)
+	}
+	defer decoder.Close()
+	decoded, err := decoder.DecodeAll(res.Body.Bytes(), nil)
+	if err != nil {
+		t.Fatalf("decompress zstd: %v", err)
+	}
+	if expected := "echo: " + string(original); string(decoded) != expected {
+		t.Fatalf("expected %q, got %q", expected, string(decoded))
+	}
+}
+
+func TestCompressionResponse_BackwardCompatibleDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{MaxUncompressedBytes: 100}))
+	router.POST("/test", func(c *gin.Context) {
+		body, _ := io.ReadAll(c.Request.Body)
+		c.JSON(http.StatusOK, gin.H{"received": len(body)})
+	})
+
+	body := []byte(`{"test":"data"}`)
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+}
+
+func BenchmarkCompressionResponse_Zstd(b *testing.B) {
+	gin.SetMode(gin.TestMode)
+	payload := []byte(strings.Repeat(`{"key":"value","data":"benchmark test payload"}`, 200))
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/json", payload)
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Accept-Encoding", "zstd")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			b.Fatalf("unexpected status: %d", res.Code)
+		}
+	}
+}
+
+func BenchmarkCompressionResponse_Brotli(b *testing.B) {
+	gin.SetMode(gin.TestMode)
+	payload := []byte(strings.Repeat(`{"key":"value","data":"benchmark test payload"}`, 200))
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/json", payload)
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Accept-Encoding", "br")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			b.Fatalf("unexpected status: %d", res.Code)
+		}
+	}
+}
+
+func BenchmarkCompressionResponse_Gzip(b *testing.B) {
+	gin.SetMode(gin.TestMode)
+	payload := []byte(strings.Repeat(`{"key":"value","data":"benchmark test payload"}`, 200))
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{ResponseCompression: true, MinCompressBytes: 1}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/json", payload)
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			b.Fatalf("unexpected status: %d", res.Code)
+		}
 	}
 }

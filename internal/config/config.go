@@ -59,21 +59,24 @@ type Config struct {
 	RateLimitBurst     int      `json:"rate_limit_burst"`
 	RateLimitWhitelist []string `json:"rate_limit_whitelist"`
 	// Tracing configuration
-	TracingExporter        string  `json:"tracing_exporter"`
-	TracingServiceName     string  `json:"tracing_service_name"`
-	SecurityFrameAncestors string  `json:"security_frame_ancestors"`
-	SpiffeSocketPath       string  `json:"spiffe_socket_path"`
-	SpiffeTrustDomain      string  `json:"spiffe_trust_domain"`
-	MaxRequestSize         int64   `json:"max_request_size"`
-	MaxGzipUncompressed    int64   `json:"max_gzip_uncompressed"`
-	MaxGzipRatio           float64 `json:"max_gzip_ratio"`
-	// OTelLogsEnabled enables the OTel Logs bridge when true.
-	// Controlled by OTEL_LOGS_ENABLED (default: false).
-	// When enabled, structured log records are shipped to an OTLP endpoint
-	// alongside traces.  Set OTEL_EXPORTER_OTLP_ENDPOINT (or
-	// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) to point at your collector.
-	OTelLogsEnabled bool `json:"otel_logs_enabled"`
-
+	TracingExporter        string
+	TracingServiceName     string
+	SecurityFrameAncestors string
+	// SecurityCSPReportURI is the endpoint browsers will POST CSP violation
+	// reports to. Set to the /api/v1/csp-reports sink. Leave empty to omit
+	// the report-uri directive (no collection).
+	SecurityCSPReportURI string
+	// CSPReportRPS is the per-tenant sustained rate (requests per second)
+	// allowed on the /api/v1/csp-reports endpoint. Default: 5.
+	CSPReportRPS int
+	// CSPReportBurst is the per-tenant burst size for /api/v1/csp-reports.
+	// Default: 10.
+	CSPReportBurst int
+	SpiffeSocketPath   string
+	SpiffeTrustDomain  string
+	MaxRequestSize         int64
+	MaxGzipUncompressed    int64
+	MaxGzipRatio           float64
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
 	RedisURL string `json:"redis_url" secret:"true"`
@@ -120,16 +123,15 @@ type Config struct {
 	//   PGBOUNCER_MAX_CONN_IDLE_IN_TRANSACTION  (default 30) – idle-in-transaction
 	//                             server-side timeout forwarded into pgbouncer.ini
 	//                             as query_wait_timeout / idle_transaction_timeout.
-	PgBouncerEnabled         bool   `json:"pgbouncer_enabled"`
-	PgBouncerHost            string `json:"pgbouncer_host"`
-	PgBouncerPort            int    `json:"pgbouncer_port"`
-	DBStatementCacheMode     string `json:"db_statement_cache_mode"`
-	PgBouncerIdleInTxTimeout int    `json:"pgbouncer_idle_in_tx_timeout"`
-
-	// GracefulShutdownTimeout controls the maximum time (in seconds) the server
-	// waits for in-flight requests and connection pools to drain before forcing
-	// shutdown.  Defaults to DefaultGracefulShutdownTimeout (30s).
-	GracefulShutdownTimeout int `json:"graceful_shutdown_timeout"`
+	PgBouncerEnabled        bool
+	PgBouncerHost           string
+	PgBouncerPort           int
+	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
+	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+	// GracefulShutdownTimeout is the maximum seconds the server waits for
+	// in-flight requests to complete before forcing shutdown. Env:
+	// GRACEFUL_SHUTDOWN_TIMEOUT (default: DefaultGracefulShutdownTimeout).
+	GracefulShutdownTimeout int // seconds
 }
 
 // ValidationResult holds the result of configuration validation
@@ -256,6 +258,9 @@ func Load(opts ...Option) (Config, error) {
 		TracingServiceName:     getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
 		OTelLogsEnabled:        getEnvBool("OTEL_LOGS_ENABLED", false),
 		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		SecurityCSPReportURI:   getEnv("SECURITY_CSP_REPORT_URI", "/api/v1/csp-reports"),
+		CSPReportRPS:           getEnvInt("CSP_REPORT_RPS", 5),
+		CSPReportBurst:         getEnvInt("CSP_REPORT_BURST", 10),
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),

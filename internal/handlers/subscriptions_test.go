@@ -96,7 +96,7 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		var response ErrorEnvelope
 		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.Equal(t, "INTERNAL_ERROR", response.Code)
+		assert.Equal(t, "system/internal-error", response.Code)
 		assert.Contains(t, response.Message, "Failed to retrieve subscription")
 	})
 
@@ -113,7 +113,7 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 		var response ErrorEnvelope
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, "SERVICE_UNAVAILABLE", response.Code)
+		assert.Equal(t, "system/service-unavailable", response.Code)
 		assert.Contains(t, response.Message, "subscription service is unavailable")
 	})
 
@@ -154,7 +154,7 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 				var response ErrorEnvelope
 				err := json.Unmarshal(w.Body.Bytes(), &response)
 				assert.NoError(t, err)
-				assert.Equal(t, "VALIDATION_FAILED", response.Code)
+				assert.Equal(t, "client/validation-failed", response.Code)
 				assert.Contains(t, response.Message, "Invalid pagination limit")
 			})
 		}
@@ -177,7 +177,7 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 				var response ErrorEnvelope
 				err := json.Unmarshal(w.Body.Bytes(), &response)
 				assert.NoError(t, err)
-				assert.Equal(t, "VALIDATION_FAILED", response.Code)
+				assert.Equal(t, "client/validation-failed", response.Code)
 				assert.Contains(t, response.Message, "Limit exceeds maximum of $*.**")
 			})
 		}
@@ -271,9 +271,9 @@ func TestHandler_GetSubscriptionEvents_NoWS(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Params = gin.Params{gin.Param{Key: "id", Value: "sub_123"}}
 	c.Request = httptest.NewRequest("GET", "/api/v1/subscriptions/sub_123/events", nil)
-	
+
 	h.GetSubscriptionEvents(c)
-	
+
 	// Since we are not sending WS headers, upgrader should fail with Bad Request
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

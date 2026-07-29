@@ -99,7 +99,7 @@ func NewTenantExportHandler(jobManager ExportJobManager) gin.HandlerFunc {
 		job, err := jobManager.CreateJob(c.Request.Context(), tenantID, callerID, roles)
 		if err != nil {
 			if errors.Is(err, service.ErrExportInProgress) {
-				RespondWithError(c, http.StatusConflict, ErrorCodeConflict, "An export is already in progress for this tenant")
+				RespondWithError(c, http.StatusConflict, ErrorCodeExportInProgress, "An export is already in progress for this tenant")
 				return
 			}
 			RespondWithInternalError(c, "Failed to create export job")

@@ -102,8 +102,10 @@ func Register(r *gin.Engine) {
 	{
 		v1.GET("/subscriptions", h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
+		v1.PATCH("/subscriptions/:id", h.PatchSubscription)
 		v1.GET("/subscriptions/:id/events", h.GetSubscriptionEvents)
 		v1.GET("/plans", h.ListPlans)
+		v1.PATCH("/plans/:id", h.PatchPlan)
 		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 		v1.POST("/tenants/me/export", handlers.NewTenantExportHandler(exportJobManager))

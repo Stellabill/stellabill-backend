@@ -1,0 +1,91 @@
+name: Chaos Migration Drill
+
+# Nightly chaos drill: starts a migration, kills Postgres mid-flight,
+# restarts it, and verifies the runner recovers cleanly.
+#
+# SAFETY: runs only on ephemeral containers — never against a shared DB.
+# The workflow does NOT require DATABASE_URL from secrets; it spins up
+# a throwaway Postgres container on the runner itself.
+
+on:
+  schedule:
+    # Nightly at 02:00 UTC (low-traffic window)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      kill_delay_min:
+        description: 'Min seconds before kill (float)'
+        default: '0.05'
+        required: false
+      kill_delay_max:
+        description: 'Max seconds before kill (float)'
+        default: '2.0'
+        required: false
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'internal/migrations/**'
+      - 'scripts/drills/kill_pg_migration.sh'
+      - '.github/workflows/chaos-migration-drill.yml'
+      - 'migrations/**'
+
+concurrency:
+  group: chaos-drill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chaos-migration-drill:
+    name: Kill-During-Migration Drill
+    runs-on: ubuntu-latest
+    # Hard timeout: the drill should complete well within 10 minutes.
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run chaos migration drill
+        env:
+          POSTGRES_IMAGE: postgres:17-alpine
+          POSTGRES_CONTAINER: stellabill-chaos-pg
+          POSTGRES_USER: drill
+          POSTGRES_PASSWORD: drill
+          POSTGRES_DB: drill
+          POSTGRES_PORT: '15432'
+          KILL_DELAY_MIN: ${{ github.event.inputs.kill_delay_min || '0.05' }}
+          KILL_DELAY_MAX: ${{ github.event.inputs.kill_delay_max || '2.0' }}
+          RESULTS_CSV: drill-results.csv
+          SLACK_WEBHOOK_URL: ${{ secrets.CHAOS_DRILL_SLACK_WEBHOOK }}
+        run: bash scripts/drills/kill_pg_migration.sh
+
+      - name: Upload drill results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-drill-results-${{ github.run_id }}
+          path: |
+            drill-results.csv
+            /tmp/drill-migrate-pre.log
+            /tmp/drill-migrate-post.log
+          retention-days: 30
+
+      - name: Summarise result
+        if: always()
+        run: |
+          echo "## Chaos Migration Drill Results" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat drill-results.csv 2>/dev/null || echo "(no results file)"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify on failure (no Slack webhook configured)
+        if: failure() && env.SLACK_WEBHOOK_URL == ''
+        run: |
+          echo "::warning::Chaos drill failed. Configure CHAOS_DRILL_SLACK_WEBHOOK secret for Slack notifications."
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.CHAOS_DRILL_SLACK_WEBHOOK }}

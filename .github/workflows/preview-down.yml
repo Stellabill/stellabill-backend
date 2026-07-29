@@ -1,0 +1,32 @@
+name: Preview Environment (Down)
+
+on:
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  NAMESPACE: pr-${{ github.event.pull_request.number }}
+
+jobs:
+  teardown-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure Kubernetes Context
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBECONFIG_PREVIEW }}
+
+      - name: Delete Namespace
+        run: |
+          kubectl delete namespace ${{ env.NAMESPACE }} --ignore-not-found=true
+
+      - name: Delete GitHub Environment
+        uses: strumwolf/delete-deployment-environment@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          environment: preview-${{ github.event.pull_request.number }}

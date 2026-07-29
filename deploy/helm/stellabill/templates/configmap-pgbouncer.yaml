@@ -1,0 +1,79 @@
+{{- if .Values.pgbouncer.enabled }}
+---
+# ConfigMap: pgbouncer.ini
+# Mounted read-only into the PgBouncer sidecar at /etc/pgbouncer/pgbouncer.ini.
+# Backend host/port/dbname are supplied via environment variables from the Secret
+# (substituted by the pgbouncer image entrypoint). Credentials are never stored
+# here; they live in the Secret and are written to userlist.txt by the init
+# container at pod startup.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-pgbouncer-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app: stellabill
+    component: pgbouncer
+data:
+  pgbouncer.ini: |
+    [databases]
+    # Route all connections for this alias to the backend Postgres.
+    # Backend coordinates are injected via env vars at startup.
+    * = host=$(PGBOUNCER_DB_HOST) port=$(PGBOUNCER_DB_PORT) dbname=$(PGBOUNCER_DB_NAME)
+
+    [pgbouncer]
+    # ── Connectivity ────────────────────────────────────────────────────────
+    listen_addr = {{ .Values.pgbouncer.listenAddr }}
+    listen_port = {{ .Values.pgbouncer.listenPort }}
+
+    # ── Pooling ─────────────────────────────────────────────────────────────
+    # transaction pooling: connection is returned after each transaction.
+    # The application MUST disable prepared statements (DB_STATEMENT_CACHE_MODE=describe).
+    pool_mode = {{ .Values.pgbouncer.poolMode }}
+    max_client_conn = {{ .Values.pgbouncer.maxClientConn }}
+    default_pool_size = {{ .Values.pgbouncer.defaultPoolSize }}
+    min_pool_size = {{ .Values.pgbouncer.minPoolSize }}
+    reserve_pool_size = {{ .Values.pgbouncer.reservePoolSize }}
+    reserve_pool_timeout = {{ .Values.pgbouncer.reservePoolTimeout }}
+
+    # ── Timeouts ────────────────────────────────────────────────────────────
+    # server_idle_timeout: close idle backend connections after N seconds.
+    # Must be shorter than any firewall/NAT idle-timeout between the pod and Postgres.
+    server_idle_timeout = {{ .Values.pgbouncer.serverIdleTimeout }}
+
+    # server_lifetime: recycle backend connections after N seconds.
+    # Helps spread load after a Postgres failover or restart.
+    server_lifetime = {{ .Values.pgbouncer.serverLifetime }}
+
+    # query_wait_timeout: cancel waiting clients after N seconds if pool is full.
+    query_wait_timeout = {{ .Values.pgbouncer.queryWaitTimeout }}
+
+    # idle_transaction_timeout: abort transactions left idle longer than N seconds.
+    # Prevents runaway connections that hold a backend slot without making progress.
+    idle_transaction_timeout = {{ .Values.pgbouncer.idleTransactionTimeout }}
+
+    # ── Authentication ───────────────────────────────────────────────────────
+    # scram-sha-256 requires PgBouncer 1.21+ and Postgres 10+.
+    # Fall back to md5 for older Postgres versions.
+    auth_type = {{ .Values.pgbouncer.authType }}
+
+    # userlist.txt is written by the init container and never committed to Git.
+    auth_file = /etc/pgbouncer/userlist.txt
+
+    # ── Logging ──────────────────────────────────────────────────────────────
+    # Write to stdout so the container runtime captures logs.
+    logfile =
+    pidfile =
+    log_connections = {{ .Values.pgbouncer.logConnections }}
+    log_disconnections = {{ .Values.pgbouncer.logDisconnections }}
+    log_pooler_errors = {{ .Values.pgbouncer.logPoolerErrors }}
+
+    # ── TLS (backend) ────────────────────────────────────────────────────────
+    # Uncomment to require TLS when connecting to Postgres.
+    # server_tls_sslmode = require
+    # server_tls_ca_file = /etc/ssl/certs/ca-certificates.crt
+{{- end }}

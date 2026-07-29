@@ -1,0 +1,16 @@
+# Source / dev artifacts - keep dist + README only
+src
+test
+types
+scripts
+coverage
+*.ts
+!dist/**/*.d.ts
+.eslintrc
+.prettierrc
+vitest.config.ts
+tsconfig*.json
+.gitignore
+.github
+node_modules
+*.log

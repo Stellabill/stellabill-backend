@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-config
+  labels:
+    app: stellabill
+    component: pgbouncer
+data:
+  # pgbouncer.ini is mounted at /etc/pgbouncer/pgbouncer.ini inside the sidecar.
+  # The actual backend host/port/dbname are injected from the Secret via env vars
+  # in the init container; userlist.txt is written by the init container so
+  # credentials never appear in this ConfigMap.
+  pgbouncer.ini: |
+    [databases]
+    # Route all connections for this database alias to the backend Postgres.
+    # The host, port, and dbname are provided by environment variables at
+    # container startup via the --env-file / env substitution performed by
+    # the pgbouncer image entrypoint.
+    # Syntax: <local-db-alias> = host=<host> port=<port> dbname=<dbname>
+    * = host=$(PGBOUNCER_DB_HOST) port=$(PGBOUNCER_DB_PORT) dbname=$(PGBOUNCER_DB_NAME)
+
+    [pgbouncer]
+    # ── Connectivity ───────────────────────────────────────────────────────────
+    # Bind only to loopback; the application and sidecar share the pod network
+    # namespace.  No other pod can reach this port (see networkpolicy).
+    listen_addr = 127.0.0.1
+    listen_port = 5432
+
+    # ── Pooling mode ───────────────────────────────────────────────────────────
+    # transaction: connection is returned to the pool after each transaction
+    # (BEGIN/COMMIT boundary). This is the mode that absorbs connection storms
+    # during pod restarts.  The application MUST NOT use prepared statements
+    # (DB_STATEMENT_CACHE_MODE=describe or simple).
+    pool_mode = transaction
+
+    # ── Pool sizing ────────────────────────────────────────────────────────────
+    # max_client_conn: upper bound on concurrent application connections.
+    # Set generously — pgbouncer queues when pool is full; clients never see
+    # a connection-refused.
+    max_client_conn = 100
+
+    # default_pool_size: backend connections opened per (user, db) pair.
+    # Size this to stay below Postgres max_connections / number of pods.
+    # Example: Postgres max_connections=100, 4 pods → 100/4 = 25 each.
+    default_pool_size = 25
+
+    # min_pool_size: keep this many backend connections warm even when idle.
+    # Avoids cold-start latency on the first request after a quiet period.
+    min_pool_size = 2
+
+    # reserve_pool_size: extra connections reserved for bursts.
+    reserve_pool_size = 5
+
+    # reserve_pool_timeout: seconds to wait before borrowing from reserve pool.
+    reserve_pool_timeout = 3
+
+    # ── Timeouts ───────────────────────────────────────────────────────────────
+    # server_idle_timeout: close backend connections idle longer than this.
+    # Must be shorter than any firewall/NAT idle-timeout on the path to Postgres.
+    server_idle_timeout = 600
+
+    # server_lifetime: recycle backend connections after this many seconds.
+    # Spreads load across Postgres backend PIDs; helps after a Postgres restart.
+    server_lifetime = 3600
+
+    # query_wait_timeout: cancel a waiting client after this many seconds.
+    # Prevents clients from blocking indefinitely when the pool is saturated.
+    query_wait_timeout = 120
+
+    # idle_transaction_timeout: abort transactions left idle longer than this.
+    # Prevents runaway connections that hold a backend slot without making
+    # progress.  Set to 0 to disable (not recommended in production).
+    # Overridden by PGBOUNCER_IDLE_IN_TX_TIMEOUT env var via the deployment.
+    idle_transaction_timeout = 30
+
+    # ── Authentication ─────────────────────────────────────────────────────────
+    # auth_type = scram-sha-256 requires PgBouncer 1.21+.
+    # Use md5 if your Postgres version does not support SCRAM.
+    auth_type = scram-sha-256
+
+    # userlist.txt is written by the init container (never committed to Git).
+    auth_file = /etc/pgbouncer/userlist.txt
+
+    # ── Logging ────────────────────────────────────────────────────────────────
+    # Log to stdout so container runtime (Docker / containerd) captures it.
+    logfile =
+    pidfile =
+
+    # Log level: 0=none, 1=errors, 2=connections, 3=transactions, 5=debug.
+    # Use 2 in production; bump to 5 only for transient troubleshooting.
+    log_connections = 0
+    log_disconnections = 0
+    log_pooler_errors = 1
+    verbose = 0
+
+    # ── TLS (backend) ──────────────────────────────────────────────────────────
+    # When Postgres requires TLS, uncomment and adjust.
+    # server_tls_sslmode = require
+    # server_tls_ca_file = /etc/ssl/certs/ca-certificates.crt
+
+    # ── Prepared statements ────────────────────────────────────────────────────
+    # In transaction mode, the server connection is returned after each
+    # transaction, so the new server connection will not know about any
+    # prepared statements from a previous transaction.  The application is
+    # responsible for disabling prepared statements (DB_STATEMENT_CACHE_MODE).
+    # PgBouncer 1.21+ can track and forward PREPARE/EXECUTE across connections
+    # when track_extra_parameters is set, but that requires session mode.
+    # Relying on the application to disable statements is simpler and portable.

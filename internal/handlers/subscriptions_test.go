@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"stellarbill-backend/internal/service"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -226,4 +227,53 @@ func TestHandler_ListSubscriptions(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestHandler_PatchSubscription_MergePatch(t *testing.T) {
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "id", Value: "sub_123"}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/subscriptions/sub_123", strings.NewReader(`{"status":"canceled","next_billing":null}`))
+	c.Request.Header.Set("Content-Type", "application/merge-patch+json")
+
+	h.PatchSubscription(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "sub_123", response["id"])
+	assert.Equal(t, "canceled", response["status"])
+	assert.Equal(t, "", response["next_billing"])
+}
+
+func TestHandler_PatchSubscription_RejectsUnknownFields(t *testing.T) {
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "id", Value: "sub_123"}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/subscriptions/sub_123", strings.NewReader(`{"status":"active","unexpected":true}`))
+	c.Request.Header.Set("Content-Type", "application/merge-patch+json")
+
+	h.PatchSubscription(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "BAD_REQUEST", response["code"])
+}
+
+func TestHandler_GetSubscriptionEvents_NoWS(t *testing.T) {
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "id", Value: "sub_123"}}
+	c.Request = httptest.NewRequest("GET", "/api/v1/subscriptions/sub_123/events", nil)
+	
+	h.GetSubscriptionEvents(c)
+	
+	// Since we are not sending WS headers, upgrader should fail with Bad Request
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

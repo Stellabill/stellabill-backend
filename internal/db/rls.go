@@ -417,7 +417,7 @@ func (d *RLSDB) QueryContext(ctx context.Context, query string, args ...any) (*r
 		return nil, err
 	}
 
-	return &rlsSQLRows{Rows: rows, tx: tx}, nil
+	return rows, nil
 }
 
 func (d *RLSDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {

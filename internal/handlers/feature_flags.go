@@ -26,7 +26,8 @@ func (h *FeatureFlagsHandler) GetFeatureFlags(c *gin.Context) {
 
 // ToggleFeatureFlagRequest represents the request body for toggling a feature flag.
 type ToggleFeatureFlagRequest struct {
-	Name string `json:"name" binding:"required"`
+	Name   string `json:"name" binding:"required"`
+	Reason string `json:"reason" binding:"required"`
 }
 
 // ToggleFeatureFlag toggles a feature flag's enabled state.
@@ -58,6 +59,7 @@ func (h *FeatureFlagsHandler) ToggleFeatureFlag(c *gin.Context) {
 	audit.LogAction(c, "feature_flag_toggle", req.Name, "success", map[string]string{
 		"before_enabled": boolToString(beforeEnabled),
 		"after_enabled":  boolToString(afterEnabled),
+		"reason":         req.Reason,
 	})
 
 	c.JSON(http.StatusOK, updatedFlag)

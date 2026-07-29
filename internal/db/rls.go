@@ -90,34 +90,34 @@ func (p *RLSPool) ReleaseConnWithRollback(conn *pgxpool.Conn) {
 	conn.Release()
 }
 
-func (p *RLSPool) Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error) {
+func (p *RLSPool) Exec(ctx context.Context, sql string, args ...any) (dbCmdTag, error) {
 	tenantID, err := TenantIDFromContext(ctx)
 	if err != nil {
-		return pgx.CommandTag{}, err
+		return dbCmdTag{}, err
 	}
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {
-		return pgx.CommandTag{}, err
+		return dbCmdTag{}, err
 	}
 	defer conn.Release()
 
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return pgx.CommandTag{}, fmt.Errorf("begin rls transaction: %w", err)
+		return dbCmdTag{}, fmt.Errorf("begin rls transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, "SET LOCAL app.tenant_id = $1", tenantID); err != nil {
-		return pgx.CommandTag{}, fmt.Errorf("set app.tenant_id: %w", err)
+		return dbCmdTag{}, fmt.Errorf("set app.tenant_id: %w", err)
 	}
 
 	tag, err := tx.Exec(ctx, sql, args...)
 	if err != nil {
-		return pgx.CommandTag{}, err
+		return dbCmdTag{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return pgx.CommandTag{}, fmt.Errorf("commit rls transaction: %w", err)
+		return dbCmdTag{}, fmt.Errorf("commit rls transaction: %w", err)
 	}
 	return tag, nil
 }
@@ -223,11 +223,11 @@ func (r *rlsRows) Err() error {
 	return r.rows.Err()
 }
 
-func (r *rlsRows) FieldDescriptions() []pgx.FieldDescription {
+func (r *rlsRows) FieldDescriptions() []dbFieldDesc {
 	return r.rows.FieldDescriptions()
 }
 
-func (r *rlsRows) CommandTag() pgx.CommandTag {
+func (r *rlsRows) CommandTag() dbCmdTag {
 	return r.rows.CommandTag()
 }
 
@@ -250,6 +250,10 @@ func (r *rlsRows) Values() ([]any, error) {
 
 func (r *rlsRows) RawValues() [][]byte {
 	return r.rows.RawValues()
+}
+
+func (r *rlsRows) Conn() *pgx.Conn {
+	return r.rows.Conn()
 }
 
 type rlsRow struct {
@@ -310,11 +314,11 @@ func (t *rlsTx) LargeObjects() pgx.LargeObjects {
 	return t.tx.LargeObjects()
 }
 
-func (t *rlsTx) Prepare(ctx context.Context, name, sql string) (*pgx.StatementDescription, error) {
+func (t *rlsTx) Prepare(ctx context.Context, name, sql string) (*dbStmtDesc, error) {
 	return t.tx.Prepare(ctx, name, sql)
 }
 
-func (t *rlsTx) Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error) {
+func (t *rlsTx) Exec(ctx context.Context, sql string, args ...any) (dbCmdTag, error) {
 	return t.tx.Exec(ctx, sql, args...)
 }
 
@@ -412,7 +416,7 @@ func (d *RLSDB) QueryContext(ctx context.Context, query string, args ...any) (*s
 		return nil, err
 	}
 
-	return &rlsSQLRows{Rows: rows, tx: tx}, nil
+	return rows, nil
 }
 
 func (d *RLSDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {

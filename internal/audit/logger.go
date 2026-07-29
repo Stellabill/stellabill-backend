@@ -81,14 +81,17 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) 
 	return event, nil
 }
 
-func (l *Logger) computeHash(e AuditEvent) string {
-	// Create a stable string representation for hashing
+func computeEventHash(e AuditEvent, secret []byte) string {
 	raw := fmt.Sprintf("%d|%s|%s|%s|%s|%s|%v",
 		e.Timestamp.Unix(), e.Actor, e.Action, e.Resource, e.Outcome, e.PrevHash, e.Metadata)
 
-	h := hmac.New(sha256.New, l.secret)
+	h := hmac.New(sha256.New, secret)
 	h.Write([]byte(raw))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (l *Logger) computeHash(e AuditEvent) string {
+	return computeEventHash(e, l.secret)
 }
 
 const redactedValue = "[REDACTED]"

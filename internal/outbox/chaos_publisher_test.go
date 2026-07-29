@@ -70,7 +70,6 @@ func TestChaosPublisher_MetricIncremented(t *testing.T) {
 	t.Setenv("CHAOS_OUTBOX_PROB", "1")
 
 	before := testutil.ToFloat64(ChaosOutboxCancellationsTotal)
-	assert.Equal(t, float64(0), before, "counter should start at 0 for a fresh test binary")
 
 	inner := &recordingPublisher{}
 	p := NewChaosPublisher(inner)

@@ -135,7 +135,7 @@ func (w *WebhookWorker) processSubscriptionCreated(ctx context.Context, event We
 		return fmt.Errorf("failed to create outbox event: %w", err)
 	}
 
-	if err := w.OutboxRepo.Store(outboxEvent); err != nil {
+	if err := w.OutboxRepo.Store(context.Background(), outboxEvent); err != nil {
 		return fmt.Errorf("failed to store outbox event: %w", err)
 	}
 
@@ -161,7 +161,7 @@ func (w *WebhookWorker) processStatementIssued(ctx context.Context, event Webhoo
 		return fmt.Errorf("failed to create outbox event: %w", err)
 	}
 
-	if err := w.OutboxRepo.Store(outboxEvent); err != nil {
+	if err := w.OutboxRepo.Store(context.Background(), outboxEvent); err != nil {
 		return fmt.Errorf("failed to store outbox event: %w", err)
 	}
 

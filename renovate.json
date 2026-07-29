@@ -1,0 +1,81 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  "description": "Renovate configuration for stellabill-backend. Minor/patch Go module bumps are auto-merged after CI passes (stabilityDays: 3). Major bumps require manual review. OTel packages are grouped to reduce PR churn.",
+
+  "extends": [
+    "config:recommended"
+  ],
+
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Renovate Dependency Dashboard",
+
+  "stabilityDays": 3,
+
+  "schedule": ["every weekend"],
+
+  "labels": ["dependencies"],
+
+  "packageRules": [
+    {
+      "description": "Group all OpenTelemetry packages into a single PR to reduce churn (they release in lock-step).",
+      "matchManagers": ["gomod"],
+      "matchPackagePrefixes": ["go.opentelemetry.io/"],
+      "groupName": "opentelemetry",
+      "groupSlug": "otel",
+      "labels": ["dependencies", "otel"]
+    },
+
+    {
+      "description": "Auto-merge minor and patch Go module updates once CI passes and the version has been stable for stabilityDays.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash",
+      "platformAutomerge": true
+    },
+
+    {
+      "description": "Major Go module bumps require manual review — no automerge, add a review label.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "major-upgrade", "needs-review"],
+      "prPriority": 5
+    },
+
+    {
+      "description": "Group semver-major updates for the same package together so reviewers see the full blast-radius in one PR.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "go major upgrades",
+      "groupSlug": "go-major"
+    },
+
+    {
+      "description": "Keep the Go toolchain directive itself as a separate PR for explicit review.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "automerge": false,
+      "labels": ["dependencies", "go-toolchain", "needs-review"]
+    },
+
+    {
+      "description": "GitHub Actions: auto-merge patch/minor, require review for major.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash",
+      "platformAutomerge": true
+    },
+    {
+      "description": "GitHub Actions major version bumps need manual review.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "major-upgrade", "needs-review"]
+    }
+  ]
+}

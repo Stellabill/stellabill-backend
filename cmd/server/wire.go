@@ -1,0 +1,44 @@
+//go:build wireinject
+// +build wireinject
+
+// The build constraints above ensure this file is compiled ONLY by the wire
+// tool, not by the normal Go compiler.  The generated wire_gen.go file takes
+// its place for all other build targets.
+//
+// To regenerate wire_gen.go run:
+//
+//	go generate ./cmd/server/...
+//
+// or, from the repo root:
+//
+//	wire gen ./cmd/server/
+package main
+
+import (
+	"net/http"
+
+	"github.com/google/wire"
+)
+
+// AppProviders is the complete set of constructor functions that wire uses to
+// resolve the dependency graph.  Adding a new top-level dependency is a
+// single-line addition here.
+//
+//go:generate wire gen .
+var AppProviders = wire.NewSet(
+	ProvideConfig,
+	ProvideRouter,
+	ProvideHTTPServer,
+)
+
+// InitializeServer is the wire injector.  The body below is a stub; wire
+// replaces it with the generated implementation in wire_gen.go.
+//
+// The function signature is the public contract:
+//   - no inputs – all values come from the provider chain.
+//   - returns (*http.Server, error) so callers can detect config failures
+//     without a panic.
+func InitializeServer() (*http.Server, error) {
+	wire.Build(AppProviders)
+	return nil, nil
+}

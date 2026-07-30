@@ -2,45 +2,88 @@ package tracing
 
 import (
 	"context"
+	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/baggage"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// AllowedBaggageKeys enforces the strict allowlist for baggage attributes to prevent PII leaks.
-var AllowedBaggageKeys = map[string]bool{
-	"tenant_id":   true,
-	"customer_id": true,
+type TenantTier string
+
+const (
+	TierFree       TenantTier = "free"
+	TierPro        TenantTier = "pro"
+	TierEnterprise TenantTier = "enterprise"
+)
+
+var TierSamplingRates = map[TenantTier]float64{
+	TierFree:       0.01,
+	TierPro:        0.25,
+	TierEnterprise: 1.00,
 }
 
-// InitPropagators registers both W3C TraceContext and Baggage propagators.
-func InitPropagators() propagation.TextMapPropagator {
-	return propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	)
+const DefaultSamplingRate = 0.01
+const TierAttributeKey = "tenant.tier"
+
+type TenantTierSampler struct {
+	mu     sync.RWMutex
+	rates  map[TenantTier]float64
+	parent sdktrace.Sampler
 }
 
-// BaggageSpanProcessor is a custom processor that stamps allowed baggage onto spans.
-type BaggageSpanProcessor struct{}
-
-// OnStart reads baggage from the context and adds allowed items as span attributes.
-func (bsp BaggageSpanProcessor) OnStart(parent context.Context, s trace.ReadWriteSpan) {
-	bag := baggage.FromContext(parent)
-	for _, member := range bag.Members() {
-		if AllowedBaggageKeys[member.Key()] {
-			s.SetAttributes(attribute.String(member.Key(), member.Value()))
-		}
+func NewTenantTierSampler() sdktrace.Sampler {
+	return &TenantTierSampler{
+		rates:  TierSamplingRates,
+		parent: sdktrace.ParentBased(sdktrace.TraceIDRatioBased(DefaultSamplingRate)),
 	}
 }
 
-// Shutdown is a no-op for this processor.
-func (bsp BaggageSpanProcessor) Shutdown(context.Context) error { return nil }
+func (s *TenantTierSampler) ShouldSample(params sdktrace.SamplingParameters) sdktrace.SamplingResult {
+	if params.ParentContext.HasTraceID() {
+		return s.parent.ShouldSample(params)
+	}
+	rate := DefaultSamplingRate
+	for _, attr := range params.Attributes {
+		if attr.Key == TierAttributeKey {
+			switch attr.Value.AsString() {
+			case "enterprise":
+				rate = TierSamplingRates[TierEnterprise]
+			case "pro":
+				rate = TierSamplingRates[TierPro]
+			}
+			break
+		}
+	}
+	return sdktrace.TraceIDRatioBased(rate).ShouldSample(params)
+}
 
-// ForceFlush is a no-op for this processor.
-func (bsp BaggageSpanProcessor) ForceFlush(context.Context) error { return nil }
+func (s *TenantTierSampler) Description() string {
+	return "TenantTierSampler{free=1%, pro=25%, enterprise=100%}"
+}
 
-// OnEnd is a no-op for this processor.
-func (bsp BaggageSpanProcessor) OnEnd(s trace.ReadOnlySpan) {}
+func (s *TenantTierSampler) UpdateRate(tier TenantTier, rate float64) {
+	if rate < 0 {
+		rate = 0
+	}
+	if rate > 1 {
+		rate = 1
+	}
+	s.mu.Lock()
+	s.rates[tier] = rate
+	s.mu.Unlock()
+}
+
+type contextKey struct{}
+
+var tenantTierContextKey = contextKey{}
+
+func ContextWithTenantTier(ctx context.Context, tier TenantTier) context.Context {
+	return context.WithValue(ctx, tenantTierContextKey, tier)
+}
+
+func TenantTierFromContext(ctx context.Context) TenantTier {
+	if tier, ok := ctx.Value(tenantTierContextKey).(TenantTier); ok {
+		return tier
+	}
+	return TierFree
+}

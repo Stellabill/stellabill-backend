@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package stellabill.v1;
+
+option go_package = "stellarbill-backend/gen/proto/stellabill/v1;stellabillv1";
+
+import "google/api/annotations.proto";
+
+// Subscription message matching the internal Subscription model.
+message Subscription {
+  string id = 1;
+  string plan_id = 2;
+  string customer = 3;
+  string status = 4;
+  string amount = 5;
+  string interval = 6;
+  string next_billing = 7;
+}
+
+message ListSubscriptionsRequest {
+  int32 limit = 1;
+  string cursor = 2;
+}
+
+message ListSubscriptionsResponse {
+  repeated Subscription subscriptions = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetSubscriptionRequest {
+  string id = 1;
+}
+
+message GetSubscriptionResponse {
+  Subscription subscription = 1;
+}
+
+// SubscriptionService provides read operations for subscriptions.
+service SubscriptionService {
+  // ListSubscriptions returns all subscriptions with cursor pagination.
+  rpc ListSubscriptions(ListSubscriptionsRequest) returns (ListSubscriptionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/subscriptions"
+    };
+  }
+
+  // GetSubscription returns a single subscription by ID.
+  rpc GetSubscription(GetSubscriptionRequest) returns (GetSubscriptionResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/subscriptions/{id}"
+    };
+  }
+}

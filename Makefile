@@ -2,6 +2,18 @@ GOPATH := $(shell go env GOPATH)
 MUTEST := $(GOPATH)/bin/go-mutesting
 GOFUMPT := $(GOPATH)/bin/gofumpt
 
+# ── Proto / gRPC ──────────────────────────────────────────────────────────────
+
+.PHONY: proto proto-lint proto-gen
+
+proto: proto-gen proto-lint  ## Generate protos and run lint
+
+proto-lint:  ## Lint proto definitions
+	buf lint
+
+proto-gen:  ## Generate Go stubs, grpc-gateway handlers, and OpenAPI specs from proto
+	buf generate
+
 # ── Formatting ───────────────────────────────────────────────────────────────
 
 .PHONY: fmt

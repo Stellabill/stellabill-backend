@@ -13,6 +13,8 @@ type SubscriptionRow struct {
 	Currency    string // ISO 4217
 	Interval    string
 	NextBilling string // RFC 3339 or empty
+	UpdatedAt   time.Time
+	Version     int64
 	DeletedAt   *time.Time
 }
 
@@ -24,6 +26,8 @@ type PlanRow struct {
 	Currency    string
 	Interval    string
 	Description string
+	UpdatedAt   time.Time
+	Version     int64
 }
 
 // StatementRow is the raw DB record for a billing statement.

@@ -65,6 +65,11 @@ type Config struct {
 	SecurityFrameAncestors string
 	SpiffeSocketPath   string
 	SpiffeTrustDomain  string
+	GRPCPort           int    // Port for the gRPC server (0 = disabled)
+	GRPCCertFile       string // Path to TLS certificate for gRPC
+	GRPCKeyFile        string // Path to TLS private key for gRPC
+	GRPCCACertFile     string // Path to CA cert for mTLS (optional)
+	GRPCEnableTLS      bool   // Enable TLS for gRPC
 	MaxRequestSize         int64
 	MaxGzipUncompressed    int64
 	MaxGzipRatio           float64
@@ -210,6 +215,11 @@ func Load(opts ...Option) (Config, error) {
 		RedisURL:         getEnv("REDIS_URL", ""),
 		CacheTTL:         getEnvInt("CACHE_TTL", 60), // 60 second default
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
+		GRPCPort:         getEnvInt("GRPC_PORT", 0), // 0 = disabled
+		GRPCCertFile:     getEnv("GRPC_CERT_FILE", ""),
+		GRPCKeyFile:      getEnv("GRPC_KEY_FILE", ""),
+		GRPCCACertFile:   getEnv("GRPC_CA_CERT_FILE", ""),
+		GRPCEnableTLS:    getEnv("GRPC_ENABLE_TLS", "") == "true",
 		DBPoolMinConns:          DefaultDBPoolMinConns,
 		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
 		DBPoolMaxConnIdleTime:   DefaultDBPoolMaxConnIdleTime,

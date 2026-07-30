@@ -13,10 +13,24 @@ import (
 // ErrRequestMismatch is returned when an idempotency key is reused with a different request.
 var ErrRequestMismatch = errors.New("idempotency key reused with a different request")
 
+// IdempotencyRecord represents a stored idempotency key record.
+type IdempotencyRecord struct {
+	Scope          string
+	Key            string
+	Method         string
+	Path           string
+	PayloadHash    string
+	StatusCode     int
+	ResponseBody   []byte
+	UsedAt         time.Time
+	ExpiresAt      time.Time
+}
+
 // IdempotencyStore defines the contract for persisting idempotency keys and request states.
 type IdempotencyStore interface {
 	GetOrInsert(ctx context.Context, scope, key, method, path, payloadHash string, ttl time.Duration) (statusCode int, responseBody []byte, isReplay bool, isInFlight bool, err error)
 	UpdateResponse(ctx context.Context, scope, key string, statusCode int, responseBody []byte) error
+	Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error)
 	Delete(ctx context.Context, scope, key string) error
 	DeleteExpiredBatch(ctx context.Context, batchSize int) (int64, error)
 	CountExpiredPending(ctx context.Context) (int64, error)
@@ -130,6 +144,32 @@ func (s *PostgresIdempotencyStore) UpdateResponse(ctx context.Context, scope, ke
 		WHERE scope = $1 AND key = $2`
 	_, err := s.pool.Exec(ctx, qUpdate, scope, key, statusCode, responseBody)
 	return err
+}
+
+// Lookup retrieves a stored idempotency record by scope and key.
+func (s *PostgresIdempotencyStore) Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error) {
+	if s.pool == nil {
+		return nil, errors.New("postgres connection pool is nil")
+	}
+
+	qLookup := `
+		SELECT scope, key, method, path, payload_hash, status_code, response_body, created_at, expires_at
+		FROM idempotency_keys
+		WHERE scope = $1 AND key = $2`
+
+	var rec IdempotencyRecord
+	err := s.pool.QueryRow(ctx, qLookup, scope, key).Scan(
+		&rec.Scope, &rec.Key, &rec.Method, &rec.Path, &rec.PayloadHash,
+		&rec.StatusCode, &rec.ResponseBody, &rec.UsedAt, &rec.ExpiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &rec, nil
 }
 
 // Delete removes an idempotency key, e.g., when a request fails with a non-2xx status code.
@@ -253,6 +293,34 @@ func (s *InMemoryIdempotencyStore) UpdateResponse(ctx context.Context, scope, ke
 		entry.responseBody = responseBody
 	}
 	return nil
+}
+
+// Lookup retrieves a stored idempotency record by scope and key from memory.
+func (s *InMemoryIdempotencyStore) Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	mapKey := scope + "/" + key
+	entry, exists := s.keys[mapKey]
+	if !exists {
+		return nil, nil
+	}
+
+	if time.Now().After(entry.expiresAt) {
+		return nil, nil
+	}
+
+	return &IdempotencyRecord{
+		Scope:        scope,
+		Key:          key,
+		Method:       entry.method,
+		Path:         entry.path,
+		PayloadHash:  entry.payloadHash,
+		StatusCode:   entry.statusCode,
+		ResponseBody: entry.responseBody,
+		UsedAt:       time.Now(),
+		ExpiresAt:    entry.expiresAt,
+	}, nil
 }
 
 // Delete deletes the entry from memory.

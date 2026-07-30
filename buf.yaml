@@ -1,0 +1,18 @@
+version: v2
+modules:
+  - path: proto
+deps:
+  - buf.build/googleapis/googleapis
+  - buf.build/grpc-ecosystem/grpc-gateway
+lint:
+  use:
+    - DEFAULT
+    - PACKAGE_NO_IMPORT_CYCLE
+  except:
+    - FIELD_NOT_REQUIRED
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - PACKAGE_VERSION_SUFFIX
+breaking:
+  use:
+    - FILE

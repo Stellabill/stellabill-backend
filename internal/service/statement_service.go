@@ -5,13 +5,23 @@ import (
 	"errors"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/timeutil"
+	"time"
 )
 
 // StatementService defines the business logic interface for billing statements.
 type StatementService interface {
 	GetDetail(ctx context.Context, callerID string, roles []string, statementID string) (*StatementDetail, []string, error)
 	ListByCustomer(ctx context.Context, callerID string, roles []string, customerID string, q repository.StatementQuery) (*ListStatementsDetail, int, []string, error)
+	ExportStatements(ctx context.Context, callerID string, roles []string, tenantID string, customerID string, uploader interface{}) (*serviceExportResponse, error)
 }
+
+// serviceExportResponse is the result of an export operation.
+type serviceExportResponse struct {
+	ObjectKey string
+	URL       string
+	ExpiresAt time.Time
+}
+
 
 // statementService is the concrete implementation of StatementService.
 type statementService struct {
@@ -167,6 +177,16 @@ func (s *statementService) ListByCustomer(ctx context.Context, callerID string, 
 	}
 
 	return result, count, warnings, nil
+}
+
+// ExportStatements exports statements for a given customer and tenant.
+func (s *statementService) ExportStatements(ctx context.Context, callerID string, roles []string, tenantID string, customerID string, uploader interface{}) (*serviceExportResponse, error) {
+	// TODO: Implement actual export logic using uploader and repositories.
+	return &serviceExportResponse{
+		ObjectKey: "exports/" + tenantID + "/" + customerID + ".csv",
+		URL:       "https://example.com/exports/placeholder",
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}, nil
 }
 
 func normalizeRFC3339OrKeep(raw string) string {

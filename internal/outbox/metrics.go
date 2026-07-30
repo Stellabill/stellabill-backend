@@ -34,6 +34,7 @@ var (
 	OutboxPublisherLag            *prometheus.GaugeVec
 	OutboxBacklogDepth            *prometheus.GaugeVec
 	ChaosOutboxCancellationsTotal prometheus.Counter
+	RedisPublishDuration          *prometheus.HistogramVec
 )
 
 func init() {
@@ -60,6 +61,16 @@ func init() {
 		Help: "Total number of outbox publish cancellations injected by the chaos hook (staging only)",
 	})
 	_ = prometheus.Register(ChaosOutboxCancellationsTotal)
+
+	RedisPublishDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "redis_publish_duration_seconds",
+			Help:    "Duration of Redis Streams publish operations by event type and status",
+			Buckets: []float64{0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+		},
+		[]string{"event_type", "status"},
+	)
+	_ = prometheus.Register(RedisPublishDuration)
 }
 
 // CapTenantLabel normalizes and truncates a tenant id for Prometheus labels.

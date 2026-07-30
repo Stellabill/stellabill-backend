@@ -97,6 +97,11 @@ func Register(r *gin.Engine) {
 	// expected (e.g. Kubernetes NetworkPolicy or reverse-auth proxy).
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
+	// Shared idempotency store — use the same instance for the middleware
+	// (when wired) and the inspection endpoint so they see the same key space.
+	idempotencyStore := middleware.NewInMemoryIdempotencyStore()
+	idempotencyHandler := handlers.NewIdempotencyHandler(idempotencyStore)
+
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
 	{
@@ -110,6 +115,7 @@ func Register(r *gin.Engine) {
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 		v1.POST("/tenants/me/export", handlers.NewTenantExportHandler(exportJobManager))
 		v1.GET("/operations/:id", handlers.NewOperationStatusHandler(exportJobManager))
+		v1.GET("/idempotency/:key", idempotencyHandler.InspectKey)
 	}
 
 	// CSP violation reports — public (no auth; browsers send without tokens),

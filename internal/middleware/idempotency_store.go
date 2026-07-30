@@ -13,6 +13,14 @@ import (
 // ErrRequestMismatch is returned when an idempotency key is reused with a different request.
 var ErrRequestMismatch = errors.New("idempotency key reused with a different request")
 
+// IdempotencyRecord holds the stored metadata for a single idempotency key.
+type IdempotencyRecord struct {
+	PayloadHash string
+	StatusCode  int
+	ExpiresAt   time.Time
+	UsedAt      time.Time
+}
+
 // IdempotencyStore defines the contract for persisting idempotency keys and request states.
 type IdempotencyStore interface {
 	GetOrInsert(ctx context.Context, scope, key, method, path, payloadHash string, ttl time.Duration) (statusCode int, responseBody []byte, isReplay bool, isInFlight bool, err error)
@@ -20,6 +28,9 @@ type IdempotencyStore interface {
 	Delete(ctx context.Context, scope, key string) error
 	DeleteExpiredBatch(ctx context.Context, batchSize int) (int64, error)
 	CountExpiredPending(ctx context.Context) (int64, error)
+	// Lookup returns the stored metadata for a key scoped to the caller.
+	// Returns nil when the key does not exist or has expired.
+	Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error)
 }
 
 // PostgresIdempotencyStore implements IdempotencyStore backed by PostgreSQL.
@@ -183,6 +194,35 @@ func (s *PostgresIdempotencyStore) CountExpiredPending(ctx context.Context) (int
 	return count, nil
 }
 
+// Lookup returns the stored metadata for a key scoped to the caller.
+// Returns nil when the key does not exist or has expired.
+func (s *PostgresIdempotencyStore) Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error) {
+	if s.pool == nil {
+		return nil, errors.New("postgres connection pool is nil")
+	}
+
+	var rec IdempotencyRecord
+	err := s.pool.QueryRow(ctx, `
+		SELECT payload_hash, status_code, expires_at, created_at
+		FROM idempotency_keys
+		WHERE scope = $1 AND key = $2`,
+		scope, key,
+	).Scan(&rec.PayloadHash, &rec.StatusCode, &rec.ExpiresAt, &rec.UsedAt)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if time.Now().After(rec.ExpiresAt) {
+		return nil, nil
+	}
+
+	return &rec, nil
+}
+
 // InMemoryIdempotencyEntry represents a single cached item.
 type InMemoryIdempotencyEntry struct {
 	method       string
@@ -190,6 +230,7 @@ type InMemoryIdempotencyEntry struct {
 	payloadHash  string
 	statusCode   int
 	responseBody []byte
+	createdAt    time.Time
 	expiresAt    time.Time
 }
 
@@ -226,6 +267,7 @@ func (s *InMemoryIdempotencyStore) GetOrInsert(ctx context.Context, scope, key, 
 			path:        path,
 			payloadHash: payloadHash,
 			statusCode:  0,
+			createdAt:   now,
 			expiresAt:   now.Add(ttl),
 		}
 		return 0, nil, false, false, nil
@@ -297,4 +339,24 @@ func (s *InMemoryIdempotencyStore) CountExpiredPending(ctx context.Context) (int
 		}
 	}
 	return count, nil
+}
+
+// Lookup returns the stored metadata for a key scoped to the caller.
+// Returns nil when the key does not exist or has expired.
+func (s *InMemoryIdempotencyStore) Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	mapKey := scope + "/" + key
+	entry, exists := s.keys[mapKey]
+	if !exists || time.Now().After(entry.expiresAt) {
+		return nil, nil
+	}
+
+	return &IdempotencyRecord{
+		PayloadHash: entry.payloadHash,
+		StatusCode:  entry.statusCode,
+		ExpiresAt:   entry.expiresAt,
+		UsedAt:      entry.createdAt,
+	}, nil
 }

@@ -21,6 +21,7 @@ type SubscriptionRow struct {
 // PlanRow is the raw DB record for a billing plan.
 type PlanRow struct {
 	ID          string
+	TenantID    string
 	Name        string
 	Amount      string
 	Currency    string
@@ -33,6 +34,7 @@ type PlanRow struct {
 // StatementRow is the raw DB record for a billing statement.
 type StatementRow struct {
 	ID             string
+	TenantID       string
 	SubscriptionID string
 	CustomerID     string
 	PeriodStart    string // RFC 3339

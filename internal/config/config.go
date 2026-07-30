@@ -41,28 +41,37 @@ func (e *ConfigError) Error() string {
 
 // Config holds all application configuration
 type Config struct {
-	Env       string
-	Port      int
-	DBConn    string
-	JWTSecret string
-	// Add additional secure defaults for optional configs
-	MaxHeaderBytes int
-	ReadTimeout    int
-	WriteTimeout   int
-	IdleTimeout    int
-	AllowedOrigins string
-	AdminToken     string
-	DBReplicaConn  string
+	Env                    string   `json:"env"`
+	Port                   int      `json:"port"`
+	DBConn                 string   `json:"db_conn" secret:"true"`
+	JWTSecret              string   `json:"jwt_secret" secret:"true"`
+	MaxHeaderBytes         int      `json:"max_header_bytes"`
+	ReadTimeout            int      `json:"read_timeout"`
+	WriteTimeout           int      `json:"write_timeout"`
+	IdleTimeout            int      `json:"idle_timeout"`
+	AllowedOrigins         string   `json:"allowed_origins"`
+	AdminToken             string   `json:"admin_token" secret:"true"`
+	DBReplicaConn          string   `json:"db_replica_conn" secret:"true"`
 	// Rate limiting configuration
-	RateLimitEnabled   bool
-	RateLimitMode      string
-	RateLimitRPS       int
-	RateLimitBurst     int
-	RateLimitWhitelist []string
+	RateLimitEnabled   bool     `json:"rate_limit_enabled"`
+	RateLimitMode      string   `json:"rate_limit_mode"`
+	RateLimitRPS       int      `json:"rate_limit_rps"`
+	RateLimitBurst     int      `json:"rate_limit_burst"`
+	RateLimitWhitelist []string `json:"rate_limit_whitelist"`
 	// Tracing configuration
 	TracingExporter        string
 	TracingServiceName     string
 	SecurityFrameAncestors string
+	// SecurityCSPReportURI is the endpoint browsers will POST CSP violation
+	// reports to. Set to the /api/v1/csp-reports sink. Leave empty to omit
+	// the report-uri directive (no collection).
+	SecurityCSPReportURI string
+	// CSPReportRPS is the per-tenant sustained rate (requests per second)
+	// allowed on the /api/v1/csp-reports endpoint. Default: 5.
+	CSPReportRPS int
+	// CSPReportBurst is the per-tenant burst size for /api/v1/csp-reports.
+	// Default: 10.
+	CSPReportBurst int
 	SpiffeSocketPath   string
 	SpiffeTrustDomain  string
 	GRPCPort           int    // Port for the gRPC server (0 = disabled)
@@ -75,8 +84,8 @@ type Config struct {
 	MaxGzipRatio           float64
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
-	RedisURL   string
-	CacheTTL   int // seconds; default 60
+	RedisURL string `json:"redis_url" secret:"true"`
+	CacheTTL int    `json:"cache_ttl"`
 
 	// DB connection pool tuning.
 	// All durations are in seconds to keep env-var parsing uniform.
@@ -92,13 +101,42 @@ type Config struct {
 	//   DB_POOL_HEALTH_CHECK_PERIOD  (default 30)  – how often pgxpool probes idle conns.
 	//   DB_POOL_METRICS_INTERVAL     (default 15)  – how often pool stats are scraped
 	//                                                 into Prometheus gauges.
-	DBPoolMaxConns          int
-	DBPoolMinConns          int
-	DBPoolMaxConnLifetime   int // seconds
-	DBPoolMaxConnIdleTime   int // seconds
-	DBPoolConnectTimeout    int // seconds
-	DBPoolHealthCheckPeriod int // seconds
-	DBPoolMetricsInterval   int // seconds
+	DBPoolMaxConns          int `json:"db_pool_max_conns"`
+	DBPoolMinConns          int `json:"db_pool_min_conns"`
+	DBPoolMaxConnLifetime   int `json:"db_pool_max_conn_lifetime"`
+	DBPoolMaxConnIdleTime   int `json:"db_pool_max_conn_idle_time"`
+	DBPoolConnectTimeout    int `json:"db_pool_connect_timeout"`
+	DBPoolHealthCheckPeriod int `json:"db_pool_health_check_period"`
+	DBPoolMetricsInterval   int `json:"db_pool_metrics_interval"`
+
+	// PgBouncer sidecar configuration.
+	//
+	//   PGBOUNCER_ENABLED        (default false) – route connections through the
+	//                             sidecar rather than directly to Postgres.
+	//   PGBOUNCER_HOST           (default "127.0.0.1") – sidecar listen address.
+	//   PGBOUNCER_PORT           (default 5432) – sidecar listen port.  When the
+	//                             sidecar is active the pool uses this port; the
+	//                             original DATABASE_URL host/port are used inside
+	//                             pgbouncer.ini to reach the backend.
+	//   DB_STATEMENT_CACHE_MODE  (default "prepare") – pgx query-exec mode.
+	//                             Set to "describe" (disables prepared statements
+	//                             at the protocol level, required for PgBouncer
+	//                             transaction pooling) or "simple" (uses the
+	//                             simple query protocol, maximum compatibility).
+	//                             "prepare" is the default pgx behaviour and is
+	//                             only safe when PgBouncer uses session pooling.
+	//   PGBOUNCER_MAX_CONN_IDLE_IN_TRANSACTION  (default 30) – idle-in-transaction
+	//                             server-side timeout forwarded into pgbouncer.ini
+	//                             as query_wait_timeout / idle_transaction_timeout.
+	PgBouncerEnabled        bool
+	PgBouncerHost           string
+	PgBouncerPort           int
+	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
+	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+	// GracefulShutdownTimeout is the maximum seconds the server waits for
+	// in-flight requests to complete before forcing shutdown. Env:
+	// GRACEFUL_SHUTDOWN_TIMEOUT (default: DefaultGracefulShutdownTimeout).
+	GracefulShutdownTimeout int // seconds
 }
 
 // ValidationResult holds the result of configuration validation
@@ -145,11 +183,28 @@ const (
 	DefaultDBPoolHealthCheckPeriod = 30   // 30 s proactive idle-conn check
 	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
 
+	// Graceful shutdown defaults — coordinate with k8s terminationGracePeriodSeconds.
+	DefaultGracefulShutdownTimeout = 30   // 30 s to drain in-flight requests and pool
+
+
 	// Validation bounds
 	MinDBPoolMaxConns = 1
 	MaxDBPoolMaxConns = 500
 	MinDBPoolTimeout  = 1   // seconds
 	MaxDBPoolTimeout  = 300 // seconds
+
+	// PgBouncer sidecar defaults.
+	DefaultPgBouncerHost           = "127.0.0.1"
+	DefaultPgBouncerPort           = 5432
+	DefaultDBStatementCacheMode    = "prepare"
+	DefaultPgBouncerIdleInTxTimeout = 30 // seconds
+	MinPgBouncerPort               = 1
+	MaxPgBouncerPort               = 65535
+
+	// Valid DB_STATEMENT_CACHE_MODE values.
+	StatementCacheModeDescribe = "describe"
+	StatementCacheModePrepare  = "prepare"
+	StatementCacheModeSimple   = "simple"
 
 	MinHeaderBytes        = 1024     // 1KB
 	MaxAllowedHeaderBytes = 10 << 20 // 10MB
@@ -206,7 +261,11 @@ func Load(opts ...Option) (Config, error) {
 		IdleTimeout:            DefaultIdleTimeout,
 		TracingExporter:        getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName:     getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		OTelLogsEnabled:        getEnvBool("OTEL_LOGS_ENABLED", false),
 		SecurityFrameAncestors: getEnv("SECURITY_FRAME_ANCESTORS", "'none'"),
+		SecurityCSPReportURI:   getEnv("SECURITY_CSP_REPORT_URI", "/api/v1/csp-reports"),
+		CSPReportRPS:           getEnvInt("CSP_REPORT_RPS", 5),
+		CSPReportBurst:         getEnvInt("CSP_REPORT_BURST", 10),
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
@@ -226,6 +285,13 @@ func Load(opts ...Option) (Config, error) {
 		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
 		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
 		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
+		// PgBouncer sidecar defaults.
+		PgBouncerEnabled:         false,
+		PgBouncerHost:            DefaultPgBouncerHost,
+		PgBouncerPort:            DefaultPgBouncerPort,
+		DBStatementCacheMode:     DefaultDBStatementCacheMode,
+		PgBouncerIdleInTxTimeout: DefaultPgBouncerIdleInTxTimeout,
+		GracefulShutdownTimeout:  DefaultGracefulShutdownTimeout,
 	}
 
 	// Resolve secrets through the provider
@@ -516,8 +582,25 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		c.TracingServiceName = svcName
 	}
 
+	// Validate GRACEFUL_SHUTDOWN_TIMEOUT
+	if val := os.Getenv("GRACEFUL_SHUTDOWN_TIMEOUT"); val != "" {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
+			c.GracefulShutdownTimeout = timeout
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "GRACEFUL_SHUTDOWN_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
+		}
+	}
+
 	// Validate DB pool configuration
 	validateDBPool(c, result)
+
+	// Validate PgBouncer sidecar configuration
+	validatePgBouncer(c, result)
 
 	// Set optional env values
 	c.Env = getEnv("ENV", "development")
@@ -643,6 +726,16 @@ func getEnvInt64(key string, fallback int64) int64 {
 	return fallback
 }
 
+// getEnvBool retrieves an environment variable as bool with a fallback value.
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
 // getEnvFloat64 retrieves an environment variable as float64 with a fallback value
 func getEnvFloat64(key string, fallback float64) float64 {
 	if v := os.Getenv(key); v != "" {
@@ -704,5 +797,72 @@ func validateDBPool(c *Config, result *ValidationResult) {
 			fmt.Sprintf("DB_POOL_MAX_CONN_IDLE_TIME (%ds) >= DB_POOL_MAX_CONN_LIFETIME (%ds); "+
 				"idle connections will be evicted before lifetime recycle fires — consider reducing idle time",
 				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
+	}
+}
+
+// validatePgBouncer reads PGBOUNCER_* and DB_STATEMENT_CACHE_MODE env vars,
+// validates them, and writes safe values back into cfg. Invalid values emit
+// warnings (not hard errors) so the server can still start with defaults.
+func validatePgBouncer(c *Config, result *ValidationResult) {
+	// PGBOUNCER_ENABLED
+	if val := os.Getenv("PGBOUNCER_ENABLED"); val != "" {
+		enabled, err := strconv.ParseBool(val)
+		if err != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("PGBOUNCER_ENABLED invalid (value=%q, must be bool); using default false", val))
+		} else {
+			c.PgBouncerEnabled = enabled
+		}
+	}
+
+	// PGBOUNCER_HOST
+	if val := os.Getenv("PGBOUNCER_HOST"); val != "" {
+		c.PgBouncerHost = val
+	}
+
+	// PGBOUNCER_PORT
+	if val := os.Getenv("PGBOUNCER_PORT"); val != "" {
+		port, err := strconv.Atoi(val)
+		if err != nil || port < MinPgBouncerPort || port > MaxPgBouncerPort {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("PGBOUNCER_PORT invalid (value=%q, allowed %d–%d); using default %d",
+					val, MinPgBouncerPort, MaxPgBouncerPort, DefaultPgBouncerPort))
+		} else {
+			c.PgBouncerPort = port
+		}
+	}
+
+	// DB_STATEMENT_CACHE_MODE
+	if val := os.Getenv("DB_STATEMENT_CACHE_MODE"); val != "" {
+		switch val {
+		case StatementCacheModeDescribe, StatementCacheModePrepare, StatementCacheModeSimple:
+			c.DBStatementCacheMode = val
+		default:
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("DB_STATEMENT_CACHE_MODE invalid (value=%q, allowed: prepare|describe|simple); using default %q",
+					val, DefaultDBStatementCacheMode))
+		}
+	}
+
+	// Warn when PgBouncer is enabled but statement cache mode is "prepare".
+	// Transaction pooling requires "describe" or "simple" to avoid
+	// "prepared statement does not exist" errors.
+	if c.PgBouncerEnabled && c.DBStatementCacheMode == StatementCacheModePrepare {
+		result.Warnings = append(result.Warnings,
+			"PGBOUNCER_ENABLED=true but DB_STATEMENT_CACHE_MODE=prepare: "+
+				"transaction pooling requires DB_STATEMENT_CACHE_MODE=describe (recommended) or simple; "+
+				"prepared statements will fail under PgBouncer transaction pooling")
+	}
+
+	// PGBOUNCER_IDLE_IN_TX_TIMEOUT
+	if val := os.Getenv("PGBOUNCER_IDLE_IN_TX_TIMEOUT"); val != "" {
+		n, err := strconv.Atoi(val)
+		if err != nil || n < MinDBPoolTimeout || n > 86400 {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("PGBOUNCER_IDLE_IN_TX_TIMEOUT invalid (value=%q, allowed %d–86400); using default %d",
+					val, MinDBPoolTimeout, DefaultPgBouncerIdleInTxTimeout))
+		} else {
+			c.PgBouncerIdleInTxTimeout = n
+		}
 	}
 }

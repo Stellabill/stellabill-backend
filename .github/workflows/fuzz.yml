@@ -130,9 +130,6 @@ jobs:
           echo "| FuzzListPlans      | ${{ needs.fuzz-list-plans.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| FuzzListStatements | ${{ needs.fuzz-list-statements.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| FuzzSwapInput      | ${{ needs.fuzz-swap-input.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| FuzzSwapExactIn    | ${{ needs.fuzz-swap-exact-in.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| FuzzSwapExactOut   | ${{ needs.fuzz-swap-exact-out.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| FuzzSwapRawBody    | ${{ needs.fuzz-swap-raw-body.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Fuzz time per target: \`${{ env.FUZZ_TIME }}\`" >> $GITHUB_STEP_SUMMARY
           echo "Run ID: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY

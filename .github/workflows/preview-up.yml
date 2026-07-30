@@ -1,0 +1,75 @@
+name: Preview Environment (Up)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  NAMESPACE: pr-${{ github.event.pull_request.number }}
+  PREVIEW_URL: https://pr-${{ github.event.pull_request.number }}.preview.stellabill.dev
+  IMAGE_TAG: pr-${{ github.sha }}
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    environment:
+      name: preview-${{ github.event.pull_request.number }}
+      url: ${{ env.PREVIEW_URL }}
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Tests & Check Coverage
+        run: make test-coverage
+
+      # Change if container registry setup differs
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t ghcr.io/stellabill/backend:${{ env.IMAGE_TAG }} .
+          # docker push ghcr.io/stellabill/backend:${{ env.IMAGE_TAG }}
+
+      - name: Configure Kubernetes Context
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBECONFIG_PREVIEW }}
+
+      - name: Ensure Namespace, Quotas, and TTL
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          
+          kubectl annotate namespace ${{ env.NAMESPACE }} janitor/ttl=24h --overwrite
+          
+          kubectl apply -f deploy/preview/quota.yaml -n ${{ env.NAMESPACE }}
+
+      - name: Deploy Seeded Postgres
+        run: |
+          kubectl create configmap pg-init-script \
+            --from-file=init.sql=internal/db/seed/preview_seed.sql \
+            -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f deploy/preview/postgres.yaml -n ${{ env.NAMESPACE }}
+          kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=120s
+
+      - name: Deploy Backend & Ingress
+        run: |
+          envsubst < deploy/preview/backend.yaml | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          kubectl rollout status deployment/stellabill-backend -n ${{ env.NAMESPACE }} --timeout=120s
+
+      - name: Emit Sticky PR Comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: preview-env
+          message: |
+            ### 🚀 Preview Environment Deployed
+            Your isolated preview environment is up and running!
+            
+            * **URL:** [${{ env.PREVIEW_URL }}](${{ env.PREVIEW_URL }})
+            * **Namespace:** `${{ env.NAMESPACE }}`
+            * **Status:** Seeded with test data.
+            
+            > _Note: This environment will be automatically destroyed when this PR is closed, or after 24 hours of inactivity._

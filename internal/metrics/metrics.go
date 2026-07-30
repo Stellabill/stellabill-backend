@@ -58,6 +58,33 @@ var (
 		},
 		[]string{"stat"},
 	)
+
+	// MrrCents reports the total Monthly Recurring Revenue in cents across all
+	// active subscriptions. Updated hourly by the KPI refresh worker.
+	MrrCents = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mrr_cents_total",
+		Help: "Monthly Recurring Revenue in cents across all active subscriptions",
+	})
+
+	// ActiveSubscribersTotal reports the number of active subscriptions broken
+	// down by plan. The plan_id and plan_name labels are set from the
+	// subscription's current plan. Updated hourly by the KPI refresh worker.
+	ActiveSubscribersTotal = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "active_subscribers_total",
+			Help: "Number of active subscriptions by plan",
+		},
+		[]string{"plan_id", "plan_name"},
+	)
+
+	// ChurnRate24h reports the proportion of subscriptions that were cancelled
+	// in the last 24 hours relative to the active + recently-cancelled base.
+	// A value of 0.05 means 5 % of subscribers churned in the rolling window.
+	// Updated hourly by the KPI refresh worker.
+	ChurnRate24h = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "churn_rate_24h",
+		Help: "Churn rate over the last 24 hours (0.0 to 1.0)",
+	})
 )
 
 func MetricsMiddleware() gin.HandlerFunc {
@@ -134,6 +161,26 @@ var CacheHitsTotal = promauto.NewCounterVec(
 		Help: "Total number of cache operations by layer, operation, and result",
 	},
 	[]string{"layer", "op", "result"},
+)
+
+// ShutdownDuration tracks the time taken to shut down gracefully in seconds.
+var ShutdownDuration = promauto.NewHistogram(
+	prometheus.HistogramOpts{
+		Name:    "shutdown_duration_seconds",
+		Help:    "Time taken to shut down gracefully in seconds",
+		Buckets: []float64{.1, .25, .5, 1, 2.5, 5, 10, 25, 30},
+	},
+)
+
+// CSPReportsTotal counts CSP violations received by the /api/v1/csp-reports
+// sink. The "directive" label carries the violated-directive value extracted
+// from the report body, or "unknown" when the field is absent or unparseable.
+var CSPReportsTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "csp_reports_total",
+		Help: "Total number of CSP violation reports received, by violated directive",
+	},
+	[]string{"directive"},
 )
 
 func sanitizeLabel(value string) string {

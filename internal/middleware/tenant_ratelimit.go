@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"stellarbill-backend/internal/timeutil"
@@ -156,6 +155,46 @@ func (trl *TenantRateLimiter) Allow(tenantID string) bool {
 	return limiter.limiter.Allow()
 }
 
+// getRateLimitSnapshot returns a snapshot of the current rate limit state
+func (trl *TenantRateLimiter) getRateLimitSnapshot(tenantID string) RateLimitSnapshot {
+	limiter := trl.getLimiter(tenantID)
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+
+	// The golang.org/x/time/rate.Limiter doesn't directly expose remaining tokens
+	// We estimate based on the burst size and the limiter's state
+	burst := int64(limiter.limiter.Burst())
+	limit := int64(limiter.limiter.Limit())
+
+	// Estimate remaining tokens based on time since last access
+	// This is an approximation since the limiter doesn't expose exact token count
+	elapsed := timeutil.NowUTC().Sub(limiter.lastAccess).Seconds()
+	tokensToAdd := int64(elapsed * float64(limit))
+	remaining := burst - tokensToAdd
+	if remaining < 0 {
+		remaining = 0
+	}
+	if remaining > burst {
+		remaining = burst
+	}
+
+	// Calculate reset time - when tokens will be fully replenished
+	tokensNeeded := burst - remaining
+	resetTime := timeutil.NowUTC()
+	if tokensNeeded > 0 && limit > 0 {
+		secondsToRefill := float64(tokensNeeded) / float64(limit)
+		resetTime = resetTime.Add(time.Duration(secondsToRefill) * time.Second)
+	} else {
+		resetTime = resetTime.Add(time.Second)
+	}
+
+	return RateLimitSnapshot{
+		Limit:     burst,
+		Remaining: remaining,
+		Reset:     resetTime,
+	}
+}
+
 // TenantRateLimitConfig holds configuration for per-tenant rate limiting
 type TenantRateLimitConfig struct {
 	Enabled          bool
@@ -192,10 +231,11 @@ func TenantRateLimitMiddleware(config TenantRateLimitConfig) gin.HandlerFunc {
 
 		// Check if request is allowed
 		if !limiter.Allow(tenantID) {
-			c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", config.Burst))
-			c.Header("X-RateLimit-Remaining", "0")
-			c.Header("X-RateLimit-Reset", timeutil.FormatRFC3339UTC(timeutil.NowUTC().Add(time.Second)))
-			c.Header("Retry-After", "1")
+			// Get rate limit snapshot for headers
+			snapshot := limiter.getRateLimitSnapshot(tenantID)
+			snapshot.Remaining = 0 // Force to 0 for rate-limited response
+
+			emitRateLimitHeaders(c, snapshot)
 
 			// Log rate limit hit if enabled
 			if config.LogRateLimitHits {
@@ -210,6 +250,10 @@ func TenantRateLimitMiddleware(config TenantRateLimitConfig) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+
+		// Emit rate limit headers for successful requests
+		snapshot := limiter.getRateLimitSnapshot(tenantID)
+		emitRateLimitHeaders(c, snapshot)
 
 		c.Next()
 	}

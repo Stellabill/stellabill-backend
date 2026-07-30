@@ -197,6 +197,67 @@ func sanitizeInt(name, raw string, rule IntRule) (int, error) {
 	return value, nil
 }
 
+// ParseFields parses the `?fields=` query parameter value, validates each
+// field name against the provided allowlist, and returns the deduplicated,
+// ordered set of allowed fields.
+//
+// The raw value is expected to be a comma-separated list of field names
+// (e.g. "id,name,status"). Each field name is trimmed and validated against
+// the allowed set. Unknown or forbidden field names return a ValidationError
+// with Location "query" and Name "fields".
+//
+// When raw is empty, nil is returned (meaning "all fields").
+func ParseFields(raw string, allowed []string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, f := range allowed {
+		allowedSet[f] = struct{}{}
+	}
+
+	parts := strings.Split(raw, ",")
+	seen := make(map[string]struct{}, len(parts))
+	result := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		if !identifierPattern.MatchString(trimmed) {
+			return nil, &ValidationError{
+				Location: "query",
+				Name:     "fields",
+				Reason:   fmt.Sprintf("%q is not a valid field name", trimmed),
+			}
+		}
+		if _, ok := allowedSet[trimmed]; !ok {
+			return nil, &ValidationError{
+				Location: "query",
+				Name:     "fields",
+				Reason:   fmt.Sprintf("unknown or forbidden field %q", trimmed),
+			}
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue // skip duplicates
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+
+	if len(result) == 0 {
+		return nil, &ValidationError{
+			Location: "query",
+			Name:     "fields",
+			Reason:   "must specify at least one valid field",
+		}
+	}
+
+	return result, nil
+}
+
 func normalizeString(value string) (string, error) {
 	normalized := norm.NFKC.String(strings.TrimSpace(value))
 	if !utf8.ValidString(normalized) {

@@ -66,7 +66,7 @@ func TestConcurrentEventPublishing(t *testing.T) {
 				}, nil, nil)
 				require.NoError(t, err)
 
-				err = repo.Store(event)
+				err = repo.Store(context.Background(), event)
 				require.NoError(t, err)
 			}
 			done <- true
@@ -116,7 +116,7 @@ func TestDuplicateEventHandling(t *testing.T) {
 		Version:   1,
 	}
 
-	err = repo.Store(event)
+	err = repo.Store(context.Background(), event)
 	require.NoError(t, err)
 
 	event2 := &Event{
@@ -129,7 +129,7 @@ func TestDuplicateEventHandling(t *testing.T) {
 		Version:   1,
 	}
 
-	err = repo.Store(event2)
+	err = repo.Store(context.Background(), event2)
 	require.NoError(t, err)
 
 	retrieved1, err := repo.GetByID(event.ID)
@@ -165,7 +165,7 @@ func TestStuckMessageRecovery(t *testing.T) {
 	stuckEvent, err := NewEvent("stuck.test", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(t, err)
 
-	err = repo.Store(stuckEvent)
+	err = repo.Store(context.Background(), stuckEvent)
 	require.NoError(t, err)
 
 	publisher.SetPublishError(stuckEvent.ID, &TimeoutError{msg: "always fails"})
@@ -232,7 +232,7 @@ func TestPartialFailureRecovery(t *testing.T) {
 		event, err := NewEvent("partial.test", map[string]int{"index": i}, nil, nil)
 		require.NoError(t, err)
 		events = append(events, event)
-		err = repo.Store(event)
+		err = repo.Store(context.Background(), event)
 		require.NoError(t, err)
 	}
 
@@ -290,7 +290,7 @@ func TestDatabaseConnectionFailure(t *testing.T) {
 	event, err := NewEvent("db.test", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(t, err)
 
-	err = repo.Store(event)
+	err = repo.Store(context.Background(), event)
 	require.NoError(t, err)
 
 	db.Close()
@@ -350,7 +350,7 @@ func TestBackoffStrategy(t *testing.T) {
 	event, err := NewEvent("backoff.test", map[string]string{"key": "value"}, nil, nil)
 	require.NoError(t, err)
 
-	err = repo.Store(event)
+	err = repo.Store(context.Background(), event)
 	require.NoError(t, err)
 
 	publisher.SetPublishError(event.ID, &TimeoutError{msg: "always fails"})
@@ -404,7 +404,7 @@ func TestCleanupCompletedEvents(t *testing.T) {
 		}
 
 		event.Status = StatusCompleted
-		err = repo.Store(event)
+		err = repo.Store(context.Background(), event)
 		require.NoError(t, err)
 	}
 

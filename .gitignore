@@ -55,7 +55,9 @@ temp/
 *.temp
 .cache/
 
-# Coverage and tools
+# Gitleaks reports
+*.sarif
+gitleaks-report.*
 coverage.html
 coverage.out
 *.cover

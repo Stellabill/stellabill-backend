@@ -52,9 +52,18 @@ type Item interface {
 
 // Page represents a standardized paginated response envelope.
 type Page[T any] struct {
-	Items      []T    `json:"items"`
+	Items []T `json:"items"`
+	// NextCursor points at the item following this page; empty when this is
+	// the last page.
 	NextCursor string `json:"next_cursor,omitempty"`
-	HasMore    bool   `json:"has_more"`
+	// PreviousCursor reconstructs the page before this one. It is empty both
+	// when there is no previous page AND when the previous page is the first
+	// page (which has no cursor) — callers that need to distinguish "no
+	// previous page" from "previous page is the first page" should track
+	// whether the incoming request cursor was itself empty (see
+	// pagination.LinkParams.HasPrev).
+	PreviousCursor string `json:"previous_cursor,omitempty"`
+	HasMore        bool   `json:"has_more"`
 }
 
 // PaginateSlice simulates cursor-based pagination over an in-memory slice.
@@ -104,9 +113,31 @@ func PaginateSlice[T Item](items []T, cursor Cursor, limit int) Page[T] {
 		})
 	}
 
+	prevCursorStr := previousCursor(items, startIdx, limit)
+
 	return Page[T]{
-		Items:      pageItems,
-		NextCursor: nextCursorStr,
-		HasMore:    hasMore,
+		Items:          pageItems,
+		NextCursor:     nextCursorStr,
+		PreviousCursor: prevCursorStr,
+		HasMore:        hasMore,
 	}
+}
+
+// previousCursor computes the cursor that, when passed back into
+// PaginateSlice, reproduces the page immediately before the one starting at
+// startIdx. Returns "" both when startIdx is 0 (no previous page) and when
+// the previous page is the first page (which has no cursor of its own) —
+// both cases mean "there is nothing to add a cursor parameter for".
+func previousCursor[T Item](items []T, startIdx, limit int) string {
+	if startIdx <= 0 {
+		return ""
+	}
+
+	prevStart := startIdx - limit
+	if prevStart <= 0 {
+		return ""
+	}
+
+	anchor := items[prevStart-1]
+	return Encode(Cursor{ID: anchor.GetID(), SortValue: anchor.GetSortValue()})
 }

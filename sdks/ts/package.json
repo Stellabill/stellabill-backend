@@ -1,0 +1,64 @@
+{
+  "name": "@stellabill/sdk",
+  "version": "0.2.0",
+  "description": "TypeScript SDK for the Stellabill backend API. Generated from openapi/openapi.yaml using openapi-typescript + openapi-fetch.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "scripts": {
+    "generate": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/generate.ts",
+    "prebuild": "pnpm generate",
+    "build": "tsup",
+    "pretest": "pnpm generate && pnpm build",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo \"lint placeholder (eslint optional)\""
+  },
+  "dependencies": {
+    "openapi-fetch": "0.13.5"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.2",
+    "@vitest/coverage-v8": "2.1.9",
+    "openapi-typescript": "7.4.2",
+    "tsup": "8.3.5",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2",
+    "vitest": "2.1.9"
+  },
+  "keywords": [
+    "stellabill",
+    "api",
+    "sdk",
+    "openapi",
+    "typescript"
+  ]
+}

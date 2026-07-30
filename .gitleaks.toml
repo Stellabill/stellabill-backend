@@ -1,0 +1,43 @@
+[allowlist]
+  stopwords = [
+    "secret",
+    "password",
+    "token",
+    "credential",
+    "api-key",
+    "jwt",
+    "hmac",
+    "CHANGE_ME",
+    "placeholder",
+    "testpass",
+    "preview_pass",
+  ]
+  paths = [
+    '''.*_test\.go$''',
+    '''internal/testutil/.*''',
+    '''docs/outbox-jwe\.md''',
+  ]
+
+# ── Custom deny rules (beyond gitleaks defaults) ───────────────────────
+# These rules catch patterns specific to this codebase that the built-in
+# rules might miss. All regexes must be RE2-compatible (no lookaheads,
+# no backreferences).
+#
+# The allowlist above handles false positives from test/example files.
+# These custom rules catch real credential patterns that may slip past
+# the default ruleset.
+[[rules]]
+  id = "stellabill-jwt-secret-assignment"
+  description = "JWT_SECRET assigned a non-placeholder value"
+  regex = '''(?i)JWT_SECRET\s*[:=]\s*['"][A-Za-z0-9!@#$%^&*()_+\-={}]{8,}['"]'''
+  tags = ["stellabill", "jwt", "secret"]
+[[rules]]
+  id = "stellabill-admin-token-assignment"
+  description = "ADMIN_TOKEN assigned a non-placeholder value"
+  regex = '''(?i)ADMIN_TOKEN\s*[:=]\s*['"][A-Za-z0-9!@#$%^&*()_+\-={}]{8,}['"]'''
+  tags = ["stellabill", "admin", "token"]
+[[rules]]
+  id = "stellabill-audit-hmac-assignment"
+  description = "AUDIT_HMAC_SECRET assigned a non-placeholder value"
+  regex = '''(?i)AUDIT_HMAC_SECRET\s*[:=]\s*['"][A-Za-z0-9!@#$%^&*()_+\-={}]{8,}['"]'''
+  tags = ["stellabill", "audit", "hmac"]

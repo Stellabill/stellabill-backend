@@ -81,41 +81,26 @@ jobs:
       - name: Enforce benchmark thresholds
         run: |
           go test ./internal/handlers/... -bench=. -benchmem -benchtime=3s -run=^$ 2>&1 | tee threshold_check.txt
-          
+
           # Check PlansSmall
           SMALL_LATENCY=$(grep -oP 'Plans/Small\t*\d+\s+ns/op' threshold_check.txt | awk '{print $2}')
           if [ -n "$SMALL_LATENCY" ] && [ "$SMALL_LATENCY" -gt 30000 ]; then
             echo "❌ Plans Small latency ($SMALL_LATENCY ns) exceeds threshold (30000 ns)"
             exit 1
           fi
-          
-          # Check SubscriptionsSmall  
+
+          # Check SubscriptionsSmall
           SUB_LATENCY=$(grep -oP 'Subscriptions/Small\t*\d+\s+ns/op' threshold_check.txt | awk '{print $2}')
           if [ -n "$SUB_LATENCY" ] && [ "$SUB_LATENCY" -gt 35000 ]; then
             echo "❌ Subscriptions Small latency ($SUB_LATENCY ns) exceeds threshold (35000 ns)"
             exit 1
           fi
-          
-          echo "✅ All benchmark thresholds enforced"
-      
-      - name: Enforce benchmark thresholds
-        run: |
+
           echo "## Performance Threshold Check" >> $GITHUB_STEP_SUMMARY
-          
-          # Run threshold-enforcing benchmarks
-          go test ./internal/handlers/... -run=^TestBenchmarkThresholds -v | tee threshold_check.txt
-          
-          # Check if thresholds are being met
-          if grep -q "FAIL\|FAIL" threshold_check.txt; then
-            echo "❌ Performance thresholds not met"
-            cat threshold_check.txt >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-          
-          echo "✅ All benchmark thresholds passed"
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat threshold_check.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "✅ All benchmark thresholds enforced"
       
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -130,17 +115,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-baseline
-          path: new.txt
+          path: |
+            handlers_new.txt
+            subscriptions_new.txt
 
   security:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-      
+        uses: actions/checkout@v4
+
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.22'
       

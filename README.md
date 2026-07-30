@@ -2,6 +2,13 @@
 
 Go (Gin) API backend for Stellabill - subscription and billing plans API. This repo is backend-only; a separate frontend consumes these APIs.
 
+[![CI](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml)
+
+| Go \ Postgres | 15 | 16 | 17 |
+|:---:|:---:|:---:|:---:|
+| **1.22** | [![test](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg?branch=main&job=test)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml) | [![test](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg?branch=main&job=test)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml) | [![test](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg?branch=main&job=test)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml) |
+| **1.23** | [![test](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg?branch=main&job=test)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml) | [![test](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg?branch=main&job=test)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml) | [![test](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg?branch=main&job=test)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml) |
+
 ---
 
 ## Table of contents
@@ -159,6 +166,26 @@ curl -X POST http://localhost:8080/api/outbox/test
 
 ---
 
+## Docker
+
+The Dockerfile uses a **multi-stage build** with
+`gcr.io/distroless/static-debian12:nonroot` as the runtime base. The final
+image contains only the statically-linked binary — no shell, no package manager,
+minimal CVE surface.
+
+```bash
+# Build
+docker build -t stellabill-backend .
+
+# Run
+docker run --rm -e DATABASE_URL=... -p 8080:8080 stellabill-backend
+```
+
+The image runs as the `nonroot` user (UID 65534) by default. The binary is
+compiled with `CGO_ENABLED=0` for a fully static executable.
+
+---
+
 ## Configuration
 
 > **Quick start:** copy [`.env.example`](.env.example) to `.env`, fill in the
@@ -254,6 +281,19 @@ router.GET("/feature", middleware.RequireAnyFeatureFlags("flag1", "flag2"), hand
 > See **[docs/dev-test-guide.md](docs/dev-test-guide.md)** for the full local
 > development and test execution guide, including common failure
 > troubleshooting.
+
+### CI matrix
+
+CI runs a **Go x Postgres** matrix on every push and PR:
+
+| Go \ Postgres | 15 | 16 | 17 |
+|:---:|:---:|:---:|:---:|
+| **1.22** | ✅ | ✅ | ✅ |
+| **1.23** | ✅ | ✅ | ✅ |
+
+Each matrix cell publishes a JUnit XML report as a build artifact. Lint and
+formatting checks run once (not per matrix cell). Coverage is enforced at
+**>= 95%** for non-cmd packages.
 
 ### Unit tests
 
@@ -360,6 +400,55 @@ Every push and pull request runs the following checks automatically via GitHub A
 | Coverage threshold | `./scripts/check-coverage.sh coverage.out 95` (≥ 95 % on `internal/`) |
 
 Coverage artifacts (`coverage.out`) are uploaded and retained for 14 days on every run.
+
+---
+
+## SLSA Level 3 Provenance
+
+Every GitHub Release produces cryptographically-signed provenance for both the
+Go binary and the container image using
+[slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator).
+
+### What SLSA Level 3 guarantees
+
+- The binary and image were built by the pinned GitHub Actions workflow (`.github/workflows/release-go.yml`), not by an individual developer's machine.
+- The provenance document is signed via Sigstore keyless signing (OIDC → Fulcio CA → Rekor transparency log) — no pre-shared key required to verify.
+- The staging deploy job is gated: it calls `slsa-verifier` and **blocks the deploy** if provenance cannot be verified.
+
+### Quick verification
+
+**Binary:**
+
+```bash
+TAG=v1.2.3
+gh release download "${TAG}" \
+  --repo Stellabill/stellabill-backend \
+  --pattern "stellabill-backend" \
+  --pattern "stellabill-backend.intoto.jsonl"
+
+slsa-verifier verify-artifact stellabill-backend \
+  --provenance-path stellabill-backend.intoto.jsonl \
+  --source-uri     github.com/Stellabill/stellabill-backend \
+  --source-tag     "${TAG}"
+# Expected: PASSED: SLSA verification passed
+```
+
+**Container image:**
+
+```bash
+DIGEST=sha256:<digest-from-release-notes-or-ghcr>
+slsa-verifier verify-image \
+  "ghcr.io/Stellabill/stellabill-backend@${DIGEST}" \
+  --source-uri github.com/Stellabill/stellabill-backend \
+  --source-tag "${TAG}"
+# Expected: PASSED: SLSA verification passed
+```
+
+See **[docs/slsa-verification.md](docs/slsa-verification.md)** for the full verification guide, including cosign usage, provenance document inspection, and CI automation examples.
+
+See **[docs/branch-protection.md](docs/branch-protection.md)** for the repository settings required to maintain the SLSA guarantee.
+
+---
 
 ### Run checks locally before opening a PR
 

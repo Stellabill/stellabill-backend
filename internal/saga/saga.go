@@ -11,6 +11,7 @@ type StepStatus string
 const (
 	StepPending            StepStatus = "pending"
 	StepRunning            StepStatus = "running"
+	StepRetrying           StepStatus = "retrying"
 	StepCompleted          StepStatus = "completed"
 	StepFailed             StepStatus = "failed"
 	StepCompensating       StepStatus = "compensating"
@@ -30,10 +31,18 @@ const (
 
 type StepFn func(ctx context.Context, sagaCtx SagaContext) error
 
+type RetryPolicy struct {
+	MaxAttempts int
+	BaseDelay   time.Duration
+	MaxDelay    time.Duration
+	Jitter      float64
+}
+
 type Step struct {
-	Key        string
-	Execute    StepFn
-	Compensate StepFn
+	Key         string
+	Execute     StepFn
+	Compensate  StepFn
+	RetryPolicy *RetryPolicy
 }
 
 type StepResult struct {
@@ -43,6 +52,7 @@ type StepResult struct {
 	ErrorMessage  string     `json:"error_message,omitempty"`
 	ExecutedAt    *time.Time `json:"executed_at,omitempty"`
 	CompensatedAt *time.Time `json:"compensated_at,omitempty"`
+	RetryAttempt  int        `json:"retry_attempt,omitempty"`
 }
 
 type SagaContext struct {

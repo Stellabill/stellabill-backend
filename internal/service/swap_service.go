@@ -3,10 +3,16 @@ package service
 import (
 	"errors"
 	"math"
+
+	"stellarbill-backend/internal/errcode"
 )
 
 // ErrInsufficientLiquidity is returned when a swap cannot be fulfilled.
 var ErrInsufficientLiquidity = errors.New("insufficient liquidity")
+
+func init() {
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrInsufficientLiquidity) }, errcode.CodeSwapInsufficientLiquidity)
+}
 
 // SwapResult holds the output of a swap operation.
 type SwapResult struct {

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"stellarbill-backend/internal/servertiming"
 	"sync"
 	"time"
 )
@@ -32,7 +33,13 @@ func NewInMemory() *InMemory {
 	return &InMemory{items: make(map[string]inmemoryItem)}
 }
 
-func (m *InMemory) Get(_ context.Context, key string) ([]byte, error) {
+func (m *InMemory) Get(ctx context.Context, key string) ([]byte, error) {
+	start := time.Now()
+	defer func() {
+		if rec := servertiming.FromContext(ctx); rec != nil {
+			rec.RecordCache(time.Since(start))
+		}
+	}()
 	m.mu.RLock()
 	it, ok := m.items[key]
 	m.mu.RUnlock()
@@ -48,7 +55,13 @@ func (m *InMemory) Get(_ context.Context, key string) ([]byte, error) {
 	return it.value, nil
 }
 
-func (m *InMemory) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
+func (m *InMemory) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	start := time.Now()
+	defer func() {
+		if rec := servertiming.FromContext(ctx); rec != nil {
+			rec.RecordCache(time.Since(start))
+		}
+	}()
 	m.mu.Lock()
 	it := inmemoryItem{value: value}
 	if ttl > 0 {
@@ -59,7 +72,13 @@ func (m *InMemory) Set(_ context.Context, key string, value []byte, ttl time.Dur
 	return nil
 }
 
-func (m *InMemory) Delete(_ context.Context, key string) error {
+func (m *InMemory) Delete(ctx context.Context, key string) error {
+	start := time.Now()
+	defer func() {
+		if rec := servertiming.FromContext(ctx); rec != nil {
+			rec.RecordCache(time.Since(start))
+		}
+	}()
 	m.mu.Lock()
 	delete(m.items, key)
 	m.mu.Unlock()

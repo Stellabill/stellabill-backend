@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"stellarbill-backend/internal/servertiming"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -33,8 +34,13 @@ func NewRedisFromURL(url string) (*Redis, error) {
 	return NewRedis(redis.NewClient(opts)), nil
 }
 
-// Get implements cache.Cache.
 func (r *Redis) Get(ctx context.Context, key string) ([]byte, error) {
+	start := time.Now()
+	defer func() {
+		if rec := servertiming.FromContext(ctx); rec != nil {
+			rec.RecordCache(time.Since(start))
+		}
+	}()
 	val, err := r.client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
 		return nil, nil // cache miss
@@ -46,8 +52,13 @@ func (r *Redis) Get(ctx context.Context, key string) ([]byte, error) {
 	return val, nil
 }
 
-// Set implements cache.Cache.
 func (r *Redis) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	start := time.Now()
+	defer func() {
+		if rec := servertiming.FromContext(ctx); rec != nil {
+			rec.RecordCache(time.Since(start))
+		}
+	}()
 	err := r.client.Set(ctx, key, value, ttl).Err()
 	if err != nil {
 		// Non-fatal: stale data is acceptable, DB fallback works.
@@ -56,8 +67,13 @@ func (r *Redis) Set(ctx context.Context, key string, value []byte, ttl time.Dura
 	return nil
 }
 
-// Delete implements cache.Cache.
 func (r *Redis) Delete(ctx context.Context, key string) error {
+	start := time.Now()
+	defer func() {
+		if rec := servertiming.FromContext(ctx); rec != nil {
+			rec.RecordCache(time.Since(start))
+		}
+	}()
 	err := r.client.Del(ctx, key).Err()
 	if err != nil {
 		// Non-fatal: stale data will be detected by the stale-read path.

@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"strconv"
 	"time"
@@ -18,6 +21,21 @@ const (
 	maxLimit     = 200
 )
 
+// StatementAllowedFields lists the JSON field names that clients may request
+// via the ?fields= query parameter on statement endpoints.
+var StatementAllowedFields = []string{
+	"id",
+	"subscription_id",
+	"customer",
+	"period_start",
+	"period_end",
+	"issued_at",
+	"total_amount",
+	"currency",
+	"kind",
+	"status",
+}
+
 // ---------------- LIST HANDLER ----------------
 
 // NewListStatementsHandler returns a gin.HandlerFunc for GET /api/v1/statements.
@@ -26,6 +44,8 @@ const (
 // (set by auth middleware), requires a customer_id query parameter, builds a
 // repository.StatementQuery from the remaining query parameters, and delegates
 // to StatementService.ListByCustomer.
+//
+// Supports ?fields= for sparse fieldset selection.
 //
 // Supported query parameters:
 //
@@ -37,6 +57,7 @@ const (
 //	end_before      – RFC3339 upper bound for statement date (exclusive)
 //	limit           – page size, 1–200 (default 20)
 //	order           – "asc" or "desc" (default "desc")
+//	fields          – comma-separated list of fields to include in the response
 //
 // Security: ownership and RBAC are enforced inside StatementService.ListByCustomer.
 // A subscriber may only list their own statements; a merchant may list statements
@@ -52,7 +73,7 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		// Extract auth context set by middleware.
 		callerID, roles, ok := getAuthContext(c)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RenderProblem(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "unauthorized")
 			return
 		}
 
@@ -60,14 +81,21 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		// they are requesting (RBAC enforcement happens in the service).
 		customerID := c.Query("customer_id")
 		if customerID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "customer_id is required"})
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, "customer_id is required")
+			return
+		}
+
+		// Parse optional ?fields= parameter.
+		fields, err := requestparams.ParseFields(c.Query("fields"), StatementAllowedFields)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
 		// Parse remaining filter / pagination params.
 		q, err := buildStatementQuery(c)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, err.Error())
 			return
 		}
 
@@ -80,10 +108,10 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		)
 		if err != nil {
 			if errors.Is(err, service.ErrForbidden) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				RenderProblem(c, http.StatusForbidden, ErrorCodeForbidden, "forbidden")
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list statements"})
+			RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "failed to list statements")
 			return
 		}
 
@@ -93,6 +121,34 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		}
 		if statements == nil {
 			statements = []*service.StatementDetail{}
+		}
+
+		// NOTE: repository.StatementQuery.StartingAfter/EndingBefore are not
+		// yet wired through to a repository implementation (no server-side
+		// keyset pagination exists for statements today), so only rel="first"
+		// can be emitted correctly here. Emitting rel="next"/"prev" would
+		// require query parameters this endpoint does not yet accept, and
+		// would produce a link that doesn't actually advance the collection.
+		if header := pagination.LinkHeader(requestBaseURL(c), pagination.LinkParams{}); header != "" {
+			c.Header("Link", header)
+		}
+
+		if fields != nil {
+			// Apply sparse fieldset projection.
+			projected := make([]map[string]json.RawMessage, 0, len(statements))
+			for _, stmt := range statements {
+				p, err := ProjectFields(stmt, fields)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build response"})
+					return
+				}
+				projected = append(projected, p)
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"statements": projected,
+				"total":      total,
+			})
+			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -111,6 +167,8 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 // service.ErrNotFound to HTTP 404 so the caller cannot enumerate statements
 // belonging to other customers.
 //
+// Supports ?fields= for sparse fieldset selection.
+//
 // Security: the service enforces that subscribers may only fetch their own
 // statements; cross-customer lookups are returned as 404 (not 403) to avoid
 // leaking the existence of a statement.
@@ -125,13 +183,20 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 		// Extract auth context set by middleware.
 		callerID, roles, ok := getAuthContext(c)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RenderProblem(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "unauthorized")
 			return
 		}
 
 		id := c.Param("id")
 		if id == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, "id is required")
+			return
+		}
+
+		// Parse optional ?fields= parameter.
+		fields, err := requestparams.ParseFields(c.Query("fields"), StatementAllowedFields)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -143,14 +208,24 @@ func NewGetStatementHandler(svc service.StatementService) gin.HandlerFunc {
 		)
 		if err != nil {
 			if errors.Is(err, service.ErrNotFound) || errors.Is(err, service.ErrDeleted) {
-				c.JSON(http.StatusNotFound, gin.H{"error": "statement not found"})
+				RenderProblem(c, http.StatusNotFound, ErrorCodeNotFound, "statement not found")
 				return
 			}
 			if errors.Is(err, service.ErrForbidden) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				RenderProblem(c, http.StatusForbidden, ErrorCodeForbidden, "forbidden")
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch statement"})
+			RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "failed to fetch statement")
+			return
+		}
+
+		if fields != nil {
+			projected, err := ProjectFields(stmt, fields)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build response"})
+				return
+			}
+			c.JSON(http.StatusOK, projected)
 			return
 		}
 

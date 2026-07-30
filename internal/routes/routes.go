@@ -18,6 +18,7 @@ import (
 	"stellarbill-backend/internal/tracing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -65,6 +66,8 @@ func Register(r *gin.Engine) {
 	planRepo := repository.NewMockPlanRepo()
 	stmtRepo := repository.NewMockStatementRepo()
 
+	r.Use(middleware.DataLoaderMiddleware(planRepo, subRepo))
+
 	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
 	svc := service.NewSubscriptionService(subRepo, planRepo)
 
@@ -90,17 +93,33 @@ func Register(r *gin.Engine) {
 	api.GET("/liveness", h.LivenessProbe)
 	api.GET("/readiness", h.ReadinessProbe)
 
+	// Prometheus metrics — no auth required; network-level access control is
+	// expected (e.g. Kubernetes NetworkPolicy or reverse-auth proxy).
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
 	{
 		v1.GET("/subscriptions", h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
+		v1.PATCH("/subscriptions/:id", h.PatchSubscription)
+		v1.GET("/subscriptions/:id/events", h.GetSubscriptionEvents)
 		v1.GET("/plans", h.ListPlans)
+		v1.PATCH("/plans/:id", h.PatchPlan)
 		v1.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		v1.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 		v1.POST("/tenants/me/export", handlers.NewTenantExportHandler(exportJobManager))
 		v1.GET("/operations/:id", handlers.NewOperationStatusHandler(exportJobManager))
 	}
+
+	// CSP violation reports — public (no auth; browsers send without tokens),
+	// but per-tenant rate limited to prevent DoS amplification.
+	cspRateLimiter := middleware.TenantRateLimitMiddleware(middleware.TenantRateLimitConfig{
+		Enabled: true,
+		RPS:     cfg.CSPReportRPS,
+		Burst:   cfg.CSPReportBurst,
+	})
+	v1.POST("/csp-reports", cspRateLimiter, middleware.CSPReportHandler())
 
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
@@ -132,6 +151,12 @@ func Register(r *gin.Engine) {
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
 	webhookHandler := handlers.NewWebhookHandler()
 	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
+	// Admin login (no JWT required — uses admin token directly)
+	r.POST("/api/admin/login", adminHandler.Login)
+
+	// Redacted config dump — accessible via admin JWT or admin token header
+	r.GET("/internal/config-dump", handlers.ConfigDumpHandler(&cfg))
+
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
 
@@ -140,6 +165,9 @@ func Register(r *gin.Engine) {
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
+
+		// Redacted config dump under admin group with RBAC
+		admin.GET("/config-dump", auth.RequirePermission(auth.PermManageSubscriptions), handlers.ConfigDumpHandler(&cfg))
 
 		// Reconciliation — scoped by RBAC and tenant
 		adapter := reconciliation.NewMemoryAdapter()

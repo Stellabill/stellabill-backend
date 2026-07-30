@@ -3,6 +3,7 @@ package middleware
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -691,4 +692,218 @@ func TestRateLimitMiddleware_Logging(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
 	assert.Equal(t, 429, w2.Code)
+}
+
+func TestEmitRateLimitHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("Normal values", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/", nil)
+
+		snapshot := RateLimitSnapshot{
+			Limit:     100,
+			Remaining: 50,
+			Reset:     time.Now().Add(30 * time.Second),
+		}
+
+		emitRateLimitHeaders(c, snapshot)
+
+		assert.Equal(t, "100", c.Writer.Header().Get("X-RateLimit-Limit"))
+		assert.Equal(t, "50", c.Writer.Header().Get("X-RateLimit-Remaining"))
+		assert.NotEmpty(t, c.Writer.Header().Get("X-RateLimit-Reset"))
+		assert.Empty(t, c.Writer.Header().Get("Retry-After")) // No Retry-When when remaining > 0
+
+		// Verify Reset is in unix-seconds format
+		resetStr := c.Writer.Header().Get("X-RateLimit-Reset")
+		_, err := strconv.ParseInt(resetStr, 10, 64)
+		assert.NoError(t, err, "Reset should be unix-seconds format")
+	})
+
+	t.Run("Rate limited response", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/", nil)
+
+		snapshot := RateLimitSnapshot{
+			Limit:     100,
+			Remaining: 0,
+			Reset:     time.Now().Add(5 * time.Second),
+		}
+
+		emitRateLimitHeaders(c, snapshot)
+
+		assert.Equal(t, "100", c.Writer.Header().Get("X-RateLimit-Limit"))
+		assert.Equal(t, "0", c.Writer.Header().Get("X-RateLimit-Remaining"))
+		assert.NotEmpty(t, c.Writer.Header().Get("X-RateLimit-Reset"))
+		assert.NotEmpty(t, c.Writer.Header().Get("Retry-After"))
+
+		// Verify Retry-After is a positive integer
+		retryAfterStr := c.Writer.Header().Get("Retry-After")
+		retryAfter, err := strconv.Atoi(retryAfterStr)
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, retryAfter, 1, "Retry-After should be at least 1 second")
+	})
+
+	t.Run("Negative values are clamped to zero", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/", nil)
+
+		snapshot := RateLimitSnapshot{
+			Limit:     -10,
+			Remaining: -5,
+			Reset:     time.Now().Add(30 * time.Second),
+		}
+
+		emitRateLimitHeaders(c, snapshot)
+
+		assert.Equal(t, "0", c.Writer.Header().Get("X-RateLimit-Limit"))
+		assert.Equal(t, "0", c.Writer.Header().Get("X-RateLimit-Remaining"))
+	})
+
+	t.Run("Retry-After minimum of 1 second", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/", nil)
+
+		snapshot := RateLimitSnapshot{
+			Limit:     100,
+			Remaining: 0,
+			Reset:     time.Now().Add(100 * time.Millisecond), // Less than 1 second
+		}
+
+		emitRateLimitHeaders(c, snapshot)
+
+		retryAfterStr := c.Writer.Header().Get("Retry-After")
+		retryAfter, err := strconv.Atoi(retryAfterStr)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, retryAfter, "Retry-After should be minimum 1 second")
+	})
+}
+
+func TestRateLimitHeaders_UnixSecondsFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	config := RateLimiterConfig{
+		Enabled:        true,
+		Mode:           ModeIP,
+		RequestsPerSec: 5,
+		BurstSize:      5,
+		WhitelistPaths: []string{},
+	}
+
+	middleware := RateLimitMiddleware(config)
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "ok"})
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "192.168.1.100:12345"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Verify Reset header is in unix-seconds format
+	resetStr := w.Header().Get("X-RateLimit-Reset")
+	assert.NotEmpty(t, resetStr)
+
+	resetUnix, err := strconv.ParseInt(resetStr, 10, 64)
+	assert.NoError(t, err, "Reset should be unix-seconds (integer)")
+
+	// Verify it's a reasonable timestamp (current time + future)
+	now := time.Now().Unix()
+	assert.Greater(t, resetUnix, now, "Reset should be in the future")
+	assert.Less(t, resetUnix, now+3600, "Reset should be within a reasonable timeframe")
+}
+
+func TestRateLimitHeaders_RetryAfterCalculation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	config := RateLimiterConfig{
+		Enabled:        true,
+		Mode:           ModeIP,
+		RequestsPerSec: 2,
+		BurstSize:      2,
+		WhitelistPaths: []string{},
+	}
+
+	middleware := RateLimitMiddleware(config)
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "ok"})
+	})
+
+	// Exhaust the rate limit
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.RemoteAddr = "192.168.1.100:12345"
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, 200, w.Code)
+	}
+
+	// Next request should be rate limited with Retry-After
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "192.168.1.100:12345"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, 429, w.Code)
+
+	retryAfterStr := w.Header().Get("Retry-After")
+	assert.NotEmpty(t, retryAfterStr, "Retry-After should be present on 429")
+
+	retryAfter, err := strconv.Atoi(retryAfterStr)
+	assert.NoError(t, err, "Retry-After should be an integer")
+	assert.GreaterOrEqual(t, retryAfter, 1, "Retry-After should be at least 1 second")
+	assert.LessOrEqual(t, retryAfter, 60, "Retry-After should be reasonable")
+}
+
+func TestRateLimitHeaders_NoNegativeValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	config := RateLimiterConfig{
+		Enabled:        true,
+		Mode:           ModeIP,
+		RequestsPerSec: 1,
+		BurstSize:      1,
+		WhitelistPaths: []string{},
+	}
+
+	middleware := RateLimitMiddleware(config)
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "ok"})
+	})
+
+	// Test successful response headers
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "192.168.1.100:12345"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	limitStr := w.Header().Get("X-RateLimit-Limit")
+	remainingStr := w.Header().Get("X-RateLimit-Remaining")
+
+	limit, _ := strconv.ParseInt(limitStr, 10, 64)
+	remaining, _ := strconv.ParseInt(remainingStr, 10, 64)
+
+	assert.GreaterOrEqual(t, limit, int64(0), "Limit should never be negative")
+	assert.GreaterOrEqual(t, remaining, int64(0), "Remaining should never be negative")
+
+	// Test rate-limited response headers
+	req2 := httptest.NewRequest("GET", "/test", nil)
+	req2.RemoteAddr = "192.168.1.100:12345"
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	limitStr2 := w2.Header().Get("X-RateLimit-Limit")
+	remainingStr2 := w2.Header().Get("X-RateLimit-Remaining")
+
+	limit2, _ := strconv.ParseInt(limitStr2, 10, 64)
+	remaining2, _ := strconv.ParseInt(remainingStr2, 10, 64)
+
+	assert.GreaterOrEqual(t, limit2, int64(0), "Limit should never be negative on 429")
+	assert.GreaterOrEqual(t, remaining2, int64(0), "Remaining should never be negative on 429")
 }

@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -25,11 +26,21 @@ func newMemoryRepository() *memoryRepository {
 	}
 }
 
-func (m *memoryRepository) Store(event *Event) error {
+func (m *memoryRepository) Store(_ context.Context, event *Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	copy := *event
 	m.events[event.ID] = &copy
+	return nil
+}
+
+func (m *memoryRepository) BulkInsert(ctx context.Context, events []*Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range events {
+		copy := *e
+		m.events[e.ID] = &copy
+	}
 	return nil
 }
 
@@ -174,6 +185,22 @@ func (m *memoryRepository) MarkPublished(publisher string, event *Event, publish
 	return nil
 }
 
+func (m *memoryRepository) GetPendingEventsForShards(shards []int, limit int) ([]*Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var pending []*Event
+	for _, event := range m.events {
+		if event.Status != StatusPending {
+			continue
+		}
+		pending = append(pending, event)
+		if len(pending) >= limit {
+			break
+		}
+	}
+	return pending, nil
+}
+
 func (m *memoryRepository) GetPendingEventsSince(since *time.Time, lastID *uuid.UUID, limit int) ([]*Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -232,7 +259,7 @@ func TestDispatcherPublishesPendingEvent(t *testing.T) {
 
 	event, err := NewEvent("user.created", map[string]string{"id": "1"}, nil, nil)
 	require.NoError(t, err)
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 
 	d := NewDispatcher(repo, publisher, cfg)
 	require.NoError(t, d.Start())
@@ -264,7 +291,7 @@ func TestDispatcherSkipsEventAtPersistedPublisherProgress(t *testing.T) {
 		UpdatedAt:  time.Now(),
 		Version:    1,
 	}
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 	repo.progress["default"] = event.ID
 
 	d := NewDispatcher(repo, publisher, cfg)
@@ -287,8 +314,8 @@ func TestMarkPublishedDoesNotRegressProgress(t *testing.T) {
 		EventType: "newer",
 		Status:    StatusPending,
 	}
-	require.NoError(t, repo.Store(older))
-	require.NoError(t, repo.Store(newer))
+	require.NoError(t, repo.Store(context.Background(), older))
+	require.NoError(t, repo.Store(context.Background(), newer))
 
 	require.NoError(t, repo.MarkPublished("default", newer, []string{"default"}))
 	require.NoError(t, repo.MarkPublished("default", older, []string{"default"}))
@@ -307,7 +334,7 @@ func TestDispatcherPermanentErrorDeadLetters(t *testing.T) {
 
 	event, err := NewEvent("payment.processed", map[string]string{"x": "y"}, nil, nil)
 	require.NoError(t, err)
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 	publisher.SetPublishError(event.ID, &PermanentPublishError{Reason: "missing key"})
 
 	d := NewDispatcher(repo, publisher, cfg)
@@ -329,7 +356,7 @@ func TestDispatcherRetriesTransientErrors(t *testing.T) {
 
 	event, err := NewEvent("retry.me", map[string]string{"k": "v"}, nil, nil)
 	require.NoError(t, err)
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 	publisher.SetPublishError(event.ID, errors.New("transient"))
 
 	d := NewDispatcher(repo, publisher, cfg)
@@ -355,7 +382,7 @@ func TestDispatcherCleanupCompletedEvents(t *testing.T) {
 	require.NoError(t, err)
 	event.Status = StatusCompleted
 	event.UpdatedAt = time.Now().Add(-time.Hour)
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 
 	d := NewDispatcher(repo, publisher, cfg)
 	require.NoError(t, d.Start())

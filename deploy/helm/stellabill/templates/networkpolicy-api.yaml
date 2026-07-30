@@ -1,0 +1,64 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# API Tier NetworkPolicy
+# Allows egress from API pods to:
+# 1. Database (PostgreSQL)
+# 2. Redis cache
+# 3. DNS for name resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-api-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    policy-type: allowlist
+    tier: api
+spec:
+  # Apply only to API pods
+  podSelector:
+    matchLabels:
+      tier: {{ .Values.api.labels.tier }}
+      component: {{ .Values.api.labels.component }}
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS resolution
+    {{- if .Values.networkPolicy.allowDNS }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.dnsNamespace }}
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: {{ .Values.networkPolicy.dnsPort }}
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.dnsPort }}
+    {{- end }}
+    
+    # Allow egress to Database
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.database.labels.tier }}
+              component: {{ .Values.database.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+    
+    # Allow egress to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: {{ .Values.redis.labels.tier }}
+              component: {{ .Values.redis.labels.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+{{- end }}

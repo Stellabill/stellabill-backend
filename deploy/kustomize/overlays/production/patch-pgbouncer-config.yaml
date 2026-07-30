@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-config
+data:
+  pgbouncer.ini: |
+    [databases]
+    * = host=$(PGBOUNCER_DB_HOST) port=$(PGBOUNCER_DB_PORT) dbname=$(PGBOUNCER_DB_NAME)
+
+    [pgbouncer]
+    listen_addr = 127.0.0.1
+    listen_port = 5432
+
+    pool_mode = transaction
+    max_client_conn = 200
+    default_pool_size = 25
+    min_pool_size = 5
+    reserve_pool_size = 10
+    reserve_pool_timeout = 3
+
+    server_idle_timeout = 600
+    server_lifetime = 3600
+    query_wait_timeout = 120
+    idle_transaction_timeout = 30
+
+    auth_type = scram-sha-256
+    auth_file = /etc/pgbouncer/userlist.txt
+
+    logfile =
+    pidfile =
+    log_connections = 0
+    log_disconnections = 0
+    log_pooler_errors = 1
+    verbose = 0
+
+    # TLS to backend Postgres — enable in production
+    # server_tls_sslmode = require
+    # server_tls_ca_file = /etc/ssl/certs/ca-certificates.crt

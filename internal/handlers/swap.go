@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"stellarbill-backend/internal/errcode"
 	"stellarbill-backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -44,14 +45,12 @@ func (h *SwapHandler) SwapExactTokensForTokens(c *gin.Context) {
 	result, err := h.router.SwapExactTokensForTokens(req.TokenIn, req.TokenOut, req.AmountIn, req.MinAmountOut)
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientLiquidity) {
-			RespondWithError(c, http.StatusUnprocessableEntity, ErrorCodeBadRequest, err.Error())
+			RespondWithError(c, http.StatusUnprocessableEntity, errcode.CodeSwapInsufficientLiquidity, err.Error())
 			return
 		}
 		RespondWithInternalError(c, "swap failed")
 		return
 	}
-
-	c.JSON(http.StatusOK, result)
 }
 
 // SwapTokensForExactTokens godoc
@@ -59,14 +58,14 @@ func (h *SwapHandler) SwapExactTokensForTokens(c *gin.Context) {
 func (h *SwapHandler) SwapTokensForExactTokens(c *gin.Context) {
 	var req swapExactOutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		RespondWithErrorDetails(c, http.StatusBadRequest, ErrorCodeValidationFailed, err.Error(), nil)
+		RespondWithErrorDetails(c, http.StatusBadRequest, errcode.CodeValidationFailed, err.Error(), nil)
 		return
 	}
 
 	result, err := h.router.SwapTokensForExactTokens(req.TokenIn, req.TokenOut, req.AmountOut, req.MaxAmountIn)
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientLiquidity) {
-			RespondWithError(c, http.StatusUnprocessableEntity, ErrorCodeBadRequest, err.Error())
+			RespondWithError(c, http.StatusUnprocessableEntity, errcode.CodeSwapInsufficientLiquidity, err.Error())
 			return
 		}
 		RespondWithInternalError(c, "swap failed")

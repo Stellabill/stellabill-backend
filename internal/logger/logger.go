@@ -1,12 +1,13 @@
 package logger
 
 import (
+	"fmt"
+
 	"github.com/sirupsen/logrus"
 )
 
 // Log is the package-level logrus instance shared by callers that want a
-// pre-configured JSON logger. Helpers were intentionally trimmed because no
-// runtime code paths exercise them today.
+// pre-configured JSON logger.
 var Log = logrus.New()
 
 // SafePrintf is a safe wrapper around fmt.Sprintf that logs to the package
@@ -14,4 +15,8 @@ var Log = logrus.New()
 // stdout logging.
 func SafePrintf(format string, args ...interface{}) {
 	Log.Infof(format, args...)
+// SafePrintf wraps logrus.Printf for callers migrating from the standard library log.
+// Callers should pass already-redacted messages when logging potentially sensitive data.
+func SafePrintf(format string, args ...interface{}) {
+	Log.Print(fmt.Sprintf(format, args...))
 }

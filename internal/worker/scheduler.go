@@ -3,11 +3,14 @@ package worker
 import (
 	"context"
 	"fmt"
-	"stellarbill-backend/internal/middleware"
-	"stellarbill-backend/internal/security"
-	"stellarbill-backend/internal/timeutil"
+	"log"
 	"sync"
 	"time"
+
+	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
+	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/timeutil"
 )
 
 // Scheduler provides utilities for creating and scheduling billing jobs with
@@ -16,6 +19,7 @@ type Scheduler struct {
 	store   JobStore
 	counter int64
 	mu      sync.Mutex
+	clock   timeutil.Clock
 
 	weights     map[Priority]int
 	totalWeight int
@@ -29,6 +33,7 @@ type Scheduler struct {
 func NewScheduler(store JobStore) *Scheduler {
 	s := &Scheduler{
 		store:           store,
+		clock:           timeutil.SystemClock,
 		weights:         make(map[Priority]int),
 		starvationLimit: 10,
 	}
@@ -37,6 +42,15 @@ func NewScheduler(store JobStore) *Scheduler {
 	}
 	s.recalcWeight()
 	return s
+}
+
+// SetClock overrides the Scheduler's time source. Intended for deterministic
+// tests (e.g. verifying job timestamps or TTL-adjacent behavior); production
+// callers should leave the default SystemClock in place.
+func (s *Scheduler) SetClock(c timeutil.Clock) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clock = c
 }
 
 // SetWeights replaces the lane weights. The caller should ensure each lane
@@ -144,8 +158,13 @@ func (s *Scheduler) laneForIdx(idx int, forceLow bool) Priority {
 
 // jobBase returns fields common to every scheduled job.
 func (s *Scheduler) jobBase(jobType, subscriptionID string, scheduledAt time.Time, maxAttempts int, priority Priority) *Job {
+	s.mu.Lock()
+	clock := s.clock
+	s.mu.Unlock()
+
+	now := clock.Now()
 	return &Job{
-		ID:             generateJobID(jobType),
+		ID:             generateJobID(jobType, now),
 		SubscriptionID: subscriptionID,
 		Type:           jobType,
 		Status:         JobStatusPending,
@@ -153,8 +172,8 @@ func (s *Scheduler) jobBase(jobType, subscriptionID string, scheduledAt time.Tim
 		ScheduledAt:    timeutil.NormalizeUTC(scheduledAt),
 		MaxAttempts:    maxAttempts,
 		Attempts:       0,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }
 
@@ -191,8 +210,8 @@ func (s *Scheduler) ScheduleReminder(subscriptionID string, scheduledAt time.Tim
 	return job, nil
 }
 
-func generateJobID(jobType string) string {
-	return fmt.Sprintf("%s-%d", jobType, timeutil.NowUTC().UnixNano())
+func generateJobID(jobType string, now time.Time) string {
+	return fmt.Sprintf("%s-%d", jobType, now.UnixNano())
 }
 
 // IdempotencyCleanupJob periodically cleans up expired idempotency keys.
@@ -262,4 +281,61 @@ func (j *IdempotencyCleanupJob) Run(baseCtx context.Context) {
 		// Throttle database load between batches
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// OutboxBacklogCounter returns pending outbox depth keyed by tenant.
+// Implementations typically query outbox_events grouped by tenant_id.
+type OutboxBacklogCounter interface {
+	CountPendingByTenant(ctx context.Context) (map[string]int64, error)
+}
+
+// OutboxBacklogMetricsJob periodically refreshes outbox_backlog_depth so KEDA
+// can autoscale worker replicas from the Prometheus /metrics scrape.
+type OutboxBacklogMetricsJob struct {
+	counter  OutboxBacklogCounter
+	interval time.Duration
+}
+
+// NewOutboxBacklogMetricsJob creates a backlog metrics refresher.
+// interval defaults to 15s when non-positive (aligned with KEDA pollingInterval).
+func NewOutboxBacklogMetricsJob(counter OutboxBacklogCounter, interval time.Duration) *OutboxBacklogMetricsJob {
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	return &OutboxBacklogMetricsJob{counter: counter, interval: interval}
+}
+
+// Start begins the backlog metrics ticker until ctx is cancelled.
+func (j *OutboxBacklogMetricsJob) Start(ctx context.Context) {
+	if j == nil || j.counter == nil {
+		return
+	}
+	ticker := time.NewTicker(j.interval)
+	defer ticker.Stop()
+
+	j.Run(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			j.Run(ctx)
+		}
+	}
+}
+
+// Run refreshes outbox_backlog_depth. A nil/empty count observes zero so
+// KEDA scales to minReplicaCount when the backlog is idle.
+func (j *OutboxBacklogMetricsJob) Run(ctx context.Context) {
+	if j == nil || j.counter == nil {
+		outbox.ObserveOutboxBacklogDepth(nil)
+		return
+	}
+	depths, err := j.counter.CountPendingByTenant(ctx)
+	if err != nil {
+		log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to count outbox backlog by tenant: %v", err)))
+		return
+	}
+	outbox.ObserveOutboxBacklogDepth(depths)
 }

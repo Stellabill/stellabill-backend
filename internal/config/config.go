@@ -67,6 +67,7 @@ type Config struct {
 	MaxRequestSize         int64   `json:"max_request_size"`
 	MaxGzipUncompressed    int64   `json:"max_gzip_uncompressed"`
 	MaxGzipRatio           float64 `json:"max_gzip_ratio"`
+	MinCompressBytes       int     `json:"min_compress_bytes"`
 	// OTelLogsEnabled enables the OTel Logs bridge when true.
 	// Controlled by OTEL_LOGS_ENABLED (default: false).
 	// When enabled, structured log records are shipped to an OTLP endpoint
@@ -259,6 +260,7 @@ func Load(opts ...Option) (Config, error) {
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
+		MinCompressBytes:       getEnvInt("MIN_COMPRESS_BYTES", 128),
 		// DB pool — safe production defaults
 		DBReplicaConn:    getEnv("DB_REPLICA_URL", ""),
 		RedisURL:         getEnv("REDIS_URL", ""),

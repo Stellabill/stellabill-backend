@@ -61,6 +61,11 @@ func Register(r *gin.Engine) {
 		MaxRatio:             cfg.MaxGzipRatio,
 	}))
 
+	// Response compression — negotiate Accept-Encoding: zstd, br, gzip
+	r.Use(middleware.CompressResponse(middleware.CompressConfig{
+		MinCompressBytes: cfg.MinCompressBytes,
+	}))
+
 	// Dependencies
 	subRepo := repository.NewMockSubscriptionRepo()
 	planRepo := repository.NewMockPlanRepo()

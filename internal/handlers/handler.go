@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 // PlanService defines the interface for plan-related operations
@@ -21,6 +22,12 @@ type Handler struct {
 	Subscriptions SubscriptionService
 	Database      interface{} // DBPinger - dependency for health checks
 	Outbox        interface{} // OutboxHealther - dependency for queue health checks
+
+	// wsHub and wsUpgrader override the package-level defaults used by
+	// GetSubscriptionEvents. They are unexported and intended for tests and
+	// alternate wiring; when nil the process-wide hub/upgrader are used.
+	wsHub      *WsHub
+	wsUpgrader *websocket.Upgrader
 }
 
 // NewHandler creates a new Handler with the given dependencies

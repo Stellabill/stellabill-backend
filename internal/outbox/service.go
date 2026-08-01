@@ -41,6 +41,11 @@ type ServiceConfig struct {
 	KafkaAcks        string
 	KafkaTopicAcks   string
 	JWE              *JWEConfig
+	// WebSocketPublisher is an optional additional publisher chained after
+	// the primary publisher (and after JWE wrapping) so events can be fanned
+	// out to connected WebSocket clients. It must not be nil to be used; the
+	// outbox package stays decoupled from any concrete WebSocket hub.
+	WebSocketPublisher Publisher
 	// HTTPPool is the shared connection pool used by the "http" and
 	// "multi" publisher types. Defaults to a package-level shared pool
 	// when nil, so callers only need to set it to share a pool across
@@ -118,6 +123,12 @@ func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 		publisher = NewJWEPublisher(publisher, config.JWE.Keys, encryptor, sensitive)
 	}
 
+	// Chain an optional WebSocket fan-out publisher after the primary (and
+	// JWE-wrapped) publisher so outbox events also reach connected clients.
+	if config.WebSocketPublisher != nil {
+		publisher = NewMultiPublisher(publisher, config.WebSocketPublisher)
+	}
+
 	// Create dispatcher: use sharded dispatcher when shard config is set.
 	var dispatcher Dispatcher
 	var ring *ConsistentHashRing
@@ -151,8 +162,8 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 	}
 
 	// Compute partition from tenant_id using the consistent hash ring.
-	if s.ring != nil && event.TenantID != nil {
-		event.Partition = s.ring.GetPartition(*event.TenantID)
+	if s.ring != nil && event.TenantID != "" {
+		event.Partition = s.ring.GetPartition(event.TenantID)
 	}
 
 	if err := s.storeEventInTransaction(ctx, event); err != nil {
@@ -191,7 +202,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 	} else {
 		event, createErr := NewEventWithDeduplication(eventType, data, aggregateID, aggregateType, deduplicationID)
 		if event != nil {
-			event.TenantID = tenantID
+			event.TenantID = derefString(tenantID)
 		}
 		return event, createErr
 	}
@@ -211,7 +222,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 				UpdatedAt:       time.Now(),
 				Version:         1,
 				DeduplicationID: deduplicationID,
-				TenantID:        tenantID,
+				TenantID:        derefString(tenantID),
 			}
 			errMsg := err.Error()
 			event.ErrorMessage = &errMsg
@@ -234,8 +245,18 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 		UpdatedAt:       time.Now(),
 		Version:         1,
 		DeduplicationID: deduplicationID,
-		TenantID:        tenantID,
+		TenantID:        derefString(tenantID),
 	}, nil
+}
+
+// derefString returns the value pointed to by p, or "" when p is nil.
+// It adapts the pointer-based tenant ID extraction to the string-typed
+// Event.TenantID field.
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // storeEventInTransaction stores an event within a database transaction
@@ -261,7 +282,7 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 
 // PublishEventWithTx publishes an event within an existing transaction
 func (s *Service) PublishEventWithTx(ctx context.Context, tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
-	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
+	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}

@@ -1,6 +1,9 @@
 package repository
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // MockSubscriptionRepo is an in-memory SubscriptionRepository for testing.
 type MockSubscriptionRepo struct {
@@ -74,6 +77,7 @@ func (m *MockSubscriptionRepo) UpdateStatus(_ context.Context, id string, tenant
 
 // MockPlanRepo is an in-memory PlanRepository for testing.
 type MockPlanRepo struct {
+	mu      sync.Mutex
 	records map[string]*PlanRow
 }
 
@@ -132,6 +136,44 @@ func (m *MockPlanRepo) List(_ context.Context) ([]*PlanRow, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// Update applies a partial plan update, guarding against version conflicts.
+func (m *MockPlanRepo) Update(_ context.Context, plan *PlanRow, expectedVersion int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	current, ok := m.records[plan.ID]
+	if !ok {
+		return ErrNotFound
+	}
+	if expectedVersion > 0 && current.Version != expectedVersion {
+		return ErrVersionConflict
+	}
+	if plan.Name != "" {
+		current.Name = plan.Name
+	}
+	if plan.Description != "" {
+		current.Description = plan.Description
+	}
+	current.Version++
+	return nil
+}
+
+// Delete removes a plan, guarding against version conflicts.
+func (m *MockPlanRepo) Delete(_ context.Context, id string, expectedVersion int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	current, ok := m.records[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if expectedVersion > 0 && current.Version != expectedVersion {
+		return ErrVersionConflict
+	}
+	delete(m.records, id)
+	return nil
 }
 
 // MockStatementRepo is an in-memory StatementRepository for testing.

@@ -249,13 +249,12 @@ func TestShardedDispatcher_PublishesCorrectShardEvents(t *testing.T) {
 	ring := NewConsistentHashRing(4, 150)
 
 	// Create events for "tenant-A" which maps to a specific partition
-	for i := 0; i < 5; i++ {
-		event := &Event{
-			ID:         uuid.New(),
-			EventType:  "tenant.event",
-			EventData:  json.RawMessage(`{"type":"tenant"}`),
-			TenantID:   strPtr("tenant-A"),
-			Partition:  ring.GetPartition("tenant-A"),
+	for i := 0; i < 5; i++ {			event := &Event{
+				ID:         uuid.New(),
+				EventType:  "tenant.event",
+				EventData:  json.RawMessage(`{"type":"tenant"}`),
+				TenantID:   "tenant-A",
+				Partition:  ring.GetPartition("tenant-A"),
 			Status:     StatusPending,
 			OccurredAt: time.Now(),
 			CreatedAt:  time.Now(),
@@ -279,7 +278,7 @@ func TestShardedDispatcher_PublishesCorrectShardEvents(t *testing.T) {
 						ID:        uuid.New(),
 						EventType: "shard2.event",
 						EventData: json.RawMessage(`{"type":"shard2"}`),
-						TenantID:  &candidate,
+						TenantID:  candidate,
 						Partition: 2,
 						Status:    StatusPending,
 						OccurredAt: time.Now(),

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/storage/s3"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -45,6 +46,16 @@ func (m *mockStatementService) GetDetail(
 	statementID string,
 ) (*service.StatementDetail, []string, error) {
 	return m.getResult, nil, m.getErr
+}
+
+func (m *mockStatementService) ExportStatements(
+	_ context.Context,
+	callerID string,
+	roles []string,
+	tenantID, customerID string,
+	uploader s3.S3Uploader,
+) (*service.ExportResult, error) {
+	return nil, nil
 }
 
 // ---------------------------------------------------------------------------

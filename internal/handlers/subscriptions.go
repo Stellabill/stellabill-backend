@@ -1,25 +1,19 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
-	"log"
+	"errors"
 	"net/http"
-	"stellarbill-backend/internal/outbox"
+	"strconv"
+	"strings"
+
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/service"
-	"strconv"
-	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 )
 
-// WebSocket for live subscription status streaming
-// - Hub with tenant and subscription ID filtering
-// - Integrated with outbox dispatcher
+// Subscription is the list-item representation of a billing subscription.
 type Subscription struct {
 	ID          string `json:"id"`
 	PlanID      string `json:"plan_id"`
@@ -136,191 +130,140 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 	}
 }
 
-// SubscriptionEvent represents a status change event for WS
-type SubscriptionEvent struct {
-	SubscriptionID string `json:"subscription_id"`
-	Status         string `json:"status"`
-	Timestamp      string `json:"timestamp"`
-	TenantID       string `json:"tenant_id,omitempty"`
-}
+// NewChangeSubscriptionStatusHandler updates a single subscription status.
+func NewChangeSubscriptionStatusHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var payload struct {
+			Status string `json:"status"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeValidationFailed, "invalid request body")
+			return
+		}
 
-type WsClient struct {
-	Conn           *websocket.Conn
-	SubscriptionID string
-	Send           chan SubscriptionEvent
-}
+		status := strings.TrimSpace(payload.Status)
+		if status == "" {
+			RespondWithError(c, http.StatusUnprocessableEntity, ErrorCodeValidationFailed, "status is required")
+			return
+		}
 
-type WsHub struct {
-	clients    map[*WsClient]bool
-	broadcast  chan SubscriptionEvent
-	register   chan *WsClient
-	unregister chan *WsClient
-	mu         sync.RWMutex
-}
+		tenantID := c.GetString("tenantID")
+		if tenantID == "" {
+			RespondWithAuthError(c, "missing tenant context")
+			return
+		}
 
-var hub = &WsHub{
-	clients:    make(map[*WsClient]bool),
-	broadcast:  make(chan SubscriptionEvent, 100),
-	register:   make(chan *WsClient),
-	unregister: make(chan *WsClient),
-}
-
-func init() {
-	go hub.run()
-}
-
-func (h *WsHub) run() {
-	for {
-		select {
-		case client := <-h.register:
-			h.mu.Lock()
-			h.clients[client] = true
-			h.mu.Unlock()
-		case client := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.Send)
-			}
-			h.mu.Unlock()
-		case event := <-h.broadcast:
-			h.mu.RLock()
-			for client := range h.clients {
-				// Filter by subscription ID
-				if client.SubscriptionID == event.SubscriptionID {
-					select {
-					case client.Send <- event:
-					default:
-						// Buffer full, drop client
-						close(client.Send)
-						delete(h.clients, client)
-					}
+		change, err := svc.ChangeStatus(c.Request.Context(), tenantID, c.GetString("callerID"), c.Param("id"), status)
+		if err != nil {
+			statusCode, code, message := MapServiceErrorToResponse(err)
+			if errors.Is(err, service.ErrInvalidStatus) || errors.Is(err, service.ErrInvalidTransition) || errors.Is(err, service.ErrUnknownCurrentState) {
+				statusCode = http.StatusConflict
+				code = ErrorCodeConflict
+				if errors.Is(err, service.ErrInvalidStatus) {
+					statusCode = http.StatusUnprocessableEntity
+					code = ErrorCodeValidationFailed
 				}
 			}
-			h.mu.RUnlock()
+			RespondWithError(c, statusCode, code, message)
+			return
 		}
+
+		c.JSON(http.StatusOK, gin.H{"api_version": "v1", "data": change})
 	}
 }
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		// Require origin for security, but allow all origins for now.
-		return origin != ""
-	},
-}
-
-// GetSubscriptionEvents handles WS stream for live subscription updates
-func (h *Handler) GetSubscriptionEvents(c *gin.Context) {
-	subscriptionID := c.Param("id")
-	if subscriptionID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
-		return
-	}
-
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		log.Printf("Failed to upgrade to websocket: %v", err)
-		return
-	}
-
-	client := &WsClient{
-		Conn:           conn,
-		SubscriptionID: subscriptionID,
-		Send:           make(chan SubscriptionEvent, 256),
-	}
-
-	hub.register <- client
-
-	go client.writePump()
-	go client.readPump()
-}
-
-func (c *WsClient) writePump() {
-	ticker := time.NewTicker(15 * time.Second)
-	defer func() {
-		ticker.Stop()
-		c.Conn.Close()
-	}()
-
-	for {
-		select {
-		case event, ok := <-c.Send:
-			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if !ok {
-				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-			if err := c.Conn.WriteJSON(event); err != nil {
-				return
-			}
-		case <-ticker.C:
-			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				return
-			}
+// NewBatchSubscriptionHandler accepts a batch of subscription status updates and returns
+// per-item status codes in a 207 Multi-Status response.
+func NewBatchSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req service.BatchSubscriptionRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeValidationFailed, "invalid request body")
+			return
 		}
-	}
-}
 
-func (c *WsClient) readPump() {
-	defer func() {
-		hub.unregister <- c
-		c.Conn.Close()
-	}()
-	c.Conn.SetReadLimit(512)
-	c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	c.Conn.SetPongHandler(func(string) error { c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second)); return nil })
-	for {
-		_, _, err := c.Conn.ReadMessage()
+		results, err := svc.ProcessBatch(c.Request.Context(), c.GetString("tenantID"), c.GetString("callerID"), req.Operations)
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("websocket read error: %v", err)
-			}
-			break
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeValidationFailed, err.Error())
+			return
 		}
+
+		response := service.BatchSubscriptionResponse{Results: results}
+		statusCode := http.StatusOK
+		if len(results) > 0 {
+			for _, result := range results {
+				if result.StatusCode >= http.StatusBadRequest {
+					statusCode = http.StatusMultiStatus
+					break
+				}
+			}
+		}
+		c.JSON(statusCode, response)
 	}
 }
 
-// WebSocketOutboxPublisher implements outbox.Publisher to send events to WS hub
-type WebSocketOutboxPublisher struct{}
+// NewBatchSubscriptionsHandler processes a batch of subscription status updates and
+// returns a per-item results list plus a success/failure summary.
+func NewBatchSubscriptionsHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if svc == nil {
+			RespondWithError(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service is unavailable")
+			return
+		}
 
-func NewWebSocketOutboxPublisher() outbox.Publisher {
-	return &WebSocketOutboxPublisher{}
-}
+		var req struct {
+			Operations []service.BatchSubscriptionOperation `json:"operations"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			RespondWithError(c, http.StatusBadRequest, ErrorCodeBadRequest, "Invalid JSON body")
+			return
+		}
 
-func (p *WebSocketOutboxPublisher) Publish(ctx context.Context, event *outbox.Event) error {
-	if event.EventType != "SubscriptionStatusChanged" {
-		return nil
-	}
+		if len(req.Operations) == 0 {
+			RespondWithValidationError(c, "operations must not be empty", nil)
+			return
+		}
+		if len(req.Operations) > 100 {
+			RespondWithValidationError(c, "batch size exceeds maximum of 100 operations", nil)
+			return
+		}
 
-	var payload struct {
-		Data struct {
-			Status string `json:"status"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(event.EventData, &payload); err != nil {
-		return nil
-	}
+		tenantID, _ := c.Get("tenantID")
+		callerID, _ := c.Get("callerID")
+		tenantIDStr, _ := tenantID.(string)
+		callerIDStr, _ := callerID.(string)
 
-	var subID string
-	if event.AggregateID != nil {
-		subID = *event.AggregateID
-	}
+		results, err := svc.BatchChangeStatus(c.Request.Context(), tenantIDStr, callerIDStr, req.Operations)
+		if err != nil {
+			RespondWithInternalError(c, "Failed to process batch subscription operations")
+			return
+		}
 
-	wsEvent := SubscriptionEvent{
-		SubscriptionID: subID,
-		Status:         payload.Data.Status,
-		Timestamp:      event.OccurredAt.Format(time.RFC3339),
-	}
-	
-	select {
-	case hub.broadcast <- wsEvent:
-	case <-time.After(1 * time.Second):
-		log.Printf("Failed to broadcast WS event: buffer full")
-	}
+		successCount := 0
+		failureCount := 0
+		for _, result := range results {
+			if result.Success {
+				successCount++
+			} else {
+				failureCount++
+			}
+		}
 
-	return nil
+		statusCode := http.StatusOK
+		if failureCount > 0 {
+			if successCount > 0 {
+				statusCode = http.StatusMultiStatus
+			} else {
+				statusCode = http.StatusUnprocessableEntity
+			}
+		}
+
+		c.JSON(statusCode, gin.H{
+			"api_version": "v1",
+			"data": gin.H{
+				"results": results,
+				"summary": gin.H{"success": successCount, "failed": failureCount},
+			},
+		})
+	}
 }

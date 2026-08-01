@@ -31,6 +31,14 @@ func (m *mockErrorService) ChangeStatus(ctx context.Context, tenantID string, ac
 	return nil, nil
 }
 
+func (m *mockErrorService) ProcessBatch(ctx context.Context, tenantID string, actorID string, operations []service.BatchSubscriptionOperation) ([]service.BatchSubscriptionResult, error) {
+	return nil, nil
+}
+
+func (m *mockErrorService) BatchChangeStatus(ctx context.Context, tenantID string, actorID string, operations []service.BatchSubscriptionOperation) ([]service.BatchSubscriptionResult, error) {
+	return nil, nil
+}
+
 // setupErrorTestRouter builds a test router with trace ID middleware
 func setupErrorTestRouter(svc service.SubscriptionService, setCallerID bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)

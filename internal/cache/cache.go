@@ -33,6 +33,14 @@ func NewInMemory() *InMemory {
 	return &InMemory{items: make(map[string]inmemoryItem)}
 }
 
+// Len returns the number of entries currently in the cache (including expired
+// ones that have not been cleaned up). Used for testing and introspection.
+func (m *InMemory) Len() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.items)
+}
+
 func (m *InMemory) Get(ctx context.Context, key string) ([]byte, error) {
 	start := time.Now()
 	defer func() {

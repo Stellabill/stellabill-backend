@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
-	"github.com/klauspost/compress/brotli"
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zstd"
 )
@@ -41,17 +41,14 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 		encoding := c.GetHeader("Content-Encoding")
 		encoding = strings.TrimSpace(strings.ToLower(encoding))
 
-		if encoding == "" || encoding == "identity" {
-			goto responseCompress
-		}
-
-		if encoding != "gzip" {
-			c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{
-				"error":    "unsupported_encoding",
-				"encoding": encoding,
-			})
-			return
-		}
+		if encoding != "" && encoding != "identity" {
+			if encoding != "gzip" {
+				c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{
+					"error":    "unsupported_encoding",
+					"encoding": encoding,
+				})
+				return
+			}
 
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
@@ -115,10 +112,10 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 			return
 		}
 
-		c.Request.Body = io.NopCloser(&decompressed)
-		c.Request.Header.Del("Content-Encoding")
+			c.Request.Body = io.NopCloser(&decompressed)
+			c.Request.Header.Del("Content-Encoding")
+		}
 
-	responseCompress:
 		if cfg.ResponseCompression && !c.IsAborted() {
 			enc := negotiateEncoding(c)
 			if enc != "" {

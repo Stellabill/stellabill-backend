@@ -10,6 +10,9 @@ import (
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrVersionConflict is returned when an optimistic-concurrency version check fails.
+var ErrVersionConflict = errors.New("version conflict")
+
 // ErrConcurrentUpdate is returned when a row has been modified since last read.
 var ErrConcurrentUpdate = errors.New("concurrent update detected")
 
@@ -29,6 +32,10 @@ type PlanRepository interface {
 	FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*PlanRow, error)
 	// List returns all plans visible to the caller (for simplicity tests use a global list).
 	List(ctx context.Context) ([]*PlanRow, error)
+	// Update applies a partial plan update guarded by optimistic concurrency.
+	Update(ctx context.Context, plan *PlanRow, expectedVersion int64) error
+	// Delete removes a plan guarded by optimistic concurrency.
+	Delete(ctx context.Context, id string, expectedVersion int64) error
 }
 
 // StatementQuery defines the parameters for listing statements.

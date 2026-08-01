@@ -40,6 +40,7 @@ import (
 	"net/http/httptest"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/storage/s3"
 	"testing"
 	"time"
 	"unicode/utf8"

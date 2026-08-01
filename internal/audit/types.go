@@ -7,6 +7,7 @@ import (
 // Canonical Audit Actions
 const (
 	ActionAdminLogin    = "admin.login"
+	ActionAdminPurge    = "admin.purge"
 	ActionVaultWithdraw = "vault.withdraw"
 	ActionConfigUpdate  = "system.config_update"
 	// Add other critical actions like "reconciliation.start" or "subscription.mutate" here

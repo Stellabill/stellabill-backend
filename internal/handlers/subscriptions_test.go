@@ -36,6 +36,14 @@ func (m *mockSubscriptionService) ChangeStatus(ctx context.Context, tenantID str
 	return nil, nil
 }
 
+func (m *mockSubscriptionService) ProcessBatch(ctx context.Context, tenantID string, actorID string, operations []service.BatchSubscriptionOperation) ([]service.BatchSubscriptionResult, error) {
+	return nil, nil
+}
+
+func (m *mockSubscriptionService) BatchChangeStatus(ctx context.Context, tenantID string, actorID string, operations []service.BatchSubscriptionOperation) ([]service.BatchSubscriptionResult, error) {
+	return nil, nil
+}
+
 func (m *mockSubscriptionService) ListSubscriptions(c *gin.Context) ([]Subscription, error) {
 	return nil, nil
 }
@@ -265,15 +273,31 @@ func TestHandler_PatchSubscription_RejectsUnknownFields(t *testing.T) {
 	assert.Equal(t, "BAD_REQUEST", response["code"])
 }
 
-func TestHandler_GetSubscriptionEvents_NoWS(t *testing.T) {
+func TestHandler_GetSubscriptionEvents_RequiresTenant(t *testing.T) {
 	h := &Handler{}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Params = gin.Params{gin.Param{Key: "id", Value: "sub_123"}}
 	c.Request = httptest.NewRequest("GET", "/api/v1/subscriptions/sub_123/events", nil)
 
+	// The WS endpoint requires an authenticated tenant context before
+	// attempting the WebSocket handshake.
 	h.GetSubscriptionEvents(c)
 
-	// Since we are not sending WS headers, upgrader should fail with Bad Request
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestHandler_GetSubscriptionEvents_NoWSHandshake(t *testing.T) {
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "id", Value: "sub_123"}}
+	c.Request = httptest.NewRequest("GET", "/api/v1/subscriptions/sub_123/events", nil)
+	c.Set("tenantID", "tenant-1")
+
+	// Tenant is present but the request is not a WebSocket handshake, so the
+	// upgrader should reject it with Bad Request.
+	h.GetSubscriptionEvents(c)
+
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

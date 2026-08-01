@@ -92,6 +92,10 @@ func Register(r *gin.Engine) {
 	// Create handlers
 	h := handlers.NewHandler(nil, nil)
 	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
+
+	// WebSocket origin allow-list — same ALLOWED_ORIGINS value as CORS, so
+	// dashboards that can call the API cross-origin can also open event streams.
+	handlers.ConfigureWebSocketOrigins(cfg.AllowedOrigins)
 	exportSvc := service.NewTenantExportService(planRepo, subRepo, stmtRepo)
 	exportJobManager := service.NewExportJobManager(exportSvc, noopS3Uploader{}, nil)
 
@@ -167,8 +171,8 @@ func Register(r *gin.Engine) {
 
 	// Webhook receiver — signature verified by WebhookVerification middleware
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
-	webhookHandler := handlers.NewWebhookHandler()
-	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
+	webhookHandler := handlers.NewVerifiedWebhookHandler(noopInboxRepo{})
+	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler)
 	// Admin login (no JWT required — uses admin token directly)
 	r.POST("/api/admin/login", adminHandler.Login)
 
@@ -240,6 +244,36 @@ func (analyzeLogger) Error(msg string, keysAndValues ...any) {
 func (noopS3Uploader) PutObject(context.Context, string, []byte, string) error { return nil }
 func (noopS3Uploader) PresignURL(context.Context, string, time.Duration) (s3.PresignedURL, error) {
 	return s3.PresignedURL{URL: "", ExpiresAt: time.Time{}}, nil
+}
+
+// noopInboxRepo is a no-op InboxRepository used when no webhook inbox backend
+// is configured; verified webhook events are acknowledged and discarded.
+type noopInboxRepo struct{}
+
+func (noopInboxRepo) Insert(context.Context, string, string, string, []byte) error { return nil }
+
+// mockHandlerPlanSvc adapts a PlanRepository to handlers.PlanService.
+type mockHandlerPlanSvc struct {
+	repo repository.PlanRepository
+}
+
+func (m *mockHandlerPlanSvc) ListPlans(_ *gin.Context) ([]handlers.Plan, error) {
+	rows, err := m.repo.List(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]handlers.Plan, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, handlers.Plan{
+			ID:          r.ID,
+			Name:        r.Name,
+			Amount:      r.Amount,
+			Currency:    r.Currency,
+			Interval:    r.Interval,
+			Description: r.Description,
+		})
+	}
+	return out, nil
 }
 
 func (m *mockHandlerPlanSvc) PatchPlan(c *gin.Context, id string, plan *handlers.Plan, expectedVersion int64) error {

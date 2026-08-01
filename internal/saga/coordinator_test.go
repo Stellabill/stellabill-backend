@@ -10,15 +10,15 @@ import (
 func TestRetryPolicySuccess(t *testing.T) {
 	attempts := 0
 	step := Step{
-		Name: "test-step",
-		Action: func(ctx context.Context) error {
+		Key: "test-step",
+		Execute: func(ctx context.Context, _ SagaContext) error {
 			attempts++
 			if attempts < 3 {
 				return errors.New("temporary failure")
 			}
 			return nil
 		},
-		RetryPolicy: RetryPolicy{
+		RetryPolicy: &RetryPolicy{
 			MaxAttempts: 3,
 			BaseDelay:   5 * time.Millisecond,
 			Jitter:      0.1,
@@ -37,12 +37,12 @@ func TestRetryPolicySuccess(t *testing.T) {
 func TestRetryPolicyExhausted(t *testing.T) {
 	attempts := 0
 	step := Step{
-		Name: "fail-step",
-		Action: func(ctx context.Context) error {
+		Key: "fail-step",
+		Execute: func(ctx context.Context, _ SagaContext) error {
 			attempts++
 			return errors.New("permanent failure")
 		},
-		RetryPolicy: RetryPolicy{
+		RetryPolicy: &RetryPolicy{
 			MaxAttempts: 2,
 			BaseDelay:   2 * time.Millisecond,
 			Jitter:      0.0,

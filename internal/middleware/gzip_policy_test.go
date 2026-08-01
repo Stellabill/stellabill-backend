@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
-	"github.com/klauspost/compress/brotli"
 	"github.com/klauspost/compress/zstd"
 )
 

@@ -31,14 +31,28 @@ const (
 )
 
 var (
-	OutboxPublisherLag            *prometheus.GaugeVec
-	OutboxBacklogDepth            *prometheus.GaugeVec
-	OutboxKafkaProduceLatency     *prometheus.HistogramVec
-	OutboxKafkaErrorsTotal        *prometheus.CounterVec
-	ChaosOutboxCancellationsTotal prometheus.Counter
+	OutboxPublisherLimit            prometheus.Gauge
+	OutboxPublisherInflight         prometheus.Gauge
+	OutboxPublisherLag              *prometheus.GaugeVec
+	OutboxBacklogDepth              *prometheus.GaugeVec
+	OutboxKafkaProduceLatency       *prometheus.HistogramVec
+	OutboxKafkaErrorsTotal          *prometheus.CounterVec
+	ChaosOutboxCancellationsTotal   prometheus.Counter
 )
 
 func init() {
+	OutboxPublisherLimit = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_publisher_concurrency_limit",
+		Help: "Current adaptive concurrency limit for outbox publishers",
+	})
+	_ = prometheus.Register(OutboxPublisherLimit)
+
+	OutboxPublisherInflight = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_publisher_inflight",
+		Help: "Current number of in-flight outbox publish operations",
+	})
+	_ = prometheus.Register(OutboxPublisherInflight)
+
 	OutboxPublisherLag = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "outbox_publisher_lag_seconds",

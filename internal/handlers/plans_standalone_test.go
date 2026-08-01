@@ -39,7 +39,48 @@ func (m *mockPlanRepo) List(ctx context.Context) ([]*repository.PlanRow, error) 
 }
 
 func (m *mockPlanRepo) FindByID(ctx context.Context, id string) (*repository.PlanRow, error) {
-	return nil, nil
+	for _, p := range m.plans {
+		if p.ID == id {
+			return p, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *mockPlanRepo) FindByIDs(ctx context.Context, ids []string) ([]*repository.PlanRow, error) {
+	out := make([]*repository.PlanRow, 0, len(ids))
+	for _, id := range ids {
+		for _, p := range m.plans {
+			if p.ID == id {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (m *mockPlanRepo) FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*repository.PlanRow, error) {
+	return m.FindByIDs(ctx, ids)
+}
+
+func (m *mockPlanRepo) Update(ctx context.Context, plan *repository.PlanRow, expectedVersion int64) error {
+	for i, p := range m.plans {
+		if p.ID == plan.ID {
+			m.plans[i] = plan
+			return nil
+		}
+	}
+	return repository.ErrNotFound
+}
+
+func (m *mockPlanRepo) Delete(ctx context.Context, id string, expectedVersion int64) error {
+	for i, p := range m.plans {
+		if p.ID == id {
+			m.plans = append(m.plans[:i], m.plans[i+1:]...)
+			return nil
+		}
+	}
+	return repository.ErrNotFound
 }
 
 func TestStandaloneListPlans(t *testing.T) {

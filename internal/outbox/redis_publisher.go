@@ -2,9 +2,9 @@ package outbox
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -124,18 +124,33 @@ func (p *RedisPublisher) Publish(ctx context.Context, event *Event) error {
 	timer.ObserveDuration()
 
 	if err != nil {
-		var movedErr redis.MovedError
-		if errors.As(err, &movedErr) {
-			return p.redirectXAdd(ctx, movedErr.Addr, values)
+		if addr, ok := redisRedirectAddr(err, "MOVED "); ok {
+			return p.redirectXAdd(ctx, addr, values)
 		}
-		var askErr redis.AskError
-		if errors.As(err, &askErr) {
-			return p.redirectXAdd(ctx, askErr.Addr, values)
+		if addr, ok := redisRedirectAddr(err, "ASK "); ok {
+			return p.redirectXAdd(ctx, addr, values)
 		}
 		return fmt.Errorf("redis: xadd: %w", err)
 	}
 
 	return nil
+}
+
+// redisRedirectAddr extracts the target address from a Redis cluster MOVED/ASK
+// redirect error, e.g. "MOVED 3999 10.0.0.1:6379".
+func redisRedirectAddr(err error, prefix string) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	s := err.Error()
+	if !strings.HasPrefix(s, prefix) {
+		return "", false
+	}
+	ind := strings.LastIndex(s, " ")
+	if ind == -1 || ind == len(s)-1 {
+		return "", false
+	}
+	return s[ind+1:], true
 }
 
 func (p *RedisPublisher) redirectXAdd(ctx context.Context, addr string, values map[string]interface{}) error {

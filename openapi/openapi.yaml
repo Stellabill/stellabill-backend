@@ -196,6 +196,40 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
+  /api/v1/subscriptions/{id}/events:
+    get:
+      tags: [Subscriptions]
+      summary: Stream subscription lifecycle events over WebSocket
+      description: >
+        Upgrades the connection to a WebSocket and streams real-time
+        SubscriptionStatusChanged events for the given subscription as they
+        are emitted by the outbox dispatcher. Requires the same JWT bearer
+        token as the REST API; the server validates the Origin header against
+        the configured allow-list. Events are tenant-scoped: only the
+        authenticated tenant's transitions are delivered.
+
+        The server sends a ping every 30s and closes the connection after 60s
+        of client inactivity. Clients should respond to pings with pongs.
+      operationId: streamSubscriptionEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Subscription identifier
+          example: "sub_123"
+      responses:
+        "101":
+          description: Connection upgraded to WebSocket
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/plans:
     get:
       tags: [Plans]

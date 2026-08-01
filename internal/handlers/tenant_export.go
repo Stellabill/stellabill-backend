@@ -47,6 +47,13 @@ type exportStatusResponse struct {
 	Error  string                      `json:"error,omitempty"`
 }
 
+type exportOperationResponse struct {
+	OperationID string                     `json:"operation_id"`
+	Status      service.ExportOperationStatus `json:"status"`
+	Result      *service.TenantExportResult `json:"result,omitempty"`
+	Error       string                     `json:"error,omitempty"`
+}
+
 // NewTenantExportHandler returns a gin.HandlerFunc for POST /api/v1/tenants/me/export.
 //
 // It enqueues an asynchronous export job that produces a downloadable ZIP

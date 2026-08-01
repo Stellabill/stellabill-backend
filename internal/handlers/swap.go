@@ -51,6 +51,8 @@ func (h *SwapHandler) SwapExactTokensForTokens(c *gin.Context) {
 		RespondWithInternalError(c, "swap failed")
 		return
 	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // SwapTokensForExactTokens godoc

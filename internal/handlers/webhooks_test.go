@@ -98,7 +98,7 @@ func TestWebhookHandler_FastAck(t *testing.T) {
 		c.Next()
 	})
 	
-	router.POST("/webhooks", handlers.NewVerifiedWebhookHandler(mockRepo))
+	router.POST("/webhooks", NewVerifiedWebhookHandler(mockRepo))
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer([]byte("{}")))
@@ -124,7 +124,7 @@ func TestWebhookHandler_FailsFastOnDBError(t *testing.T) {
 		c.Request.Header.Set("X-Subscriber-ID", "sub_456")
 		c.Next()
 	})
-	router.POST("/webhooks", handlers.NewVerifiedWebhookHandler(mockRepo))
+	router.POST("/webhooks", NewVerifiedWebhookHandler(mockRepo))
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer([]byte("{}")))
@@ -139,7 +139,7 @@ func TestWebhookHandler_MissingHeaders(t *testing.T) {
 	mockRepo := new(MockInboxRepo)
 
 	router := gin.New()
-	router.POST("/webhooks", handlers.NewVerifiedWebhookHandler(mockRepo))
+	router.POST("/webhooks", NewVerifiedWebhookHandler(mockRepo))
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer([]byte("{}")))

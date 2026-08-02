@@ -6,12 +6,18 @@ import (
 	"sync"
 	"time"
 
+	"stellarbill-backend/internal/errcode"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrRequestMismatch is returned when an idempotency key is reused with a different request.
 var ErrRequestMismatch = errors.New("idempotency key reused with a different request")
+
+func init() {
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrRequestMismatch) }, errcode.CodeIdempotencyRequestMismatch)
+}
 
 // IdempotencyStore defines the contract for persisting idempotency keys and request states.
 type IdempotencyStore interface {

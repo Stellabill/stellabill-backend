@@ -51,6 +51,7 @@ type StatementArchiveJob struct {
 	config   StatementArchiveConfig
 	logger   logger.Logger
 	clock    timeutil.Clock
+	leader   *leaderGuard
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -70,13 +71,24 @@ type StatementArchiveJob struct {
 
 // NewStatementArchiveJob creates a new statement archival job.
 func NewStatementArchiveJob(db *sql.DB, objStore cache.ObjectStore, config StatementArchiveConfig, l logger.Logger) *StatementArchiveJob {
-	return &StatementArchiveJob{
+	job := &StatementArchiveJob{
 		db:       db,
 		objStore: objStore,
 		config:   config,
 		logger:   l,
 		clock:    timeutil.SystemClock,
 	}
+	if db != nil {
+		locker, err := NewPostgresLeaderLocker(db)
+		if err != nil {
+			if job.logger != nil {
+				job.logger.Error("statement archive leader election unavailable", "error", err.Error())
+			}
+		} else {
+			job.leader = newLeaderGuard(locker, "statement_archive", 1002)
+		}
+	}
+	return job
 }
 
 // SetClock overrides the job's time source, so archival-cutoff behavior can
@@ -99,6 +111,9 @@ func (j *StatementArchiveJob) Start() {
 // up to ShutdownTimeout.
 func (j *StatementArchiveJob) Stop() error {
 	if j.cancel == nil {
+		if j.leader != nil {
+			j.leader.Release(context.Background())
+		}
 		return nil
 	}
 	j.cancel()
@@ -111,9 +126,15 @@ func (j *StatementArchiveJob) Stop() error {
 
 	select {
 	case <-done:
+		if j.leader != nil {
+			j.leader.Release(context.Background())
+		}
 		j.running.Store(0)
 		return nil
 	case <-time.After(j.config.ShutdownTimeout):
+		if j.leader != nil {
+			j.leader.Release(context.Background())
+		}
 		j.running.Store(0)
 		return fmt.Errorf("statement archive job shutdown timed out after %v", j.config.ShutdownTimeout)
 	}
@@ -187,7 +208,31 @@ func (j *StatementArchiveJob) archiveLoop() {
 
 // archiveBatch processes one batch of old statements.
 func (j *StatementArchiveJob) archiveBatch() {
-	batchCtx, cancel := context.WithTimeout(j.ctx, j.config.ArchiveTimeout)
+	ctx := j.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if j.leader != nil {
+		err := j.leader.Run(ctx, func(runCtx context.Context) error {
+			return j.runArchiveBatch(runCtx)
+		})
+		if err != nil {
+			if errors.Is(err, errNotLeader) {
+				return
+			}
+			j.recordError(fmt.Errorf("archive batch: %w", err))
+		}
+		return
+	}
+
+	if err := j.runArchiveBatch(ctx); err != nil {
+		j.recordError(fmt.Errorf("archive batch: %w", err))
+	}
+}
+
+func (j *StatementArchiveJob) runArchiveBatch(ctx context.Context) error {
+	batchCtx, cancel := context.WithTimeout(ctx, j.config.ArchiveTimeout)
 	defer cancel()
 
 	threshold := j.clock.Now().AddDate(0, -j.config.ArchiveThresholdMonths, 0)
@@ -215,8 +260,7 @@ func (j *StatementArchiveJob) archiveBatch() {
 		j.config.BatchSize,
 	)
 	if err != nil {
-		j.recordError(err)
-		return
+		return err
 	}
 	defer rows.Close()
 
@@ -236,33 +280,31 @@ func (j *StatementArchiveJob) archiveBatch() {
 			&stmt.Status,
 		)
 		if err != nil {
-			j.recordError(fmt.Errorf("scan statement row: %w", err))
-			return
+			return fmt.Errorf("scan statement row: %w", err)
 		}
 		stmts = append(stmts, &stmt)
 	}
 
 	if err := rows.Err(); err != nil {
-		j.recordError(err)
-		return
+		return err
 	}
 
 	if len(stmts) == 0 {
 		j.resetErrorCount()
-		return
+		return nil
 	}
 
 	// Archive each statement
 	for _, stmt := range stmts {
 		if err := j.archiveStatement(batchCtx, stmt); err != nil {
-			j.recordError(fmt.Errorf("archive statement %s: %w", stmt.ID, err))
-			continue
+			return fmt.Errorf("archive statement %s: %w", stmt.ID, err)
 		}
 	}
 
 	j.mu.Lock()
 	j.lastRunTime = j.clock.Now()
 	j.mu.Unlock()
+	return nil
 }
 
 // archiveStatement archives a single statement to object storage.

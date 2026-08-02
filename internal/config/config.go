@@ -135,6 +135,13 @@ type Config struct {
 	// in-flight requests to complete before forcing shutdown. Env:
 	// GRACEFUL_SHUTDOWN_TIMEOUT (default: DefaultGracefulShutdownTimeout).
 	GracefulShutdownTimeout int // seconds
+	// ConcurrencyCapsPath is the path to the per-endpoint concurrency caps YAML
+	// configuration file. When empty, concurrency shedding is disabled.
+	// Env: CONCURRENCY_CAPS_PATH (default: "" — disabled; set to deploy/concurrency-caps.yaml to enable)
+	ConcurrencyCapsPath string
+
+	// OTelLogsEnabled toggles OpenTelemetry log export (env: OTEL_LOGS_ENABLED).
+	OTelLogsEnabled bool
 }
 
 // ValidationResult holds the result of configuration validation
@@ -284,6 +291,7 @@ func Load(opts ...Option) (Config, error) {
 		DBStatementCacheMode:     DefaultDBStatementCacheMode,
 		PgBouncerIdleInTxTimeout: DefaultPgBouncerIdleInTxTimeout,
 		GracefulShutdownTimeout:  DefaultGracefulShutdownTimeout,
+		ConcurrencyCapsPath:      getEnv("CONCURRENCY_CAPS_PATH", ""),
 	}
 
 	// Resolve secrets through the provider

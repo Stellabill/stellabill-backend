@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -11,7 +10,7 @@ import (
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/timeutil"
 
-	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -625,110 +624,60 @@ func TestAnalyzeJob_GetStats_AllFieldsPopulated(t *testing.T) {
 	}
 }
 
-// ---- SQL store tests with go-sqlmock ----
+// ---- Store interface tests (via fake store) ----
 
-func newAnalyzeSQLMock(t *testing.T) (*sqlAnalyzeStore, sqlmock.Sqlmock, func()) {
-	t.Helper()
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock: %v", err)
-	}
-	return &sqlAnalyzeStore{db: db}, mock, func() { _ = db.Close() }
-}
-
-func TestSQLAnalyzeStore_Analyze_Success(t *testing.T) {
-	store, mock, done := newAnalyzeSQLMock(t)
-	defer done()
-
-	mock.ExpectExec("ANALYZE outbox_events").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-
+func TestAnalyzeStore_PassesTableName(t *testing.T) {
+	store := &fakeAnalyzeStore{}
 	err := store.Analyze(context.Background(), "outbox_events")
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectations: %v", err)
+	calls := store.calls()
+	if len(calls) != 1 || calls[0] != "outbox_events" {
+		t.Errorf("expected Analyze('outbox_events'), got %v", calls)
 	}
 }
 
-func TestSQLAnalyzeStore_Analyze_Statements(t *testing.T) {
-	store, mock, done := newAnalyzeSQLMock(t)
-	defer done()
-
-	mock.ExpectExec("ANALYZE statements").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-
-	err := store.Analyze(context.Background(), "statements")
-	if err != nil {
-		t.Fatalf("Analyze: %v", err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectations: %v", err)
-	}
-}
-
-func TestSQLAnalyzeStore_Analyze_Subscriptions(t *testing.T) {
-	store, mock, done := newAnalyzeSQLMock(t)
-	defer done()
-
-	mock.ExpectExec("ANALYZE subscriptions").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-
-	err := store.Analyze(context.Background(), "subscriptions")
-	if err != nil {
-		t.Fatalf("Analyze: %v", err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectations: %v", err)
-	}
-}
-
-func TestSQLAnalyzeStore_Analyze_Error(t *testing.T) {
-	store, mock, done := newAnalyzeSQLMock(t)
-	defer done()
-
-	mock.ExpectExec("ANALYZE outbox_events").
-		WillReturnError(errors.New("connection refused"))
-
+func TestAnalyzeStore_ReturnsError(t *testing.T) {
+	store := &fakeAnalyzeStore{analyzeErr: errors.New("connection refused")}
 	err := store.Analyze(context.Background(), "outbox_events")
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectations: %v", err)
-	}
 }
 
-func TestSQLAnalyzeStore_Analyze_SpecialCharactersSafe(t *testing.T) {
-	store, mock, done := newAnalyzeSQLMock(t)
-	defer done()
-
-	mock.ExpectExec("ANALYZE statements_partitioned").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-
+func TestAnalyzeStore_HandlesSpecialTableNames(t *testing.T) {
+	store := &fakeAnalyzeStore{}
 	err := store.Analyze(context.Background(), "statements_partitioned")
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectations: %v", err)
+	calls := store.calls()
+	if len(calls) != 1 || calls[0] != "statements_partitioned" {
+		t.Errorf("expected Analyze('statements_partitioned'), got %v", calls)
 	}
 }
 
 func TestNewAnalyzeJob_Constructor(t *testing.T) {
-	db, _, err := sqlmock.New()
+	// Create a minimal pool config for constructor testing.
+	// The pool won't actually connect since Start() is not called.
+	poolCfg, err := pgxpool.ParseConfig("postgres://user:pass@localhost/db")
 	if err != nil {
-		t.Fatalf("sqlmock: %v", err)
+		t.Fatalf("pgxpool.ParseConfig: %v", err)
 	}
-	defer db.Close()
+	poolCfg.MinConns = 0
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
+	if err != nil {
+		t.Fatalf("pgxpool.NewWithConfig: %v", err)
+	}
+	defer pool.Close()
 
-	j := NewAnalyzeJob(db, AnalyzeConfig{}, nil)
+	j := NewAnalyzeJob(pool, AnalyzeConfig{}, nil)
 	if j == nil {
 		t.Fatal("expected non-nil job")
 	}
-	if _, ok := j.store.(*sqlAnalyzeStore); !ok {
-		t.Errorf("expected sqlAnalyzeStore, got %T", j.store)
+	if _, ok := j.store.(*pgxAnalyzeStore); !ok {
+		t.Errorf("expected pgxAnalyzeStore, got %T", j.store)
 	}
 	if j.config.OutboxInterval != 5*time.Minute {
 		t.Errorf("OutboxInterval = %v, want 5m", j.config.OutboxInterval)

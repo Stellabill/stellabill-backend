@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,8 +25,9 @@ type Pinger interface {
 // ReadRouter routes read queries to a read replica or primary database pool.
 // It implements the DBTX interface, directing safe read context calls to the replica.
 type ReadRouter struct {
-	primary DBTX
-	replica DBTX
+	primary  DBTX
+	replica  DBTX
+	replica2 DBTX
 
 	// Failover configuration
 	mu              sync.RWMutex
@@ -33,15 +35,26 @@ type ReadRouter struct {
 	lastCheck       time.Time
 	pingTimeout     time.Duration
 	healthCheckFreq time.Duration
+	hedgeDelay      time.Duration
 }
 
 // NewReadRouter creates a new ReadRouter with primary and replica connections.
 func NewReadRouter(primary, replica DBTX) *ReadRouter {
+	return NewReadRouterWithReplicas(primary, replica, nil)
+}
+
+// NewReadRouterWithReplicas creates a router that can hedge read-only SELECTs
+// across a primary and two replica backends. The second replica is only used
+// when the query is a single read-only SELECT and the first replica is still
+// running beyond the configured hedge delay.
+func NewReadRouterWithReplicas(primary, replica, replica2 DBTX) *ReadRouter {
 	return &ReadRouter{
 		primary:         primary,
 		replica:         replica,
+		replica2:        replica2,
 		pingTimeout:     50 * time.Millisecond,
 		healthCheckFreq: 5 * time.Second,
+		hedgeDelay:      50 * time.Millisecond,
 	}
 }
 
@@ -126,8 +139,48 @@ func (r *ReadRouter) PrepareContext(ctx context.Context, query string) (*sql.Stm
 	return r.primary.PrepareContext(ctx, query)
 }
 
-// QueryContext routes reads to the Reader.
+// QueryContext routes reads to the Reader. Read-only SELECTs can be hedged
+// across the first two replicas to reduce slow-tail latency.
 func (r *ReadRouter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	selected := r.Reader(ctx)
+	if selected == r.primary || !r.shouldHedge(query) || r.replica2 == nil {
+		return selected.QueryContext(ctx, query, args...)
+	}
+
+	var (
+		resultRows *sql.Rows
+		resultErr  error
+		mu         sync.Mutex
+	)
+
+	_, err := HedgedQuery(ctx, r.hedgeDelay, func(attemptCtx context.Context, attempt int) error {
+		var target DBTX
+		if attempt == 1 {
+			target = r.replica
+		} else {
+			target = r.replica2
+		}
+		if target == nil {
+			return nil
+		}
+
+		rows, queryErr := target.QueryContext(attemptCtx, query, args...)
+		mu.Lock()
+		defer mu.Unlock()
+		if queryErr == nil && resultRows == nil {
+			resultRows = rows
+			resultErr = nil
+			return nil
+		}
+		if queryErr != nil && resultErr == nil && resultRows == nil {
+			resultErr = queryErr
+		}
+		return queryErr
+	})
+	if err != nil && resultRows == nil {
+		return nil, err
+	}
+	return resultRows, nil
 	if acc := middlewarepkg.AccumulatorFromContext(ctx); acc != nil {
 		acc.AddDBRowsRead(1)
 	}
@@ -140,6 +193,27 @@ func (r *ReadRouter) QueryRowContext(ctx context.Context, query string, args ...
 		acc.AddDBRowsRead(1)
 	}
 	return r.Reader(ctx).QueryRowContext(ctx, query, args...)
+}
+
+func (r *ReadRouter) shouldHedge(query string) bool {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return false
+	}
+	if strings.Contains(q, ";") {
+		return false
+	}
+
+	upper := strings.ToUpper(q)
+	if !strings.HasPrefix(upper, "SELECT") {
+		return false
+	}
+	for _, forbidden := range []string{"INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "CREATE", "ALTER", "DROP", "REPLACE", "CALL", "DO", "COPY"} {
+		if strings.Contains(upper, forbidden) {
+			return false
+		}
+	}
+	return !strings.Contains(upper, "FOR UPDATE") && !strings.Contains(upper, "FOR SHARE")
 }
 
 // Exec routes writes to the primary pool.

@@ -434,3 +434,47 @@ func TestGraphQL_Subscription_WithBillingDate(t *testing.T) {
 	bs := sub["billing_summary"].(map[string]interface{})
 	assert.NotNil(t, bs["next_billing_date"])
 }
+
+func TestGraphQL_Statements_NestedDataLoader(t *testing.T) {
+	svc := buildServices()
+	h := buildHandler(t, svc)
+
+	query := `{ statements(customer_id:"c1") { id subscription { id plan { id name } } } }`
+	
+	// manually inject loader for this test
+	subRepo := repository.NewMockSubscriptionRepo(
+		&repository.SubscriptionRow{ID: "sub-1", TenantID: "t1", CustomerID: "c1", Status: "active", PlanID: "p1", Amount: "1000", Currency: "USD", Interval: "monthly"},
+	)
+	loader := repository.NewLoader(svc.PlanRepo, subRepo)
+	
+	body, _ := json.Marshal(map[string]interface{}{"query": query})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/graphql", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req.WithContext(repository.WithLoader(req.Context(), loader))
+	
+	c.Set("callerID", "c1")
+	c.Set("tenantID", "t1")
+	c.Set("roles", []string{"subscriber"})
+	
+	h.ServeHTTP(c)
+	
+	assert.Equal(t, http.StatusOK, w.Code)
+	
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	stmts := resp["data"].(map[string]interface{})["statements"].([]interface{})
+	require.Len(t, stmts, 1)
+	
+	st := stmts[0].(map[string]interface{})
+	assert.Equal(t, "st-1", st["id"])
+	
+	sub := st["subscription"].(map[string]interface{})
+	assert.Equal(t, "sub-1", sub["id"])
+	
+	plan := sub["plan"].(map[string]interface{})
+	assert.Equal(t, "p1", plan["id"])
+	assert.Equal(t, "Starter", plan["name"])
+}

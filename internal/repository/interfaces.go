@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+
+	"stellarbill-backend/internal/requestparams"
 )
 
 // ErrNotFound is returned when a requested record does not exist.
@@ -40,6 +42,7 @@ type StatementQuery struct {
 	EndingBefore   string // cursor for backward pagination
 	Limit          int    // replaces PageSize
 	Order          string // e.g. "asc", "desc"
+	Filter         *requestparams.RSQLFilter
 }
 
 // StatementRepository is the read interface used by the service.

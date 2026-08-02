@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,8 +34,12 @@ type JWEConfig struct {
 // ServiceConfig holds configuration for the outbox service
 type ServiceConfig struct {
 	DispatcherConfig DispatcherConfig
-	PublisherType    string // "console", "http", "multi"
+	PublisherType    string // "console", "http", "multi", "kafka"
 	HTTPEndpoint     string
+	KafkaBrokers     []string
+	KafkaTopicMap    map[string]string
+	KafkaAcks        string
+	KafkaTopicAcks   string
 	JWE              *JWEConfig
 	// HTTPPool is the shared connection pool used by the "http" and
 	// "multi" publisher types. Defaults to a package-level shared pool
@@ -60,6 +65,43 @@ func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 			NewConsolePublisher(),
 			NewHTTPPublisher(config.HTTPEndpoint, httpClient),
 		)
+	case "kafka":
+		fallback := NewHTTPPublisher(config.HTTPEndpoint, httpClient)
+		kafkaPublisher, err := NewKafkaPublisherFromEnv(fallback)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create kafka publisher: %w", err)
+		}
+		if len(config.KafkaBrokers) > 0 {
+			kafkaPublisher.brokers = append([]string(nil), config.KafkaBrokers...)
+		}
+		if len(config.KafkaTopicMap) > 0 {
+			kafkaPublisher.topicMapping = cloneTopicMapping(config.KafkaTopicMap)
+		}
+		if config.KafkaAcks != "" {
+			ack, err := parseKafkaAck(config.KafkaAcks)
+			if err != nil {
+				return nil, fmt.Errorf("invalid kafka ack setting: %w", err)
+			}
+			kafkaPublisher.defaultAck = ack
+		}
+		if config.KafkaTopicAcks != "" {
+			for _, entry := range strings.Split(config.KafkaTopicAcks, ",") {
+				entry = strings.TrimSpace(entry)
+				if entry == "" {
+					continue
+				}
+				parts := strings.SplitN(entry, "=", 2)
+				if len(parts) != 2 {
+					return nil, fmt.Errorf("invalid kafka topic ack setting %q", entry)
+				}
+				ack, err := parseKafkaAck(strings.TrimSpace(parts[1]))
+				if err != nil {
+					return nil, fmt.Errorf("invalid kafka topic ack setting %q: %w", entry, err)
+				}
+				kafkaPublisher.topicAcks[strings.TrimSpace(parts[0])] = ack
+			}
+		}
+		publisher = kafkaPublisher
 	default:
 		publisher = NewConsolePublisher() // Default to console
 	}

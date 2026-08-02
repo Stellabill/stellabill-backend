@@ -29,6 +29,17 @@ const (
 	// Export errors
 	CodeExportInProgress Code = "export/in-progress"
 
+	// Fee errors
+	CodeFeeInvalidAmount  Code = "fee/invalid-amount"
+	CodeFeeInvalidTaxRate Code = "fee/invalid-tax-rate"
+	CodeFeeInvalidParts   Code = "fee/invalid-parts"
+
+	// Pagination errors
+	CodeInvalidLimit Code = "pagination/invalid-limit"
+
+	// Idempotency errors
+	CodeIdempotencyRequestMismatch Code = "idempotency/request-mismatch"
+
 	// Swap errors
 	CodeSwapInsufficientLiquidity Code = "swap/insufficient-liquidity"
 

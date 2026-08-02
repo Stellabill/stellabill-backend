@@ -14,14 +14,17 @@ package main
 //     defaulted to zero, preventing accidental unbounded connections.
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/routes"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ProvideConfig loads and validates the application configuration from the
@@ -45,6 +48,21 @@ func ProvideRouter(cfg config.Config) *gin.Engine {
 	router.Use(gin.Recovery())
 	routes.Register(router)
 	return router
+}
+
+// ProvideDBPool creates a *pgxpool.Pool from the validated config. When
+// cfg.DBConn is empty (e.g. local dev without DATABASE_URL), it returns
+// (nil, nil) so callers can degrade gracefully.
+//
+// The pool is created with a context bound by DBPoolConnectTimeout so startup
+// fails fast when the database is unreachable.
+func ProvideDBPool(cfg config.Config) (*pgxpool.Pool, error) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(cfg.DBPoolConnectTimeout)*time.Second,
+	)
+	defer cancel()
+	return db.NewPool(ctx, cfg)
 }
 
 // ProvideHTTPServer assembles an *http.Server from the validated config and

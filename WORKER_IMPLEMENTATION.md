@@ -121,6 +121,11 @@ Expected coverage: 95%+
 - Workers coordinate via shared store
 - Horizontal scaling supported
 
+### Worker leader election
+- Singleton jobs now use PostgreSQL advisory locks so only one instance can run a given job at a time.
+- The partition rollover and statement archive jobs wrap each run in a leader guard that releases the lock on shutdown and after the run completes.
+- A Prometheus gauge named `worker_leader_status{job="..."}` reports whether the current process holds the leader lock for each singleton job.
+
 ## Production Deployment
 
 ### Database Integration

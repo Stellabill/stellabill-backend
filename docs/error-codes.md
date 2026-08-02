@@ -25,7 +25,10 @@ Error codes are registered in `internal/errcode/registry.go`. Each sentinel erro
 | `client` | Client-side errors (bad request, validation, auth, etc.) |
 | `subscription` | Subscription lifecycle and billing errors |
 | `export` | Tenant data export errors |
+| `fee` | Fee calculation and tax split errors |
 | `swap` | Token swap errors |
+| `pagination` | Pagination and cursor errors |
+| `idempotency` | Idempotency key errors |
 | `system` | Internal server and service errors |
 
 ### Code Reference
@@ -60,11 +63,31 @@ Error codes are registered in `internal/errcode/registry.go`. Each sentinel erro
 |------|-------------|-------------|
 | `export/in-progress` | 409 | An export is already in progress for this tenant |
 
+#### Fee Errors
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `fee/invalid-amount` | 422 | Amount must be non-negative |
+| `fee/invalid-tax-rate` | 422 | Tax rate must be between 0 and 1 inclusive |
+| `fee/invalid-parts` | 422 | Number of proration parts must be greater than zero |
+
 #### Swap Errors
 
 | Code | HTTP Status | Description |
 |------|-------------|-------------|
 | `swap/insufficient-liquidity` | 422 | Swap cannot be fulfilled due to insufficient liquidity |
+
+#### Pagination Errors
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `pagination/invalid-limit` | 400 | Limit parameter is not a valid integer or exceeds maximum |
+
+#### Idempotency Errors
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `idempotency/request-mismatch` | 422 | Idempotency key reused with a different request payload |
 
 #### System Errors
 
@@ -143,10 +166,11 @@ Feature flag middleware returns its own structured response:
 
 1. Add the `Code` constant in `internal/errcode/registry.go`
 2. Register the matcher in the sending service package's `init()` function using `errcode.Register`
-3. Add documentation to this file
-4. Add tests verifying the error emits the correct code
+3. Add the sentinel error to `registeredSentinelErrors` in `internal/service/errors_enforce_test.go`
+4. Add documentation to this file
+5. Add tests verifying the error emits the correct code
 
-**Adding a new error without registering the code will fail CI** — the registry validation tests ensure every error sentinel used in the codebase has a corresponding code entry.
+**Adding a new error without completing these steps will fail CI** — the `TestEverySentinelErrorIsRegistered` test in `internal/service/errors_enforce_test.go` ensures every sentinel error used in the codebase has a corresponding code entry and is listed in the enforcement table.
 
 ## Testing
 

@@ -16,6 +16,17 @@ import (
 // AuditExporterJob handles the nightly export of audit logs to a data warehouse.
 // In this implementation, it exports to a local staging file which a data warehouse
 // ingestion tool (like Fluentd, Logstash, or a cron script) will pick up.
+//
+// Export Schema (JSONL):
+// - timestamp: ISO8601 string of the event time
+// - actor: ID or IP of the user who performed the action
+// - action: "feature_flag_toggle"
+// - resource: The name of the feature flag
+// - outcome: "success" or "failure"
+// - reason: The reason provided for the toggle
+// - before_enable: The state of the flag before the toggle (or [REDACTED])
+// - after_enable: The state of the flag after the toggle (or [REDACTED])
+// - hash: Cryptographic hash of the event
 type AuditExporterJob struct {
 	auditLogPath   string
 	exportFilePath string
@@ -107,3 +118,24 @@ func (j *AuditExporterJob) Run(ctx context.Context) error {
 	security.ProductionLogger().Info("Audit log export completed", zap.Int("exported_count", exportedCount))
 	return nil
 }
+
+// Start begins the ticker for the nightly export process.
+func (j *AuditExporterJob) Start(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := j.Run(ctx); err != nil {
+				security.ProductionLogger().Error("Nightly audit export failed", zap.Error(err))
+			}
+		}
+	}
+}
+

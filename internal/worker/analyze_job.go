@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -11,6 +10,8 @@ import (
 
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/timeutil"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // analyzeLogger is the minimal logging surface the analyze job needs.
@@ -115,9 +116,9 @@ type AnalyzeJob struct {
 	consecutiveErrs map[string]int
 }
 
-// NewAnalyzeJob constructs an AnalyzeJob backed by the given database.
-func NewAnalyzeJob(db *sql.DB, config AnalyzeConfig, l analyzeLogger) *AnalyzeJob {
-	return newAnalyzeJob(&sqlAnalyzeStore{db: db}, config, l)
+// NewAnalyzeJob constructs an AnalyzeJob backed by the given database pool.
+func NewAnalyzeJob(pool *pgxpool.Pool, config AnalyzeConfig, l analyzeLogger) *AnalyzeJob {
+	return newAnalyzeJob(&pgxAnalyzeStore{pool: pool}, config, l)
 }
 
 // newAnalyzeJob is the store-injecting constructor used by tests.
@@ -318,12 +319,12 @@ func (j *AnalyzeJob) analyzeTable(table hotTable) {
 	metrics.AnalyzeLastRunTimestamp.WithLabelValues(table.name).Set(float64(now.Unix()))
 }
 
-// sqlAnalyzeStore is the production analyzeStore backed by *sql.DB.
-type sqlAnalyzeStore struct {
-	db *sql.DB
+// pgxAnalyzeStore is the production analyzeStore backed by *pgxpool.Pool.
+type pgxAnalyzeStore struct {
+	pool *pgxpool.Pool
 }
 
-func (s *sqlAnalyzeStore) Analyze(ctx context.Context, table string) error {
-	_, err := s.db.ExecContext(ctx, "ANALYZE "+table)
+func (s *pgxAnalyzeStore) Analyze(ctx context.Context, table string) error {
+	_, err := s.pool.Exec(ctx, "ANALYZE "+table)
 	return err
 }

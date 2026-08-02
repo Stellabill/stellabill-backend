@@ -15,6 +15,7 @@ type Flag struct {
 	Enabled     bool      `json:"enabled"`
 	Description string    `json:"description"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	Version     int64     `json:"version"`
 }
 
 type Manager struct {
@@ -79,6 +80,7 @@ func (m *Manager) LoadDefaultFlags() {
 			Enabled:     false,
 			Description: "Enable fault injection middleware for resilience testing",
 			UpdatedAt:   time.Now(),
+			Version:     time.Now().UnixNano(),
 		},
 	}
 
@@ -103,6 +105,7 @@ func (m *Manager) LoadFromEnvironment() {
 						Enabled:     enabled,
 						Description: "Environment-defined flag",
 						UpdatedAt:   time.Now(),
+						Version:     time.Now().UnixNano(),
 					}
 				}
 				m.mutex.Unlock()
@@ -133,6 +136,7 @@ func (m *Manager) LoadFromEnvironment() {
 						Enabled:     enabled,
 						Description: "Environment flag",
 						UpdatedAt:   time.Now(),
+						Version:     time.Now().UnixNano(),
 					}
 				}
 				m.mutex.Unlock()
@@ -212,22 +216,34 @@ func (m *Manager) GetFlag(flagName string) (*Flag, bool) {
 }
 
 func (m *Manager) SetFlag(flagName string, enabled bool, description string) {
+	m.SetFlagWithVersion(flagName, enabled, description, time.Now().UnixNano())
+}
+
+func (m *Manager) SetFlagWithVersion(flagName string, enabled bool, description string, version int64) bool {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	if flag, exists := m.flags[flagName]; exists {
+		if version <= flag.Version {
+			// Monotonic version check: last writer wins. If version is older, reject.
+			return false
+		}
 		flag.Enabled = enabled
 		flag.UpdatedAt = time.Now()
+		flag.Version = version
 		if description != "" {
 			flag.Description = description
 		}
+		return true
 	} else {
 		m.flags[flagName] = &Flag{
 			Name:        flagName,
 			Enabled:     enabled,
 			Description: description,
 			UpdatedAt:   time.Now(),
+			Version:     version,
 		}
+		return true
 	}
 }
 

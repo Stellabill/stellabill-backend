@@ -9,10 +9,13 @@ import (
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/repository"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -54,6 +57,22 @@ func (m *mockPurgeable) ResetMetrics() {
 }
 
 func (m *mockPurgeable) Namespace() string { return m.namespace }
+
+type fakeRevocationStore struct {
+	revoked bool
+	lastJTI string
+	err     error
+}
+
+func (f *fakeRevocationStore) Revoke(_ context.Context, jti string, _ time.Duration) error {
+	f.lastJTI = jti
+	return nil
+}
+
+func (f *fakeRevocationStore) IsRevoked(_ context.Context, jti string) (bool, error) {
+	f.lastJTI = jti
+	return f.revoked, f.err
+}
 
 // buildRouter wires an audit logger + admin handler into a Gin router.
 func buildRouter(sink *audit.MemorySink, handler *AdminHandler) *gin.Engine {
@@ -97,6 +116,69 @@ func lastEntry(sink *audit.MemorySink) audit.AuditEvent {
 		return audit.AuditEvent{}
 	}
 	return entries[len(entries)-1]
+}
+
+func buildRevokeRouter(sink *audit.MemorySink, handler *AdminHandler) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	logger := audit.NewLogger("secret", sink)
+	r.Use(audit.Middleware(logger))
+	r.POST("/api/admin/sessions/revoke", handler.RevokeSession)
+	return r
+}
+
+func TestAdminRevokeSession_Success(t *testing.T) {
+	sink := &audit.MemorySink{}
+	store := &fakeRevocationStore{}
+	handler := NewAdminHandler("admin-token", "test-secret", store)
+	r := buildRevokeRouter(sink, handler)
+
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+		"jti":       "test-jti-123",
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	body := strings.NewReader(`{"token":"` + tokenString + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/sessions/revoke", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	entry := lastEntry(sink)
+	if entry.Action != audit.ActionAdminRevokeSession {
+		t.Fatalf("expected audit action %q, got %q", audit.ActionAdminRevokeSession, entry.Action)
+	}
+	if entry.Outcome != "success" {
+		t.Fatalf("expected audit outcome success, got %q", entry.Outcome)
+	}
+	if store.lastJTI != "test-jti-123" {
+		t.Fatalf("expected revoked jti %q, got %q", "test-jti-123", store.lastJTI)
+	}
+}
+
+func TestAdminRevokeSession_InvalidToken(t *testing.T) {
+	sink := &audit.MemorySink{}
+	store := &fakeRevocationStore{}
+	handler := NewAdminHandler("admin-token", "test-secret", store)
+	r := buildRevokeRouter(sink, handler)
+
+	body := strings.NewReader(`{"token":"invalid-token"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/sessions/revoke", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
 }
 
 // ── backward-compatible tests (original behaviour preserved) ─────────────────

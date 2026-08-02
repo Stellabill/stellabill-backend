@@ -9,16 +9,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
-
-type contextKey string
-
-const PrincipalKey contextKey = "principal"
-
-// ErrorResponse standardizes auth error output
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
 
 // Config holds JWT requirements
 type Config struct {
@@ -121,8 +113,9 @@ func (tg *TokenGenerator) generateToken(userID, email, role, tenantID string, ex
 		UserID:   userID,
 		Email:    email,
 		Role:     Role(role),
-		TenantID: "test-tenant",
+		TenantID: tenantID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        uuid.NewString(),
 			Issuer:    tg.issuer,
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

@@ -91,13 +91,22 @@ func Register(r *gin.Engine) {
 
 	// Create handlers
 	h := handlers.NewHandler(nil, nil)
-	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
+
+	var revocationStore auth.RevocationStore
+	if cfg.RedisURL != "" {
+		revocationStore, err = auth.NewRedisRevocationStoreFromURL(cfg.RedisURL, false)
+		if err != nil {
+			panic(fmt.Sprintf("failed to initialize Redis revocation store: %v", err))
+		}
+	}
+
+	adminHandler := handlers.NewAdminHandler(cfg.AdminToken, cfg.JWTSecret, revocationStore)
 	exportSvc := service.NewTenantExportService(planRepo, subRepo, stmtRepo)
 	exportJobManager := service.NewExportJobManager(exportSvc, noopS3Uploader{}, nil)
 
 	// Auth configuration
 	jwtSecret := cfg.JWTSecret
-	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
+	authMiddleware := middleware.AuthMiddleware(revocationStore, jwtSecret)
 
 	// API Groups
 	api := r.Group("/api")
@@ -180,6 +189,7 @@ func Register(r *gin.Engine) {
 
 	{
 		admin.POST("/purge", adminHandler.PurgeCache)
+		admin.POST("/sessions/revoke", auth.RequirePermission(auth.PermManageSubscriptions), adminHandler.RevokeSession)
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)

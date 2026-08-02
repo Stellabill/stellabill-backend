@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"stellarbill-backend/internal/auth"
@@ -151,6 +153,112 @@ func TestAuthMiddleware_MissingTenantID(t *testing.T) {
 
 	if res.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", res.Code)
+	}
+}
+
+type fakeRevocationStore struct {
+	revoked bool
+	err     error
+	seenJTI string
+}
+
+func (f *fakeRevocationStore) Revoke(ctx context.Context, jti string, ttl time.Duration) error {
+	f.seenJTI = jti
+	return nil
+}
+
+func (f *fakeRevocationStore) IsRevoked(ctx context.Context, jti string) (bool, error) {
+	f.seenJTI = jti
+	return f.revoked, f.err
+}
+
+func TestAuthMiddleware_RevokedToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	store := &fakeRevocationStore{revoked: true}
+	middleware := AuthMiddleware(store, "test-secret")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+		"jti":       uuid.NewString(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on revoked token, got %d", res.Code)
+	}
+}
+
+func TestAuthMiddleware_RevocationStoreErrorFailsClosedByDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	store := &fakeRevocationStore{err: errors.New("redis unavailable")}
+	middleware := AuthMiddleware(store, "test-secret")
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+		"jti":       uuid.NewString(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on revocation store error, got %d", res.Code)
+	}
+}
+
+func TestAuthMiddleware_RevocationStoreErrorFailOpenExplicitly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	store := &fakeRevocationStore{err: errors.New("redis unavailable")}
+	middleware := AuthMiddleware(store, "test-secret", "", true)
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	claims := jwt.MapClaims{
+		"sub":       "user123",
+		"tenant_id": "tenant123",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+		"jti":       uuid.NewString(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 when fail-open is explicitly enabled, got %d", res.Code)
 	}
 }
 

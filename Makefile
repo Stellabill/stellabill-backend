@@ -6,6 +6,18 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 SBOM_FORMAT := cyclonedx-json
 SBOM_FILE := sbom.json
 
+# ── Proto / gRPC ──────────────────────────────────────────────────────────────
+
+.PHONY: proto proto-lint proto-gen
+
+proto: proto-gen proto-lint  ## Generate protos and run lint
+
+proto-lint:  ## Lint proto definitions
+	buf lint
+
+proto-gen:  ## Generate Go stubs, grpc-gateway handlers, and OpenAPI specs from proto
+	buf generate
+
 # ── Formatting ───────────────────────────────────────────────────────────────
 
 .PHONY: fmt

@@ -61,6 +61,7 @@ func (v *spiffeVerifier) Verify(ctx context.Context, tokenString string) (*Claim
 		return nil, errors.New("SPIFFE verifier is disabled")
 	}
 
+	svid, err := jwtsvid.ParseAndValidate(tokenString, v.source, []string{v.trustDomain.IDString()})
 	bundle, err := v.source.GetJWTBundleForTrustDomain(v.trustDomain)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get JWT bundle: %w", err)
@@ -71,6 +72,7 @@ func (v *spiffeVerifier) Verify(ctx context.Context, tokenString string) (*Claim
 		return nil, fmt.Errorf("failed to parse or validate JWT-SVID: %w", err)
 	}
 
+	// Map SPIFFE SVID to internal Claims.
 	if svid.ID.TrustDomain() != v.trustDomain {
 		return nil, errors.New("trust domain mismatch")
 	}

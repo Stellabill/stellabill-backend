@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package stellabill.v1;
+
+option go_package = "stellarbill-backend/gen/proto/stellabill/v1;stellabillv1";
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "Stellabill Internal API";
+    version: "1.0";
+    description: "Internal gRPC gateway for service-to-service reads";
+  };
+  schemes: [HTTP, HTTPS];
+  consumes: "application/json";
+  produces: "application/json";
+};
+
+// Plan message matching the internal Plan model.
+message Plan {
+  string id = 1;
+  string name = 2;
+  string amount = 3;
+  string currency = 4;
+  string interval = 5;
+  string description = 6;
+}
+
+message ListPlansRequest {
+  int32 limit = 1;
+  string cursor = 2;
+}
+
+message ListPlansResponse {
+  repeated Plan plans = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetPlanRequest {
+  string id = 1;
+}
+
+message GetPlanResponse {
+  Plan plan = 1;
+}
+
+// PlanService provides read operations for plans.
+service PlanService {
+  // ListPlans returns all available plans with cursor pagination.
+  rpc ListPlans(ListPlansRequest) returns (ListPlansResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/plans"
+    };
+  }
+
+  // GetPlan returns a single plan by ID.
+  rpc GetPlan(GetPlanRequest) returns (GetPlanResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/plans/{id}"
+    };
+  }
+}

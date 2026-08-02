@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -13,6 +14,9 @@ import (
 
 	"stellarbill-backend/internal/httpx"
 )
+
+// Package-level HTTP client used by publisher constructors.
+var httpClient HTTPClient = &DefaultHTTPClient{client: &http.Client{Timeout: 30 * time.Second}}
 
 // Service provides the main outbox functionality
 type Service struct {

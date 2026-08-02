@@ -10,6 +10,7 @@ import (
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrConcurrentUpdate is returned when an optimistic lock version check fails.
 // ErrConcurrentUpdate is returned when a row has been modified since last read.
 var ErrConcurrentUpdate = errors.New("concurrent update detected")
 

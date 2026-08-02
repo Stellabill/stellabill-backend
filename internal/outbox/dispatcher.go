@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"stellarbill-backend/internal/resilience"
 	"stellarbill-backend/internal/security"
 	"sync"
 	"time"
@@ -27,6 +28,11 @@ type DispatcherConfig struct {
 	ShardCount        int           // total number of partitions (0 = no sharding)
 	OwnedShards       []int         // partitions this instance owns
 	HeartbeatInterval time.Duration // how often to verify advisory lock health
+
+	// RetryBudget enforces a global retry budget to prevent thundering-herd
+	// storms against downstreams. When nil, a default budget (10 % ratio over
+	// 30 s window) is used. Set to a zero-value budget to disable.
+	RetryBudget *resilience.RetryBudget
 }
 
 // DefaultDispatcherConfig returns default configuration
@@ -59,6 +65,10 @@ type dispatcher struct {
 	// per-publisher failure/backoff state
 	publisherFailCount   map[string]int
 	publisherNextAttempt map[string]time.Time
+
+	// retryBudget guards against thundering-herd storms. Created lazily
+	// on Start() and shared across all publisher goroutines.
+	retryBudget *resilience.RetryBudget
 }
 
 // NewDispatcher creates a new outbox dispatcher
@@ -114,6 +124,15 @@ func (d *dispatcher) Start() error {
 	// Start the cleanup goroutine
 	d.wg.Add(1)
 	go d.cleanupLoop()
+
+	// Initialise retry budget (nil means use default)
+	if d.config.RetryBudget != nil {
+		b := *d.config.RetryBudget
+		d.retryBudget = &b
+	} else {
+		def := resilience.DefaultRetryBudget()
+		d.retryBudget = &def
+	}
 
 	// Publish outbox_backlog_depth for KEDA / Prometheus scraping.
 	d.wg.Add(1)
@@ -263,6 +282,25 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 					continue
 				}
 
+				// Check retry budget before attempting any retry.
+				// Denied retries fail fast to protect downstreams.
+				if d.retryBudget != nil && !d.retryBudget.AllowRetry() {
+					log.Printf("Retry budget exhausted for publisher %s, event %s failing fast", name, event.ID)
+					RetryDeniedTotal.Inc()
+					errorMsg := fmt.Sprintf("retry budget exhausted: %v", err)
+					_ = d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg)
+					d.mu.Lock()
+					d.publisherFailCount[name] = 0
+					d.publisherNextAttempt[name] = time.Time{}
+					d.mu.Unlock()
+					continue
+				}
+
+				// Record the retry in the budget (only after AllowRetry).
+				if d.retryBudget != nil {
+					d.retryBudget.RecordRetry()
+				}
+
 				// update failure/backoff (per publisher)
 				d.mu.Lock()
 				d.publisherFailCount[name]++
@@ -298,7 +336,10 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 				continue
 			}
 
-			// on success reset failure count and next attempt
+			// on success, record in budget and reset failure/backoff state
+			if d.retryBudget != nil {
+				d.retryBudget.RecordSuccess()
+			}
 			d.mu.Lock()
 			d.publisherFailCount[name] = 0
 			d.publisherNextAttempt[name] = time.Time{}
@@ -316,6 +357,11 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 					lag := time.Since(event.OccurredAt).Seconds()
 					OutboxPublisherLag.WithLabelValues(name).Set(lag)
 				}
+			}
+
+			// Emit retry budget available metric
+			if d.retryBudget != nil {
+				RetryBudgetAvailable.Set(d.retryBudget.Available())
 			}
 
 		case <-ctx.Done():
@@ -391,7 +437,10 @@ func (d *dispatcher) processEvent(event *Event) error {
 	}
 }
 
-// handlePublishError handles publishing errors and implements retry logic
+// handlePublishError handles publishing errors and implements retry logic.
+// Before scheduling a retry the method checks the retry budget. If the budget
+// is exhausted the event fails fast rather than compounding load on an already
+// struggling downstream.
 func (d *dispatcher) handlePublishError(event *Event, err error) error {
 	if IsPermanentPublishError(err) {
 		errorMsg := err.Error()
@@ -414,6 +463,23 @@ func (d *dispatcher) handlePublishError(event *Event, err error) error {
 
 		log.Printf("%s", security.MaskPII(fmt.Sprintf("Event %s failed after %d retries: %v", security.MaskPII(event.ID.String()), event.RetryCount, err)))
 		return err
+	}
+
+	// Check retry budget before scheduling a retry.
+	if d.retryBudget != nil && !d.retryBudget.AllowRetry() {
+		log.Printf("Retry budget exhausted for event %s, failing fast", event.ID)
+		RetryDeniedTotal.Inc()
+		errorMsg := fmt.Sprintf("retry budget exhausted: %v", err)
+		if updateErr := d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg); updateErr != nil {
+			log.Printf("%s", security.MaskPII(fmt.Sprintf("Failed to mark event %s as failed: %v", security.MaskPII(event.ID.String()), updateErr)))
+			return updateErr
+		}
+		return err
+	}
+
+	// Record the retry in the budget.
+	if d.retryBudget != nil {
+		d.retryBudget.RecordRetry()
 	}
 
 	backoffSeconds := math.Pow(d.config.RetryBackoffFactor, float64(event.RetryCount))

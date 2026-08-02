@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
+	"time"
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/featureflags"
 
@@ -50,15 +52,38 @@ func (h *FeatureFlagsHandler) ToggleFeatureFlag(c *gin.Context) {
 
 	// Toggle and update flag
 	afterEnabled := !beforeEnabled
-	h.flagManager.SetFlag(req.Name, afterEnabled, flag.Description)
+	newVersion := time.Now().UnixNano()
+	
+	success := h.flagManager.SetFlagWithVersion(req.Name, afterEnabled, flag.Description, newVersion)
+	if !success {
+		RespondWithError(c, http.StatusConflict, ErrorCodeConflict, "concurrent modification: flag was updated by another request")
+		return
+	}
 
 	// Get updated flag
 	updatedFlag, _ := h.flagManager.GetFlag(req.Name)
 
+	isSensitive := false
+	lowerName := strings.ToLower(req.Name)
+	sensitiveKeys := []string{"secret", "token", "password", "key", "auth", "cvv", "card"}
+	for _, sk := range sensitiveKeys {
+		if strings.Contains(lowerName, sk) {
+			isSensitive = true
+			break
+		}
+	}
+
+	beforeStr := boolToString(beforeEnabled)
+	afterStr := boolToString(afterEnabled)
+	if isSensitive {
+		beforeStr = "[REDACTED]"
+		afterStr = "[REDACTED]"
+	}
+
 	// Log audit action (failure doesn't block success)
 	audit.LogAction(c, "feature_flag_toggle", req.Name, "success", map[string]string{
-		"before_enabled": boolToString(beforeEnabled),
-		"after_enabled":  boolToString(afterEnabled),
+		"before_enabled": beforeStr,
+		"after_enabled":  afterStr,
 		"reason":         req.Reason,
 	})
 

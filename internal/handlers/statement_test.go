@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 	"testing"
@@ -276,6 +278,51 @@ func TestListStatements_AdminCanListAnyCustomer(t *testing.T) {
 	w := do(r, http.MethodGet, "/api/v1/statements?customer_id=cust-99")
 	if w.Code != http.StatusOK {
 		t.Fatalf("admin: expected 200, got %d", w.Code)
+	}
+}
+
+func TestListStatements_CSVNegotiation_ReturnsAttachmentAndEscapesFormula(t *testing.T) {
+	svc := &mockStatementService{
+		listResult: &service.ListStatementsDetail{
+			Statements: []*service.StatementDetail{{
+				ID:             "stmt-1",
+				SubscriptionID: "sub-1",
+				Customer:       "cust-1",
+				PeriodStart:    "2024-01-01T00:00:00Z",
+				TotalAmount:    "=cmd|\" /C calc\"",
+				Currency:       "USD",
+				Kind:           "invoice",
+				Status:         "paid",
+			}},
+		},
+		listTotal: 1,
+	}
+	h := NewListStatementsHandler(svc)
+	r := withAuth(http.MethodGet, "/api/v1/statements", "cust-1", []string{"customer"}, h)
+	w := do(r, http.MethodGet, "/api/v1/statements?customer_id=cust-1&fields=id,total_amount&Accept=text/csv")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/csv; charset=utf-8" {
+		t.Fatalf("unexpected content type %q", got)
+	}
+	if got := w.Header().Get("Content-Disposition"); !strings.Contains(got, "attachment; filename=\"cust-1-statements.csv\"") {
+		t.Fatalf("unexpected content disposition %q", got)
+	}
+
+	reader := csv.NewReader(strings.NewReader(w.Body.String()))
+	rows, err := reader.ReadAll()
+	if err != nil {
+		t.Fatalf("read csv: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	if rows[0][0] != "id" || rows[0][1] != "total_amount" {
+		t.Fatalf("unexpected header %v", rows[0])
+	}
+	if rows[1][1] != "'="+"cmd|\" /C calc\"" {
+		t.Fatalf("expected csv formula to be escaped, got %q", rows[1][1])
 	}
 }
 

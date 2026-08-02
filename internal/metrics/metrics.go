@@ -85,6 +85,16 @@ var (
 		Name: "churn_rate_24h",
 		Help: "Churn rate over the last 24 hours (0.0 to 1.0)",
 	})
+
+	// AnalyzeLastRunTimestamp tracks the last successful ANALYZE execution
+	// time per table as a Unix timestamp. Updated by the AnalyzeJob worker.
+	AnalyzeLastRunTimestamp = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "analyze_last_run_timestamp_seconds",
+			Help: "Unix timestamp of the last successful ANALYZE run per table",
+		},
+		[]string{"table"},
+	)
 )
 
 func MetricsMiddleware() gin.HandlerFunc {

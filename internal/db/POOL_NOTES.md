@@ -55,6 +55,14 @@ closes the pool on graceful shutdown.
   request rather than a process-wide stall.
 - No secrets are logged; the DSN is never printed (only wrapped error text).
 
+## Hedged reads for replica tail latency
+
+The read router now supports optional hedged reads for read-only SELECT statements routed to a replica. When the first replica request remains in flight past a configured delay, the router starts a second replica attempt and returns the first successful result while canceling the losing request. This keeps the normal read path efficient and limits extra work to slow-tail cases only.
+
+- The behavior is gated to read-only SELECTs so writes and non-SELECT reads remain on the primary path.
+- The helper exposes the metric `hedged_reads_total{winner}` to observe which hedge attempt won.
+- Context cancellation is propagated to both in-flight attempts so the losing query does not continue to consume replica CPU.
+
 ## Tests
 
 `internal/db/pool_test.go` (no live DB required):

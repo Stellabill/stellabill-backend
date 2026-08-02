@@ -1,8 +1,12 @@
 package graphql
 
 import (
+	"strconv"
+	"strings"
+
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/timeutil"
 
 	"github.com/graphql-go/graphql"
 )
@@ -144,4 +148,89 @@ func nilIfEmpty(s *string) interface{} {
 		return nil
 	}
 	return *s
+}
+
+// resolvePlanField fetches the plan associated with a subscription using the dataloader.
+func resolvePlanField(p graphql.ResolveParams) (interface{}, error) {
+		source, ok := p.Source.(map[string]interface{})
+		if !ok {
+			return nil, nil
+		}
+		planID, _ := source["plan_id"].(string)
+		if planID == "" {
+			return nil, nil
+		}
+		tenantID := tenantIDFromCtx(p.Context)
+
+		loader := repository.LoaderFromContext(p.Context)
+		if loader == nil {
+			// Fallback: dataloader not found (e.g. in legacy tests), return eager loaded map
+			if planMap, ok := source["plan"].(map[string]interface{}); ok {
+				return planMap, nil
+			}
+			return nil, nil
+		}
+
+		return func() (interface{}, error) {
+			plan, err := loader.LoadPlan(p.Context, tenantID, planID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{
+				"id":          plan.ID,
+				"name":        plan.Name,
+				"amount":      plan.Amount,
+				"currency":    plan.Currency,
+				"interval":    plan.Interval,
+				"description": plan.Description,
+			}, nil
+		}, nil
+	}
+}
+
+// resolveSubscriptionField fetches the subscription associated with a statement using the dataloader.
+func resolveSubscriptionField(p graphql.ResolveParams) (interface{}, error) {
+		source, ok := p.Source.(map[string]interface{})
+		if !ok {
+			return nil, nil
+		}
+		subID, _ := source["subscription_id"].(string)
+		if subID == "" {
+			return nil, nil
+		}
+		tenantID := tenantIDFromCtx(p.Context)
+
+		loader := repository.LoaderFromContext(p.Context)
+		if loader == nil {
+			return nil, nil
+		}
+
+		return func() (interface{}, error) {
+			sub, err := loader.LoadSubscription(p.Context, tenantID, subID)
+			if err != nil {
+				return nil, err
+			}
+			
+			// Build billing_summary manually since we are bypassing GetDetail
+			amountCents, _ := strconv.ParseInt(sub.Amount, 10, 64)
+			var nextBillingDate *string
+			if sub.NextBilling != "" {
+				if nb, err := timeutil.NormalizeRFC3339StringToUTC(sub.NextBilling); err == nil {
+					nextBillingDate = &nb
+				}
+			}
+
+			return map[string]interface{}{
+				"id":       sub.ID,
+				"plan_id":  sub.PlanID,
+				"status":   sub.Status,
+				"interval": sub.Interval,
+				"billing_summary": map[string]interface{}{
+					"amount_cents":      int(amountCents),
+					"currency":          strings.ToUpper(sub.Currency),
+					"next_billing_date": nilIfEmpty(nextBillingDate),
+				},
+			}, nil
+		}, nil
+	}
 }

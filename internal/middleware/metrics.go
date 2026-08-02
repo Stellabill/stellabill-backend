@@ -116,12 +116,14 @@ func CostAccountingMiddleware() gin.HandlerFunc {
 		c.Set(costAccumulatorContextKeyName, acc)
 		c.Request = c.Request.WithContext(ContextWithAccumulator(c.Request.Context(), acc))
 
-		writer := &costAccountingResponseWriter{ResponseWriter: c.Writer}
+		writer := &costAccountingResponseWriter{
+			ResponseWriter: c.Writer,
+			acc:            acc,
+		}
 		c.Writer = writer
 
 		c.Next()
 
-		acc.AddEgressBytes(int64(writer.bytesWritten))
 		costUnits := acc.CostUnits()
 		c.Header("X-Cost-Units", strconv.FormatInt(costUnits, 10))
 
@@ -142,17 +144,24 @@ func CostAccountingMiddleware() gin.HandlerFunc {
 type costAccountingResponseWriter struct {
 	gin.ResponseWriter
 	bytesWritten int
+	acc          *CostAccumulator
 }
 
 func (w *costAccountingResponseWriter) Write(data []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(data)
 	w.bytesWritten += n
+	if w.acc != nil && n > 0 {
+		w.acc.AddEgressBytes(int64(n))
+	}
 	return n, err
 }
 
 func (w *costAccountingResponseWriter) WriteString(s string) (int, error) {
 	n, err := w.ResponseWriter.WriteString(s)
 	w.bytesWritten += n
+	if w.acc != nil && n > 0 {
+		w.acc.AddEgressBytes(int64(n))
+	}
 	return n, err
 }
 

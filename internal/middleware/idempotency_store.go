@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"stellarbill-backend/internal/errcode"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -24,6 +26,8 @@ type IdempotencyRecord struct {
 	ResponseBody   []byte
 	UsedAt         time.Time
 	ExpiresAt      time.Time
+func init() {
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrRequestMismatch) }, errcode.CodeIdempotencyRequestMismatch)
 }
 
 // IdempotencyStore defines the contract for persisting idempotency keys and request states.

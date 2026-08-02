@@ -41,14 +41,14 @@ type PartitionRolloverConfig struct {
 // monthly partition rollover job.
 func DefaultPartitionRolloverConfig() PartitionRolloverConfig {
 	return PartitionRolloverConfig{
-		PollInterval:           24 * time.Hour,
-		RolloverTimeout:        5 * time.Minute,
-		ShutdownTimeout:        30 * time.Second,
-		LookaheadMonths:        1,
-		DetachThresholdMonths:  24,
-		ParentTable:            "statements_partitioned",
-		PartitionPrefix:        "statements_p",
-		Cooldown:               1 * time.Hour,
+		PollInterval:          24 * time.Hour,
+		RolloverTimeout:       5 * time.Minute,
+		ShutdownTimeout:       30 * time.Second,
+		LookaheadMonths:       1,
+		DetachThresholdMonths: 24,
+		ParentTable:           "statements_partitioned",
+		PartitionPrefix:       "statements_p",
+		Cooldown:              1 * time.Hour,
 	}
 }
 
@@ -114,6 +114,7 @@ type PartitionRolloverJob struct {
 	config PartitionRolloverConfig
 	logger partitionRolloverLogger
 	clock  timeutil.Clock
+	leader *leaderGuard
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -163,7 +164,18 @@ func initPartitionMetrics() {
 // given database connection.
 func NewPartitionRolloverJob(db *sql.DB, config PartitionRolloverConfig, l partitionRolloverLogger) *PartitionRolloverJob {
 	initPartitionMetrics()
-	return newPartitionRolloverJob(&sqlPartitionRolloverStore{db: db}, config, l)
+	job := newPartitionRolloverJob(&sqlPartitionRolloverStore{db: db}, config, l)
+	if db != nil {
+		locker, err := NewPostgresLeaderLocker(db)
+		if err != nil {
+			if job.logger != nil {
+				job.logger.Error("partition rollover leader election unavailable", "error", err.Error())
+			}
+		} else {
+			job.leader = newLeaderGuard(locker, "partition_rollover", 1001)
+		}
+	}
+	return job
 }
 
 // newPartitionRolloverJob is the store-injecting constructor used by tests.
@@ -196,6 +208,9 @@ func (j *PartitionRolloverJob) Start() {
 // in-flight work to drain.
 func (j *PartitionRolloverJob) Stop() error {
 	if j.cancel == nil {
+		if j.leader != nil {
+			j.leader.Release(context.Background())
+		}
 		return nil
 	}
 	j.cancel()
@@ -208,9 +223,15 @@ func (j *PartitionRolloverJob) Stop() error {
 
 	select {
 	case <-done:
+		if j.leader != nil {
+			j.leader.Release(context.Background())
+		}
 		j.running.Store(0)
 		return nil
 	case <-time.After(j.config.ShutdownTimeout):
+		if j.leader != nil {
+			j.leader.Release(context.Background())
+		}
 		j.running.Store(0)
 		return fmt.Errorf("partition rollover job shutdown timed out after %v", j.config.ShutdownTimeout)
 	}
@@ -287,29 +308,50 @@ func (j *PartitionRolloverJob) rolloverLoop() {
 func (j *PartitionRolloverJob) rolloverOnce() {
 	now := j.clock.Now()
 
-	// Idempotency guard: skip if within the cooldown period.
-	lastRun, ok, err := j.store.LastRolloverAt(j.ctx)
-	if err != nil {
-		j.recordError(fmt.Errorf("read last rollover time: %w", err))
+	ctx := j.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if j.leader != nil {
+		err := j.leader.Run(ctx, func(runCtx context.Context) error {
+			return j.runRolloverCycle(runCtx, now)
+		})
+		if err != nil {
+			if errors.Is(err, errNotLeader) {
+				return
+			}
+			j.recordError(fmt.Errorf("rollover: %w", err))
+		}
 		return
+	}
+
+	if err := j.runRolloverCycle(ctx, now); err != nil {
+		j.recordError(fmt.Errorf("rollover: %w", err))
+	}
+}
+
+func (j *PartitionRolloverJob) runRolloverCycle(ctx context.Context, now time.Time) error {
+	// Idempotency guard: skip if within the cooldown period.
+	lastRun, ok, err := j.store.LastRolloverAt(ctx)
+	if err != nil {
+		return fmt.Errorf("read last rollover time: %w", err)
 	}
 	if ok && now.Sub(lastRun) < j.config.Cooldown {
-		return // Still within cooldown; skip.
+		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(j.ctx, j.config.RolloverTimeout)
+	runCtx, cancel := context.WithTimeout(ctx, j.config.RolloverTimeout)
 	defer cancel()
 
-	created, detached, err := j.doRollover(ctx, now)
+	created, detached, err := j.doRollover(runCtx, now)
 	if err != nil {
-		j.recordError(fmt.Errorf("rollover: %w", err))
-		return
+		return fmt.Errorf("rollover: %w", err)
 	}
 
 	// Persist the rollover timestamp so subsequent runs respect the cooldown.
-	if err := j.store.MarkRolloverDone(ctx, now); err != nil {
-		j.recordError(fmt.Errorf("mark rollover done: %w", err))
-		return
+	if err := j.store.MarkRolloverDone(runCtx, now); err != nil {
+		return fmt.Errorf("mark rollover done: %w", err)
 	}
 
 	j.mu.Lock()
@@ -324,6 +366,7 @@ func (j *PartitionRolloverJob) rolloverOnce() {
 	// Update Prometheus metrics.
 	partitionCreatedTotal.Add(float64(created))
 	partitionDetachedTotal.Add(float64(detached))
+	return nil
 }
 
 // doRollover executes the actual partition management operations. It returns

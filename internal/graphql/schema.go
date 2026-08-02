@@ -39,7 +39,10 @@ var subscriptionType = graphql.NewObject(graphql.ObjectConfig{
 		"status":          {Type: graphql.NewNonNull(graphql.String)},
 		"interval":        {Type: graphql.NewNonNull(graphql.String)},
 		"billing_summary": {Type: graphql.NewNonNull(billingSummaryType)},
-		"plan":            {Type: planType},
+		"plan": &graphql.Field{
+			Type:    planType,
+			Resolve: resolvePlanField,
+		},
 	},
 })
 
@@ -56,5 +59,9 @@ var statementType = graphql.NewObject(graphql.ObjectConfig{
 		"currency":        {Type: graphql.NewNonNull(graphql.String)},
 		"kind":            {Type: graphql.NewNonNull(graphql.String)},
 		"status":          {Type: graphql.NewNonNull(graphql.String)},
+		"subscription": &graphql.Field{
+			Type:    subscriptionType,
+			Resolve: resolveSubscriptionField,
+		},
 	},
 })

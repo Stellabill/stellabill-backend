@@ -228,3 +228,36 @@ func TestSafeFlagProtection(t *testing.T) {
 		t.Error("Critical flag should not be disabled")
 	}
 }
+
+func TestSetFlagWithVersion_Monotonic(t *testing.T) {
+	manager := GetInstance()
+
+	// Initial set
+	success := manager.SetFlagWithVersion("monotonic_test", true, "Initial", 100)
+	if !success {
+		t.Error("Expected initial set to succeed")
+	}
+
+	// Try to set with older version
+	success = manager.SetFlagWithVersion("monotonic_test", false, "Older", 50)
+	if success {
+		t.Error("Expected set with older version to fail")
+	}
+
+	// Try to set with same version
+	success = manager.SetFlagWithVersion("monotonic_test", false, "Same", 100)
+	if success {
+		t.Error("Expected set with same version to fail")
+	}
+
+	// Try to set with newer version
+	success = manager.SetFlagWithVersion("monotonic_test", false, "Newer", 150)
+	if !success {
+		t.Error("Expected set with newer version to succeed")
+	}
+	
+	flag, exists := manager.GetFlag("monotonic_test")
+	if !exists || flag.Enabled {
+		t.Error("Flag should be disabled now")
+	}
+}

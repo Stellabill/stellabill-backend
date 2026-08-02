@@ -3,11 +3,13 @@ package routes
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
@@ -16,6 +18,7 @@ import (
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/storage/s3"
 	"stellarbill-backend/internal/tracing"
+	"stellarbill-backend/internal/worker"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -28,6 +31,11 @@ func Register(r *gin.Engine) {
 	if err != nil {
 		panic(fmt.Sprintf("failed to load configuration: %v", err))
 	}
+
+	// Start the ANALYZE background job to keep table statistics fresh.
+	// Uses pgxpool so ANALYZE runs on the same connection pool as the rest
+	// of the application, avoiding a separate connection.
+	startAnalyzeJob(cfg)
 
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
@@ -43,6 +51,16 @@ func Register(r *gin.Engine) {
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TailSamplingSignals())
 	r.Use(middleware.TraceIDMiddleware())
+
+	// Per-endpoint concurrency shedding — shed excess load before rate limiting
+	if cfg.ConcurrencyCapsPath != "" {
+		concCfg, err := middleware.LoadConcurrencyConfig(cfg.ConcurrencyCapsPath)
+		if err != nil {
+			fmt.Printf("WARNING: failed to load concurrency caps config from %s: %v\n", cfg.ConcurrencyCapsPath, err)
+		} else {
+			r.Use(middleware.InflightMiddleware(concCfg))
+		}
+	}
 
 	// Rate limiting
 	rateLimitConfig := middleware.RateLimiterConfig{
@@ -185,6 +203,39 @@ func Register(r *gin.Engine) {
 }
 
 type noopS3Uploader struct{}
+
+// startAnalyzeJob initializes the database pool and starts the periodic ANALYZE
+// background job. If the pool cannot be created (e.g. no DATABASE_URL in
+// development), it logs a warning and skips the job rather than failing
+// the entire startup.
+//
+// Note: The pool and job are intentionally not torn down on graceful shutdown.
+// The pool is long-lived (matching the server process lifetime) and ANALYZE is
+// non-blocking, so immediate termination on process exit is safe. A shutdown
+// hook can be added later if needed.
+func startAnalyzeJob(cfg config.Config) {
+	pool, err := db.NewPool(context.Background(), cfg)
+	if err != nil {
+		log.Printf("analyze job: skipping — db pool creation failed: %v", err)
+		return
+	}
+	if pool == nil {
+		log.Println("analyze job: skipping — no database configured (empty DATABASE_URL)")
+		return
+	}
+
+	analyzeJob := worker.NewAnalyzeJob(pool, worker.DefaultAnalyzeConfig(), analyzeLogger{})
+	analyzeJob.Start()
+	log.Println("analyze job: started periodic ANALYZE for hot tables (outbox_events, statements, subscriptions)")
+}
+
+// analyzeLogger adapts the standard log package to the worker's analyzeLogger
+// interface so the ANALYZE job can emit structured error messages.
+type analyzeLogger struct{}
+
+func (analyzeLogger) Error(msg string, keysAndValues ...any) {
+	log.Printf("ERROR: %s %v", msg, keysAndValues)
+}
 
 func (noopS3Uploader) PutObject(context.Context, string, []byte, string) error { return nil }
 func (noopS3Uploader) PresignURL(context.Context, string, time.Duration) (s3.PresignedURL, error) {

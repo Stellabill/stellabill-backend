@@ -324,6 +324,17 @@ The system automatically creates the outbox table on startup. For production dep
 3. **Compression**: Event payload compression for large events
 4. **Batch Publishing**: Batch multiple events to external systems
 
+### Kafka Publisher Option
+
+Outbox dispatch can now route selected topics to Kafka instead of HTTP. Configure it with the following environment variables:
+
+- `OUTBOX_KAFKA_BROKERS`: comma-separated broker list
+- `OUTBOX_KAFKA_TOPIC_MAP`: comma-separated `event_type=topic` mappings
+- `OUTBOX_KAFKA_ACKS`: default Kafka ack level (`0`, `1`, or `all`)
+- `OUTBOX_KAFKA_TOPIC_ACKS`: per-topic overrides such as `billing-events=all`
+
+When the service is configured with `PublisherType: "kafka"`, the dispatcher uses the Kafka publisher for mapped topics and preserves the existing HTTP path for unconfigured topics. Kafka publish latency and errors are emitted through the `outbox_kafka_produce_latency_seconds` and `outbox_kafka_errors_total` metrics.
+
 ## Examples
 
 ### Example Domain Event

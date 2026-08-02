@@ -1,0 +1,8 @@
+go test fuzz v1
+[]byte("{\"name\":\"Basic Plan\",\"amount\":1000,\"currency\":\"USD\"}")
+[]byte("{\"name\":\"Premium Plan\",\"amount\":5000,\"currency\":\"EUR\",\"features\":[\"support\",\"analytics\"]}")
+[]byte("{\"name\":\"\",\"amount\":0,\"currency\":\"USD\"}")
+[]byte("{\"amount\":1000}")
+[]byte("null")
+[]byte("{\"name\":\"XSS<script>alert(1)</script>\",\"amount\":100}")
+[]byte("{\"name\":\"Plan with unicode 🚀\",\"amount\":999999,\"currency\":\"JPY\"}")

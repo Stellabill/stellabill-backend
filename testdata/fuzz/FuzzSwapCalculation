@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("{\"from\":\"USD\",\"to\":\"EUR\",\"amount\":100}")
+[]byte("{\"from\":\"BTC\",\"to\":\"ETH\",\"amount\":0.001}")
+[]byte("{\"from\":\"\",\"to\":\"EUR\",\"amount\":100}")
+[]byte("null")
+[]byte("{\"from\":\"USD\",\"to\":\"USD\",\"amount\":100}")
+[]byte("{\"from\":\"USD\",\"to\":\"EUR\",\"amount\":999999999}")

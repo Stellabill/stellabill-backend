@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("{\"plan_id\":\"plan_123\",\"period\":\"2026-07\",\"amount\":500}")
+[]byte("{\"plan_id\":\"\",\"period\":\"2026-01\",\"amount\":0}")
+[]byte("{\"plan_id\":\"plan_xxx\",\"period\":\"invalid\",\"amount\":-100}")
+[]byte("null")
+[]byte("{\"plan_id\":\"a\"*10000,\"period\":\"2026-07\"}")
+[]byte("{\"plan_id\":\"plan_456\",\"period\":\"2026-07\",\"amount\":100,\"metadata\":{\"source\":\"api\"}}")

@@ -33,6 +33,8 @@ const (
 var (
 	OutboxPublisherLag            *prometheus.GaugeVec
 	OutboxBacklogDepth            *prometheus.GaugeVec
+	OutboxKafkaProduceLatency     *prometheus.HistogramVec
+	OutboxKafkaErrorsTotal        *prometheus.CounterVec
 	ChaosOutboxCancellationsTotal prometheus.Counter
 )
 
@@ -54,6 +56,25 @@ func init() {
 		[]string{"tenant"},
 	)
 	_ = prometheus.Register(OutboxBacklogDepth)
+
+	OutboxKafkaProduceLatency = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "outbox_kafka_produce_latency_seconds",
+			Help:    "Time spent producing messages to Kafka by topic",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"topic"},
+	)
+	_ = prometheus.Register(OutboxKafkaProduceLatency)
+
+	OutboxKafkaErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "outbox_kafka_errors_total",
+			Help: "Total Kafka publish errors by topic and reason",
+		},
+		[]string{"topic", "reason"},
+	)
+	_ = prometheus.Register(OutboxKafkaErrorsTotal)
 
 	ChaosOutboxCancellationsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "chaos_outbox_cancellations_total",

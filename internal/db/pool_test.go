@@ -2,10 +2,12 @@ package db
 
 import (
 	"context"
+	"os"
 	"stellarbill-backend/internal/config"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -111,4 +113,136 @@ func TestPoolPinger_SatisfiesDBPinger(t *testing.T) {
 		PingContext(ctx context.Context) error
 	}
 	var _ dbPinger = (*PoolPinger)(nil)
+}
+
+// ─── DrainPool tests ────────────────────────────────────────────────────────
+
+func TestDrainPool_NilPool(t *testing.T) {
+	err := DrainPool(context.Background(), nil)
+	assert.NoError(t, err, "nil pool must be a no-op, not an error")
+}
+
+func TestDrainPool_AlreadyClosedPool(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database test in short mode")
+	}
+
+	pool := newTestPool(t)
+	pool.Close() // close immediately
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := DrainPool(ctx, pool)
+	assert.NoError(t, err, "draining an already-closed pool must succeed")
+}
+
+func TestDrainPool_ContextCancelled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database test in short mode")
+	}
+
+	pool := newTestPool(t)
+	defer pool.Close()
+
+	// Cancel context immediately so DrainPool times out before pool.Close()
+	// completes (pool has no acquired connections so it should close fast,
+	// but we verify the timeout path is exercised).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := DrainPool(ctx, pool)
+	// The pool may close before the cancelled context is observed, so either
+	// nil or context.Canceled is acceptable.
+	if err != nil && err.Error() != context.Canceled.Error() {
+		t.Errorf("expected nil or context.Canceled, got: %v", err)
+	}
+}
+
+func TestDrainPool_ClosesPoolCleanly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database test in short mode")
+	}
+
+	pool := newTestPool(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := DrainPool(ctx, pool)
+	require.NoError(t, err, "draining an open pool must succeed")
+
+	// After draining, the pool should be closed. Verify by trying to ping.
+	pingErr := pool.Ping(context.Background())
+	assert.Error(t, pingErr, "ping after drain must fail (pool is closed)")
+}
+
+// TestDrainPool_TimeoutWithAcquiredConnection verifies that DrainPool returns
+// context.DeadlineExceeded when a connection is held open and the deadline
+// fires. This simulates a long-running query that prevents pool.Close() from
+// completing within the grace period.
+func TestDrainPool_TimeoutWithAcquiredConnection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database test in short mode")
+	}
+
+	pool := newTestPool(t)
+
+	// Acquire a connection and start a long-running query so pool.Close()
+	// cannot complete before the drain deadline fires.
+	conn, err := pool.Acquire(context.Background())
+	require.NoError(t, err)
+	defer conn.Release()
+
+	// pg_sleep holds the connection for 2s — longer than our 200ms drain
+	// timeout, guaranteeing the deadline fires first.
+	queryDone := make(chan error, 1)
+	go func() {
+		_, qErr := conn.Exec(context.Background(), "SELECT pg_sleep(2)")
+		queryDone <- qErr
+	}()
+
+	// Drain with a short deadline that fires before pg_sleep completes.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	drainErr := DrainPool(ctx, pool)
+	elapsed := time.Since(start)
+
+	require.Error(t, drainErr, "drain must fail when connection is held open")
+	assert.ErrorIs(t, drainErr, context.DeadlineExceeded,
+		"drain timeout must surface as DeadlineExceeded")
+	assert.GreaterOrEqual(t, elapsed, 200*time.Millisecond,
+		"must wait at least the deadline before returning")
+
+	// Wait for pg_sleep to finish so the connection can be released cleanly.
+	if err := <-queryDone; err != nil {
+		// Connection may have been terminated by pool.Close() during drain.
+		t.Logf("pg_sleep completed with: %v", err)
+	}
+}
+
+// newTestPool creates a pool pointing at the DATABASE_URL env var for
+// integration-style tests. Skips if no URL is set or SHORT mode is active.
+func newTestPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set")
+	}
+
+	pool, err := pgxpool.New(context.Background(), dsn)
+	require.NoError(t, err, "failed to create test pool")
+
+	if err := pool.Ping(context.Background()); err != nil {
+		pool.Close()
+		t.Skipf("database not reachable: %v", err)
+	}
+
+	t.Cleanup(func() {
+		pool.Close()
+	})
+	return pool
 }

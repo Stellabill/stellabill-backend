@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"stellarbill-backend/internal/errcode"
@@ -122,7 +123,7 @@ func TestAllServiceErrorsHaveCodes(t *testing.T) {
 }
 
 func TestLookupWrapsCorrectly(t *testing.T) {
-	wrapped := errors.New("wrapped: " + service.ErrNotFound.Error())
+	wrapped := fmt.Errorf("wrapped: %w", service.ErrNotFound)
 	code := errcode.Lookup(wrapped)
 	if code != errcode.CodeNotFound {
 		t.Errorf("expected %q for wrapped ErrNotFound, got %q", errcode.CodeNotFound, code)

@@ -8,6 +8,7 @@ package main
 
 import (
 	"github.com/google/wire"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 )
 
@@ -18,16 +19,20 @@ import (
 //
 // The function signature is the public contract:
 //   - no inputs – all values come from the provider chain.
-//   - returns (*http.Server, error) so callers can detect config failures
-//     without a panic.
-func InitializeServer() (*http.Server, error) {
+//   - returns (*pgxpool.Pool, *http.Server, error) — the pool is needed so
+//     main() can drain it during graceful shutdown.
+func InitializeServer() (*pgxpool.Pool, *http.Server, error) {
 	config, err := ProvideConfig()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	engine := ProvideRouter(config)
+	pool, err := ProvideDBPool(config)
+	if err != nil {
+		return nil, nil, err
+	}
 	server := ProvideHTTPServer(config, engine)
-	return server, nil
+	return pool, server, nil
 }
 
 // wire.go:
@@ -40,5 +45,6 @@ func InitializeServer() (*http.Server, error) {
 var AppProviders = wire.NewSet(
 	ProvideConfig,
 	ProvideRouter,
+	ProvideDBPool,
 	ProvideHTTPServer,
 )

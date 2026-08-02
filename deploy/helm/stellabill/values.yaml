@@ -120,6 +120,10 @@ api:
     # For single-node dev clusters, override with maxUnavailable: 1
     minAvailable: 1
     maxUnavailable: null
+  # Coordinate with GRACEFUL_SHUTDOWN_TIMEOUT (default 30s). The application
+  # drains HTTP server → DB pool sequentially, each bounded by 30s. Set
+  # terminationGracePeriodSeconds >= 65 (2*30 + 5 buffer).
+  terminationGracePeriodSeconds: 65
   topologySpread:
     enabled: true
     maxSkew: 1
@@ -169,6 +173,8 @@ worker:
     enabled: true
     minAvailable: 1
     maxUnavailable: null
+  # Coordinate with GRACEFUL_SHUTDOWN_TIMEOUT — see api section above.
+  terminationGracePeriodSeconds: 65
   topologySpread:
     enabled: true
     maxSkew: 1

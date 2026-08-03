@@ -91,13 +91,22 @@ func Register(r *gin.Engine) {
 
 	// Create handlers
 	h := handlers.NewHandler(nil, nil)
-	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
+
+	var revocationStore auth.RevocationStore
+	if cfg.RedisURL != "" {
+		revocationStore, err = auth.NewRedisRevocationStoreFromURL(cfg.RedisURL, false)
+		if err != nil {
+			panic(fmt.Sprintf("failed to initialize Redis revocation store: %v", err))
+		}
+	}
+
+	adminHandler := handlers.NewAdminHandler(cfg.AdminToken, cfg.JWTSecret, revocationStore)
 	exportSvc := service.NewTenantExportService(planRepo, subRepo, stmtRepo)
 	exportJobManager := service.NewExportJobManager(exportSvc, noopS3Uploader{}, nil)
 
 	// Auth configuration
 	jwtSecret := cfg.JWTSecret
-	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
+	authMiddleware := middleware.AuthMiddleware(revocationStore, jwtSecret)
 
 	// API Groups
 	api := r.Group("/api")
@@ -180,6 +189,7 @@ func Register(r *gin.Engine) {
 
 	{
 		admin.POST("/purge", adminHandler.PurgeCache)
+		admin.POST("/sessions/revoke", auth.RequirePermission(auth.PermManageSubscriptions), adminHandler.RevokeSession)
 		// Diagnostics endpoint — re-runs startup checks for live triage
 		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
@@ -240,17 +250,4 @@ func (analyzeLogger) Error(msg string, keysAndValues ...any) {
 func (noopS3Uploader) PutObject(context.Context, string, []byte, string) error { return nil }
 func (noopS3Uploader) PresignURL(context.Context, string, time.Duration) (s3.PresignedURL, error) {
 	return s3.PresignedURL{URL: "", ExpiresAt: time.Time{}}, nil
-}
-
-func (m *mockHandlerPlanSvc) PatchPlan(c *gin.Context, id string, plan *handlers.Plan, expectedVersion int64) error {
-	repoPlan := &repository.PlanRow{
-		ID:          id,
-		Name:        plan.Name,
-		Description: plan.Description,
-	}
-	return m.repo.Update(c.Request.Context(), repoPlan, expectedVersion)
-}
-
-func (m *mockHandlerPlanSvc) DeletePlan(c *gin.Context, id string, expectedVersion int64) error {
-	return m.repo.Delete(c.Request.Context(), id, expectedVersion)
 }

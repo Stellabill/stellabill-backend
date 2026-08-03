@@ -4,6 +4,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+type contextKey string
+
+const PrincipalKey contextKey = "principal"
+
+// ErrorResponse is a minimal JSON envelope for authentication failures.
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
 // Claims represents the JWT claims structure
 type Claims struct {
 	UserID     string `json:"user_id"`

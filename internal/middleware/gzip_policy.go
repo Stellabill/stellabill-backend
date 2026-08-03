@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
-	"github.com/klauspost/compress/brotli"
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zstd"
 )
@@ -40,6 +40,12 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		encoding := c.GetHeader("Content-Encoding")
 		encoding = strings.TrimSpace(strings.ToLower(encoding))
+		maxDestSize := cfg.MaxUncompressedBytes
+		var decompressed bytes.Buffer
+		var body []byte
+		var err error
+		var compressedLen int64
+		var zr *gzip.Reader
 
 		if encoding == "" || encoding == "identity" {
 			goto responseCompress
@@ -53,7 +59,7 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 			return
 		}
 
-		body, err := io.ReadAll(c.Request.Body)
+		body, err = io.ReadAll(c.Request.Body)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 				"error": "bad_request",
@@ -61,7 +67,7 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 			return
 		}
 
-		compressedLen := int64(len(body))
+		compressedLen = int64(len(body))
 
 		if cfg.MaxUncompressedBytes > 0 && compressedLen > cfg.MaxUncompressedBytes {
 			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
@@ -72,16 +78,13 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 			return
 		}
 
-		zr, err := gzip.NewReader(bytes.NewReader(body))
+		zr, err = gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 				"error": "invalid_gzip",
 			})
 			return
 		}
-
-		var decompressed bytes.Buffer
-		maxDestSize := cfg.MaxUncompressedBytes
 
 		if cfg.MaxRatio > 0 && compressedLen > 0 {
 			ratioLimit := int64(float64(compressedLen) * cfg.MaxRatio)

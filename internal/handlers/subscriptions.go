@@ -3,15 +3,15 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"stellarbill-backend/internal/outbox"
-	"stellarbill-backend/internal/pagination"
-	"stellarbill-backend/internal/service"
 	"strconv"
 	"sync"
 	"time"
+
+	"stellarbill-backend/internal/outbox"
+	"stellarbill-backend/internal/pagination"
+	"stellarbill-backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -315,7 +315,7 @@ func (p *WebSocketOutboxPublisher) Publish(ctx context.Context, event *outbox.Ev
 		Status:         payload.Data.Status,
 		Timestamp:      event.OccurredAt.Format(time.RFC3339),
 	}
-	
+
 	select {
 	case hub.broadcast <- wsEvent:
 	case <-time.After(1 * time.Second):

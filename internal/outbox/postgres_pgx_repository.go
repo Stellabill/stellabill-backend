@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"stellarbill-backend/internal/db"
 )
 
 type pgxPool interface {
@@ -32,8 +34,7 @@ func NewPostgresPgxRepository(pool pgxPool) Repository {
 	return &PostgresPgxRepository{pool: pool}
 }
 
-func (r *PostgresPgxRepository) Store(event *Event) error {
-	ctx := context.Background()
+func (r *PostgresPgxRepository) Store(ctx context.Context, event *Event) error {
 	if event.TenantID != "" {
 		ctx = db.ContextWithTenantID(ctx, event.TenantID)
 	}
@@ -62,7 +63,7 @@ func (r *PostgresPgxRepository) BulkInsert(ctx context.Context, events []*Event)
 		return nil
 	}
 	if len(events) == 1 {
-		return r.Store(events[0])
+		return r.Store(ctx, events[0])
 	}
 
 	tenantID := events[0].TenantID

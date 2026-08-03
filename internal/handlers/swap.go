@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+
 	"stellarbill-backend/internal/errcode"
 	"stellarbill-backend/internal/service"
 
@@ -51,6 +52,8 @@ func (h *SwapHandler) SwapExactTokensForTokens(c *gin.Context) {
 		RespondWithInternalError(c, "swap failed")
 		return
 	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // SwapTokensForExactTokens godoc

@@ -1,9 +1,11 @@
 package tracing
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
@@ -130,7 +132,11 @@ func InitTracer(serviceName string) (func(), error) {
 	otel.SetTracerProvider(provider)
 	otel.SetTextMapPropagator(InitPropagators())
 
-	return provider.Shutdown, nil
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = provider.Shutdown(ctx)
+	}, nil
 }
 
 func getEnvFloat(key string, fallback float64) float64 {

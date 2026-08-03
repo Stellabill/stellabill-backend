@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/service"
 
@@ -45,6 +46,13 @@ type exportStatusResponse struct {
 	Status service.ExportJobStatus     `json:"status"`
 	Result *service.TenantExportResult `json:"result,omitempty"`
 	Error  string                      `json:"error,omitempty"`
+}
+
+type exportOperationResponse struct {
+	OperationID string                        `json:"operation_id"`
+	Status      service.ExportOperationStatus `json:"status"`
+	Result      *service.TenantExportResult   `json:"result,omitempty"`
+	Error       string                        `json:"error,omitempty"`
 }
 
 // NewTenantExportHandler returns a gin.HandlerFunc for POST /api/v1/tenants/me/export.

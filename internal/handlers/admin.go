@@ -1,13 +1,13 @@
 // Package handlers implements HTTP request handlers for the Stellabill API.
 //
-// Admin login lockout
+// # Admin login lockout
 //
 // The AdminHandler.Login endpoint uses an exponential backoff lockout to
 // rate-limit failed admin authentication attempts.  Each failure for a given
 // source IP + account name doubles the lockout duration from 1s up to a
 // maximum of 15 minutes.
 //
-// Lockout reset
+// # Lockout reset
 //
 // A successful login for the key (source, account) immediately clears its
 // lockout state via LockoutTracker.Reset.  Operators can also force a reset
@@ -19,12 +19,16 @@ package handlers
 
 import (
 	"crypto/subtle"
+	"errors"
 	"net/http"
+	"time"
 
 	"stellarbill-backend/internal/audit"
+	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/security"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // AdminLoginRequest is the expected payload for the admin login endpoint.
@@ -41,15 +45,28 @@ type AdminLoginResponse struct {
 	LockoutDuration int    `json:"lockout_duration_seconds,omitempty"`
 }
 
+type AdminSessionRevokeRequest struct {
+	Token string `json:"token"`
+}
+
+type AdminSessionRevokeResponse struct {
+	Status    string `json:"status"`
+	JTI       string `json:"jti,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
 // AdminHandler encapsulates admin-only HTTP operations.
 type AdminHandler struct {
-	expectedToken string
-	lockout       *security.LockoutTracker
+	expectedToken   string
+	lockout         *security.LockoutTracker
+	jwtSecret       string
+	revocationStore auth.RevocationStore
 }
 
 // NewAdminHandler constructs an AdminHandler with the provided token.
-// Optional purgeables and lockout tracker are accepted for backward
-// compatibility; the variadic signature allows injecting both.
+// Optional dependencies are accepted for backward compatibility; this
+// variadic API supports trouble-free injection of a lockout tracker,
+// JWT secret, and revocation store.
 func NewAdminHandler(token string, rest ...interface{}) *AdminHandler {
 	h := &AdminHandler{
 		expectedToken: token,
@@ -59,6 +76,12 @@ func NewAdminHandler(token string, rest ...interface{}) *AdminHandler {
 		switch v := r.(type) {
 		case *security.LockoutTracker:
 			h.lockout = v
+		case auth.RevocationStore:
+			h.revocationStore = v
+		case string:
+			if h.jwtSecret == "" {
+				h.jwtSecret = v
+			}
 		}
 	}
 	return h
@@ -129,4 +152,63 @@ func (h *AdminHandler) PurgeCache(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "purged"})
 }
 
+// RevokeSession invalidates the provided JWT by storing its JTI in the
+// revocation store for the token's remaining lifetime.
+func (h *AdminHandler) RevokeSession(c *gin.Context) {
+	if h.revocationStore == nil {
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "session revocation is not configured"})
+		return
+	}
 
+	var req AdminSessionRevokeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+		return
+	}
+
+	if req.Token == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+		return
+	}
+
+	claims := &auth.Claims{}
+	token, err := jwt.ParseWithClaims(req.Token, claims, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return []byte(h.jwtSecret), nil
+	})
+	if err != nil || !token.Valid {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid token"})
+		return
+	}
+
+	if claims.ID == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "token missing jti"})
+		return
+	}
+
+	if claims.ExpiresAt == nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "token missing expiration"})
+		return
+	}
+
+	ttl := time.Until(claims.ExpiresAt.Time)
+	if ttl <= 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "token already expired"})
+		return
+	}
+
+	if err := h.revocationStore.Revoke(c.Request.Context(), claims.ID, ttl); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token"})
+		return
+	}
+
+	audit.LogAction(c, audit.ActionAdminRevokeSession, claims.ID, "success",
+		map[string]string{"jti": claims.ID, "expires_at": claims.ExpiresAt.Time.Format(time.RFC3339)})
+	c.JSON(http.StatusOK, AdminSessionRevokeResponse{
+		Status:    "revoked",
+		JTI:       claims.ID,
+		ExpiresAt: claims.ExpiresAt.Time.Format(time.RFC3339),
+	})
+}

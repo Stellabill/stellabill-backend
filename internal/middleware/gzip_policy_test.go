@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/klauspost/compress/brotli"
 	"github.com/klauspost/compress/zstd"
 )
 

@@ -4,15 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"stellarbill-backend/internal/cache"
-	"stellarbill-backend/internal/featureflags"
-	"stellarbill-backend/internal/logger"
-	"stellarbill-backend/internal/repository"
-	"stellarbill-backend/internal/timeutil"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"stellarbill-backend/internal/cache"
+	"stellarbill-backend/internal/featureflags"
+	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/timeutil"
 )
 
 // StatementArchiveConfig holds configuration for the statement archival job.
@@ -43,13 +44,19 @@ func DefaultStatementArchiveConfig() StatementArchiveConfig {
 	}
 }
 
+// archiveLogger is the minimal logging surface the statement archive job needs.
+type archiveLogger interface {
+	Error(msg string, keysAndValues ...any)
+	Warn(msg string, keysAndValues ...any)
+}
+
 // StatementArchiveJob manages archival of old statements to cold storage.
 // It uses cursor-based scanning to efficiently process large result sets.
 type StatementArchiveJob struct {
 	db       *sql.DB
 	objStore cache.ObjectStore
 	config   StatementArchiveConfig
-	logger   logger.Logger
+	logger   archiveLogger
 	clock    timeutil.Clock
 	leader   *leaderGuard
 
@@ -70,7 +77,7 @@ type StatementArchiveJob struct {
 }
 
 // NewStatementArchiveJob creates a new statement archival job.
-func NewStatementArchiveJob(db *sql.DB, objStore cache.ObjectStore, config StatementArchiveConfig, l logger.Logger) *StatementArchiveJob {
+func NewStatementArchiveJob(db *sql.DB, objStore cache.ObjectStore, config StatementArchiveConfig, l archiveLogger) *StatementArchiveJob {
 	job := &StatementArchiveJob{
 		db:       db,
 		objStore: objStore,

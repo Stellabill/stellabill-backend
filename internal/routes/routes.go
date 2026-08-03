@@ -251,16 +251,3 @@ func (noopS3Uploader) PutObject(context.Context, string, []byte, string) error {
 func (noopS3Uploader) PresignURL(context.Context, string, time.Duration) (s3.PresignedURL, error) {
 	return s3.PresignedURL{URL: "", ExpiresAt: time.Time{}}, nil
 }
-
-func (m *mockHandlerPlanSvc) PatchPlan(c *gin.Context, id string, plan *handlers.Plan, expectedVersion int64) error {
-	repoPlan := &repository.PlanRow{
-		ID:          id,
-		Name:        plan.Name,
-		Description: plan.Description,
-	}
-	return m.repo.Update(c.Request.Context(), repoPlan, expectedVersion)
-}
-
-func (m *mockHandlerPlanSvc) DeletePlan(c *gin.Context, id string, expectedVersion int64) error {
-	return m.repo.Delete(c.Request.Context(), id, expectedVersion)
-}

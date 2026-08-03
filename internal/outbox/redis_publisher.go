@@ -2,9 +2,9 @@ package outbox
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -124,13 +124,11 @@ func (p *RedisPublisher) Publish(ctx context.Context, event *Event) error {
 	timer.ObserveDuration()
 
 	if err != nil {
-		var movedErr redis.MovedError
-		if errors.As(err, &movedErr) {
-			return p.redirectXAdd(ctx, movedErr.Addr, values)
+		if addr := redirectAddr(err, "MOVED "); addr != "" {
+			return p.redirectXAdd(ctx, addr, values)
 		}
-		var askErr redis.AskError
-		if errors.As(err, &askErr) {
-			return p.redirectXAdd(ctx, askErr.Addr, values)
+		if addr := redirectAddr(err, "ASK "); addr != "" {
+			return p.redirectXAdd(ctx, addr, values)
 		}
 		return fmt.Errorf("redis: xadd: %w", err)
 	}
@@ -177,4 +175,24 @@ func (p *RedisPublisher) eventToValues(event *Event) map[string]interface{} {
 		values["tenant_id"] = event.TenantID
 	}
 	return values
+}
+
+// redirectAddr parses a Redis MOVED/ASK redirect reply to extract the target
+// node address. It returns an empty string when err is not an instance of the
+// supplied prefix (e.g. "MOVED " or "ASK ").
+func redirectAddr(err error, prefix string) string {
+	msg := err.Error()
+	idx := strings.Index(msg, prefix)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(msg[idx+len(prefix):])
+	if rest == "" {
+		return ""
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }

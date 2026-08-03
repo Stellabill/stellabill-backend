@@ -9,7 +9,6 @@ import (
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/servertiming"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"

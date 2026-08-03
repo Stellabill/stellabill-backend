@@ -151,8 +151,8 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 	}
 
 	// Compute partition from tenant_id using the consistent hash ring.
-	if s.ring != nil && event.TenantID != nil {
-		event.Partition = s.ring.GetPartition(*event.TenantID)
+	if s.ring != nil && event.TenantID != "" {
+		event.Partition = s.ring.GetPartition(event.TenantID)
 	}
 
 	if err := s.storeEventInTransaction(ctx, event); err != nil {
@@ -163,7 +163,7 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 	return nil
 }
 
-func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, aggregateType *string, deduplicationID *string, tenantID *string) (*Event, error) {
+func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, aggregateType *string, deduplicationID *string, tenantID string) (*Event, error) {
 	subscriberID := ""
 	if aggregateType != nil && aggregateID != nil && *aggregateType == "subscriber" {
 		subscriberID = *aggregateID
@@ -261,7 +261,7 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 
 // PublishEventWithTx publishes an event within an existing transaction
 func (s *Service) PublishEventWithTx(ctx context.Context, tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
-	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
+	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
@@ -415,14 +415,14 @@ func mustMarshalEventData(eventType string, data interface{}) json.RawMessage {
 
 // extractTenantID pulls the tenant_id value from the context. The middleware
 // layer is expected to store it under the "tenant_id" key.
-func extractTenantID(ctx context.Context) *string {
+func extractTenantID(ctx context.Context) string {
 	if ctx == nil {
-		return nil
+		return ""
 	}
 	if v := ctx.Value("tenant_id"); v != nil {
 		if s, ok := v.(string); ok && s != "" {
-			return &s
+			return s
 		}
 	}
-	return nil
+	return ""
 }

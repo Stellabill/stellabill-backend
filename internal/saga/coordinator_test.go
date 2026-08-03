@@ -9,7 +9,7 @@ import (
 
 func TestRetryPolicySuccess(t *testing.T) {
 	attempts := 0
-	step := Step{
+	step := CoordinatorStep{
 		Name: "test-step",
 		Action: func(ctx context.Context) error {
 			attempts++
@@ -18,7 +18,7 @@ func TestRetryPolicySuccess(t *testing.T) {
 			}
 			return nil
 		},
-		RetryPolicy: RetryPolicy{
+		RetryPolicy: StepRetryPolicy{
 			MaxAttempts: 3,
 			BaseDelay:   5 * time.Millisecond,
 			Jitter:      0.1,
@@ -36,13 +36,13 @@ func TestRetryPolicySuccess(t *testing.T) {
 
 func TestRetryPolicyExhausted(t *testing.T) {
 	attempts := 0
-	step := Step{
+	step := CoordinatorStep{
 		Name: "fail-step",
 		Action: func(ctx context.Context) error {
 			attempts++
 			return errors.New("permanent failure")
 		},
-		RetryPolicy: RetryPolicy{
+		RetryPolicy: StepRetryPolicy{
 			MaxAttempts: 2,
 			BaseDelay:   2 * time.Millisecond,
 			Jitter:      0.0,

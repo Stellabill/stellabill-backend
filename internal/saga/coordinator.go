@@ -6,19 +6,19 @@ import (
 	"time"
 )
 
-type Step struct {
+type CoordinatorStep struct {
 	Name        string
 	Action      func(ctx context.Context) error
 	Compensate  func(ctx context.Context) error
-	RetryPolicy RetryPolicy
+	RetryPolicy StepRetryPolicy
 }
 
 var StepRetriesTotal = func(flow, step string) {}
 
-func ExecuteStep(ctx context.Context, flowName string, step Step) error {
+func ExecuteStep(ctx context.Context, flowName string, step CoordinatorStep) error {
 	policy := step.RetryPolicy
 	if policy.MaxAttempts <= 0 {
-		policy = DefaultRetryPolicy()
+		policy = DefaultStepRetryPolicy()
 	}
 
 	var err error
@@ -33,7 +33,7 @@ func ExecuteStep(ctx context.Context, flowName string, step Step) error {
 			delay := float64(policy.BaseDelay) * float64(attempt)
 			jitterVal := delay * policy.Jitter * (rand.Float64()*2 - 1)
 			sleepDuration := time.Duration(delay + jitterVal)
-			
+
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"stellarbill-backend/internal/secrets"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"stellarbill-backend/internal/secrets"
 )
 
 // ConfigErrorType represents the category of configuration error
@@ -61,7 +62,6 @@ type Config struct {
 	// Tracing configuration
 	TracingExporter        string
 	TracingServiceName     string
-	OTelLogsEnabled        bool
 	SecurityFrameAncestors string
 	// SecurityCSPReportURI is the endpoint browsers will POST CSP violation
 	// reports to. Set to the /api/v1/csp-reports sink. Leave empty to omit

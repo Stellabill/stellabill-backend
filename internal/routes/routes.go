@@ -165,10 +165,11 @@ func Register(r *gin.Engine) {
 		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 	}
 
-	// Webhook receiver — signature verified by WebhookVerification middleware
+	// Webhook receiver — signature verified, then persisted to the async inbox
+	// and acknowledged with 202 so provider timeouts stay isolated from processing.
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
-	webhookHandler := handlers.NewWebhookHandler()
-	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
+	inbox := handlers.NewMemoryWebhookInbox()
+	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), handlers.NewVerifiedWebhookHandler(inbox))
 	// Admin login (no JWT required — uses admin token directly)
 	r.POST("/api/admin/login", adminHandler.Login)
 

@@ -3,31 +3,20 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"stellarbill-backend/internal/outbox"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
-
-type MockOutboxRepo struct {
-	mock.Mock
-}
 
 type MockInboxRepo struct {
 	mock.Mock
-}
-
-func (m *MockOutboxRepo) Store(event *outbox.Event) error {
-	args := m.Called(event)
-	return args.Error(0)
 }
 
 func (m *MockInboxRepo) Insert(ctx context.Context, provider, msgID, sourceID string, payload []byte) error {
@@ -35,78 +24,71 @@ func (m *MockInboxRepo) Insert(ctx context.Context, provider, msgID, sourceID st
 	return args.Error(0)
 }
 
-func (m *MockOutboxRepo) GetPendingEvents(limit int) ([]*outbox.Event, error) { return nil, nil }
-func (m *MockOutboxRepo) GetByID(id uuid.UUID) (*outbox.Event, error)         { return nil, nil }
-func (m *MockOutboxRepo) UpdateStatus(id uuid.UUID, status outbox.Status, errorMessage *string) error {
-	return nil
+func withWebhookContext(eventID, provider string, body []byte, subscriberID string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set("webhook_event_id", eventID)
+		c.Set("webhook_provider", provider)
+		c.Set("webhook_raw_body", body)
+		c.Request.Header.Set("X-Subscriber-ID", subscriberID)
+		c.Next()
+	}
 }
-func (m *MockOutboxRepo) MarkAsProcessing(id uuid.UUID) error { return nil }
-func (m *MockOutboxRepo) IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time, errorMessage *string) error {
-	return nil
-}
-func (m *MockOutboxRepo) DeleteCompletedEvents(olderThan time.Time) (int64, error)  { return 0, nil }
-func (m *MockOutboxRepo) ListDeadLetteredEvents(limit int) ([]*outbox.Event, error) { return nil, nil }
-func (m *MockOutboxRepo) RequeueEvent(id uuid.UUID) error                           { return nil }
 
 func TestWebhookHandler_DedupAndAck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	mockRepo := new(MockInboxRepo)
 	payload := []byte(`{"event_type": "subscription.created", "data": {"subscription_id": "sub_789"}}`)
-
 	mockRepo.On("Insert", mock.Anything, "stripe", "msg_123", "src_456", payload).Return(nil)
 
 	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		c.Set("webhook_event_id", "msg_123")
-		c.Set("webhook_provider", "stripe")
-		c.Set("webhook_raw_body", payload)
-		c.Request.Header.Set("X-Subscriber-ID", "src_456")
-		c.Next()
-	})
-	
+	router.Use(withWebhookContext("msg_123", "stripe", payload, "src_456"))
 	router.POST("/webhooks", NewVerifiedWebhookHandler(mockRepo))
 
-	req1, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer(payload))
-	rr1 := httptest.NewRecorder()
-	
-	router.ServeHTTP(rr1, req1)
-	assert.Equal(t, http.StatusAccepted, rr1.Code)
-
-	req2, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer(payload))
-	rr2 := httptest.NewRecorder()
-	
-	router.ServeHTTP(rr2, req2)
-	assert.Equal(t, http.StatusAccepted, rr2.Code)
-	
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer(payload))
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusAccepted, w.Code)
+	}
 	mockRepo.AssertNumberOfCalls(t, "Insert", 2)
+}
+
+func TestWebhookHandler_MemoryInboxDedup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	inbox := NewMemoryWebhookInbox()
+	payload := []byte(`{"ok":true}`)
+
+	router := gin.New()
+	router.Use(withWebhookContext("msg_dup", "stripe", payload, "src_1"))
+	router.POST("/webhooks", NewVerifiedWebhookHandler(inbox))
+
+	for i := 0; i < 3; i++ {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer(payload))
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusAccepted, w.Code)
+	}
+	assert.Equal(t, 1, inbox.Len(), "duplicate deliveries must be deduped")
 }
 
 func TestWebhookHandler_FastAck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-
-	mockRepo := new(MockInboxRepo)
-	mockRepo.On("Insert", mock.Anything, "stripe", "evt_123", "sub_456", []byte("{}")).Return(nil)
+	inbox := NewMemoryWebhookInbox()
 
 	router := gin.New()
-	
-	router.Use(func(c *gin.Context) {
-		c.Set("webhook_event_id", "evt_123")
-		c.Set("webhook_provider", "stripe")
-		c.Set("webhook_raw_body", []byte("{}"))
-		c.Request.Header.Set("X-Subscriber-ID", "sub_456")
-		c.Next()
-	})
-	
-	router.POST("/webhooks", handlers.NewVerifiedWebhookHandler(mockRepo))
+	router.Use(withWebhookContext("evt_123", "stripe", []byte("{}"), "sub_456"))
+	router.POST("/webhooks", NewVerifiedWebhookHandler(inbox))
 
+	start := time.Now()
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer([]byte("{}")))
 	router.ServeHTTP(w, req)
+	elapsed := time.Since(start)
 
 	assert.Equal(t, http.StatusAccepted, w.Code)
 	assert.JSONEq(t, `{"status": "accepted"}`, w.Body.String())
-	mockRepo.AssertExpectations(t)
+	assert.Less(t, elapsed, 50*time.Millisecond, "sync ack must complete within 50ms")
 }
 
 func TestWebhookHandler_FailsFastOnDBError(t *testing.T) {
@@ -117,14 +99,8 @@ func TestWebhookHandler_FailsFastOnDBError(t *testing.T) {
 		Return(errors.New("db connection timeout"))
 
 	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		c.Set("webhook_event_id", "evt_123")
-		c.Set("webhook_provider", "stripe")
-		c.Set("webhook_raw_body", []byte("{}"))
-		c.Request.Header.Set("X-Subscriber-ID", "sub_456")
-		c.Next()
-	})
-	router.POST("/webhooks", handlers.NewVerifiedWebhookHandler(mockRepo))
+	router.Use(withWebhookContext("evt_123", "stripe", []byte("{}"), "sub_456"))
+	router.POST("/webhooks", NewVerifiedWebhookHandler(mockRepo))
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer([]byte("{}")))
@@ -139,108 +115,12 @@ func TestWebhookHandler_MissingHeaders(t *testing.T) {
 	mockRepo := new(MockInboxRepo)
 
 	router := gin.New()
-	router.POST("/webhooks", handlers.NewVerifiedWebhookHandler(mockRepo))
+	router.POST("/webhooks", NewVerifiedWebhookHandler(mockRepo))
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/webhooks", bytes.NewBuffer([]byte("{}")))
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	mockRepo.AssertNotCalled(t, "Insert") 
-}
-
-func TestNewWebhookHandler(t *testing.T) {
-	mockRepo := new(MockOutboxRepo)
-	handler := NewWebhookHandler(mockRepo)
-	assert.NotNil(t, handler)
-}
-
-func TestHandleWebhook_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	mockRepo := new(MockOutboxRepo)
-	mockRepo.On("Store", mock.Anything).Return(nil)
-
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("webhook_event_id", "evt_123")
-		c.Set("webhook_provider", "stripe")
-		c.Set("webhook_raw_body", []byte(`{"id":"evt_123","type":"payment"}`))
-		c.Next()
-	})
-	r.POST("/webhook", NewWebhookHandler(mockRepo))
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/webhook", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var response map[string]string
-	json.Unmarshal(w.Body.Bytes(), &response)
-	assert.Equal(t, "ok", response["status"])
-	mockRepo.AssertExpectations(t)
-}
-
-func TestHandleWebhook_InvalidJSON(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	mockRepo := new(MockOutboxRepo)
-
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("webhook_event_id", "evt_123")
-		c.Set("webhook_provider", "stripe")
-		c.Set("webhook_raw_body", []byte(`{invalid json}`)) // causes outbox.NewEventWithDeduplication to fail
-		c.Next()
-	})
-	r.POST("/webhook", NewWebhookHandler(mockRepo))
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/webhook", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestHandleWebhook_StoreError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	mockRepo := new(MockOutboxRepo)
-	mockRepo.On("Store", mock.Anything).Return(errors.New("db error"))
-
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("webhook_event_id", "evt_123")
-		c.Set("webhook_provider", "stripe")
-		c.Set("webhook_raw_body", []byte(`{"id":"evt_123","type":"payment"}`))
-		c.Next()
-	})
-	r.POST("/webhook", NewWebhookHandler(mockRepo))
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/webhook", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	mockRepo.AssertExpectations(t)
-}
-
-func TestHandleWebhook_MissingSignature(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	mockRepo := new(MockOutboxRepo)
-
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		// Simulates webhook verification middleware rejecting the request
-		sig := c.GetHeader("X-Signature")
-		if sig == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing signature"})
-			return
-		}
-		c.Next()
-	})
-	r.POST("/webhook", NewWebhookHandler(mockRepo))
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/webhook", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	mockRepo.AssertNotCalled(t, "Insert")
 }

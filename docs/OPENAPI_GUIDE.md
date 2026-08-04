@@ -16,6 +16,7 @@ When adding or modifying API endpoints, follow this checklist:
 - [ ] Add security requirements if authentication is needed
 - [ ] Update the `operationId` to be unique
 - [ ] Add appropriate tags
+- [ ] Add at least one request-body example (when a body is declared) and one success (2xx) response example; examples must validate against their schemas
 
 ### 2. Implement the Endpoint
 - [ ] Implement the handler in `internal/handlers/`
@@ -24,9 +25,10 @@ When adding or modifying API endpoints, follow this checklist:
 - [ ] Add authentication/authorization as specified in the OpenAPI security scheme
 
 ### 3. Validate Contract
+- [ ] Run `go run ./tools/openapi-lint` to enforce request/response examples
 - [ ] Run `go test ./internal/contract/...` to verify the endpoint matches the spec
 - [ ] Run `go run ./cmd/openapi-validate` to check for discrepancies
-- [ ] Ensure CI passes (contract tests are run automatically)
+- [ ] Ensure CI passes (contract tests and openapi-lint run automatically)
 
 ### 4. Documentation
 - [ ] Update README.md if the endpoint changes public API surface
@@ -58,6 +60,9 @@ When adding or modifying API endpoints, follow this checklist:
 ## Running Validation Locally
 
 ```bash
+# Enforce request/response examples on every operation
+go run ./tools/openapi-lint
+
 # Validate OpenAPI spec can be loaded
 go run ./cmd/openapi-validate
 
@@ -71,11 +76,13 @@ go test ./... -cover
 ## CI Enforcement
 
 The CI pipeline automatically:
+- Runs `go run ./tools/openapi-lint` (fails if any operation lacks a valid example)
 - Runs contract tests (`go test ./...`)
 - Validates OpenAPI spec (`go run ./cmd/openapi-validate`)
 - Fails if any endpoint is not documented or if the implementation doesn't match the spec.
 
 If CI fails due to OpenAPI contract issues, check:
 1. Is the new endpoint added to `openapi/openapi.yaml`?
-2. Does the implementation match the spec?
-3. Are there duplicate route registrations?
+2. Does every operation have request/response examples that pass `go run ./tools/openapi-lint`?
+3. Does the implementation match the spec?
+4. Are there duplicate route registrations?

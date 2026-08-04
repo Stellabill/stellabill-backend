@@ -11,8 +11,8 @@ type InboxRepository interface {
 	Insert(ctx context.Context, provider, msgID, sourceID string, payload []byte) error
 }
 
-// NewVerifiedWebhookHandler creates a handler that persists verified webhook events 
-// to an asynchronous inbox. It guarantees a 202 Accepted response to isolate 
+// NewVerifiedWebhookHandler creates a handler that persists verified webhook events
+// to an asynchronous inbox. It guarantees a 202 Accepted response to isolate
 // receiver latency from internal processing bottlenecks.
 func NewVerifiedWebhookHandler(inboxRepo InboxRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {

@@ -725,9 +725,10 @@ func TestEmitRateLimitHeaders(t *testing.T) {
 		c.Request = httptest.NewRequest("GET", "/", nil)
 
 		snapshot := RateLimitSnapshot{
-			Limit:     100,
-			Remaining: 0,
-			Reset:     time.Now().Add(5 * time.Second),
+			Limit:       100,
+			Remaining:   0,
+			Reset:       time.Now().Add(5 * time.Second),
+			RateLimited: true,
 		}
 
 		emitRateLimitHeaders(c, snapshot)
@@ -758,6 +759,7 @@ func TestEmitRateLimitHeaders(t *testing.T) {
 
 		assert.Equal(t, "0", c.Writer.Header().Get("X-RateLimit-Limit"))
 		assert.Equal(t, "0", c.Writer.Header().Get("X-RateLimit-Remaining"))
+		assert.Empty(t, c.Writer.Header().Get("Retry-After"), "Retry-After requires RateLimited=true")
 	})
 
 	t.Run("Retry-After minimum of 1 second", func(t *testing.T) {
@@ -765,9 +767,10 @@ func TestEmitRateLimitHeaders(t *testing.T) {
 		c.Request = httptest.NewRequest("GET", "/", nil)
 
 		snapshot := RateLimitSnapshot{
-			Limit:     100,
-			Remaining: 0,
-			Reset:     time.Now().Add(100 * time.Millisecond), // Less than 1 second
+			Limit:       100,
+			Remaining:   0,
+			Reset:       time.Now().Add(100 * time.Millisecond), // Less than 1 second
+			RateLimited: true,
 		}
 
 		emitRateLimitHeaders(c, snapshot)
@@ -776,6 +779,23 @@ func TestEmitRateLimitHeaders(t *testing.T) {
 		retryAfter, err := strconv.Atoi(retryAfterStr)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, retryAfter, "Retry-After should be minimum 1 second")
+	})
+
+	t.Run("Successful last-token response has no Retry-After", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/", nil)
+
+		snapshot := RateLimitSnapshot{
+			Limit:       100,
+			Remaining:   0,
+			Reset:       time.Now().Add(5 * time.Second),
+			RateLimited: false,
+		}
+
+		emitRateLimitHeaders(c, snapshot)
+
+		assert.Equal(t, "0", c.Writer.Header().Get("X-RateLimit-Remaining"))
+		assert.Empty(t, c.Writer.Header().Get("Retry-After"))
 	})
 }
 

@@ -14,9 +14,10 @@ import (
 
 // RateLimitSnapshot captures the current state of rate limiting for header emission
 type RateLimitSnapshot struct {
-	Limit     int64     // Maximum requests allowed in the current window
-	Remaining int64     // Number of requests remaining in the current window
-	Reset     time.Time // Time when the rate limit window resets
+	Limit       int64     // Maximum requests allowed in the current window
+	Remaining   int64     // Number of requests remaining in the current window
+	Reset       time.Time // Time when the rate limit window resets
+	RateLimited bool      // When true, also emit Retry-After (429 responses only)
 }
 
 // emitRateLimitHeaders emits rate limit headers to the response
@@ -38,8 +39,8 @@ func emitRateLimitHeaders(c *gin.Context, snapshot RateLimitSnapshot) {
 	c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
 	c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", snapshot.Reset.Unix()))
 
-	// Calculate and emit Retry-After for rate-limited responses
-	if remaining == 0 {
+	// Retry-After is only for rate-limited (429) responses — never on 2xx.
+	if snapshot.RateLimited {
 		retryAfter := int(math.Ceil(snapshot.Reset.Sub(timeutil.NowUTC()).Seconds()))
 		if retryAfter < 1 {
 			retryAfter = 1 // Minimum 1 second
@@ -87,9 +88,12 @@ type RateLimiterConfig struct {
 
 // APIRateLimiter manages multiple token buckets for rate limiting
 type APIRateLimiter struct {
-	config  RateLimiterConfig
-	buckets map[string]*TokenBucket
-	mutex   sync.RWMutex
+	config   RateLimiterConfig
+	buckets  map[string]*TokenBucket
+	mutex    sync.RWMutex
+	cleanup  *time.Ticker
+	stopChan chan struct{}
+	stopOnce sync.Once
 }
 
 // NewTokenBucket creates a new token bucket
@@ -140,15 +144,59 @@ func (tb *TokenBucket) allowRequest() bool {
 // NewAPIRateLimiter creates a new API rate limiter
 func NewAPIRateLimiter(config RateLimiterConfig) *APIRateLimiter {
 	rl := &APIRateLimiter{
-		config:  config,
-		buckets: make(map[string]*TokenBucket),
+		config:   config,
+		buckets:  make(map[string]*TokenBucket),
+		cleanup:  time.NewTicker(cleanupInterval),
+		stopChan: make(chan struct{}),
 	}
 
 	if config.RouteConfigs == nil {
 		rl.config.RouteConfigs = make(map[string]RouteSpecificConfig)
 	}
 
+	go rl.runCleanupLoop()
+
 	return rl
+}
+
+const cleanupInterval = 5 * time.Minute
+
+// runCleanupLoop periodically removes stale buckets to prevent unbounded
+// memory growth until Stop is called.
+func (rl *APIRateLimiter) runCleanupLoop() {
+	for {
+		select {
+		case <-rl.cleanup.C:
+			rl.cleanupExpiredBuckets()
+		case <-rl.stopChan:
+			return
+		}
+	}
+}
+
+// cleanupExpiredBuckets removes buckets that haven't been used recently.
+func (rl *APIRateLimiter) cleanupExpiredBuckets() {
+	rl.mutex.Lock()
+	defer rl.mutex.Unlock()
+
+	now := timeutil.NowUTC()
+	for key, bucket := range rl.buckets {
+		bucket.mutex.Lock()
+		if now.Sub(bucket.lastRefill) > 10*time.Minute {
+			delete(rl.buckets, key)
+		}
+		bucket.mutex.Unlock()
+	}
+}
+
+// Stop stops the cleanup goroutine to prevent goroutine leaks.
+func (rl *APIRateLimiter) Stop() {
+	rl.stopOnce.Do(func() {
+		if rl.cleanup != nil {
+			rl.cleanup.Stop()
+			close(rl.stopChan)
+		}
+	})
 }
 
 // getBucket retrieves or creates a token bucket for the given key with route-specific config
@@ -258,15 +306,17 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 			// Rate limit exceeded - calculate reset time based on refill rate
 			bucket.mutex.Lock()
 			resetTime := bucket.lastRefill.Add(time.Duration(float64(bucket.capacity-bucket.tokens)/float64(bucket.refillRate)) * time.Second)
-			if resetTime.Before(timeutil.NowUTC()) {
-				resetTime = timeutil.NowUTC().Add(time.Second)
+			minReset := timeutil.NowUTC().Add(time.Second)
+			if resetTime.Before(minReset) {
+				resetTime = minReset
 			}
 			bucket.mutex.Unlock()
 
 			emitRateLimitHeaders(c, RateLimitSnapshot{
-				Limit:     bucket.burstCapacity,
-				Remaining: 0,
-				Reset:     resetTime,
+				Limit:       0,
+				Remaining:   0,
+				Reset:       resetTime,
+				RateLimited: true,
 			})
 
 			// Log rate limit hit if enabled
@@ -289,8 +339,9 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 		limit := bucket.burstCapacity
 		// Calculate reset time based on when tokens will fully refill
 		resetTime := bucket.lastRefill.Add(time.Duration(float64(limit-remaining)/float64(bucket.refillRate)) * time.Second)
-		if resetTime.Before(timeutil.NowUTC()) {
-			resetTime = timeutil.NowUTC().Add(time.Second)
+		minReset := timeutil.NowUTC().Add(time.Second)
+		if resetTime.Before(minReset) {
+			resetTime = minReset
 		}
 		bucket.mutex.Unlock()
 

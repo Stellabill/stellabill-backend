@@ -234,6 +234,7 @@ func TenantRateLimitMiddleware(config TenantRateLimitConfig) gin.HandlerFunc {
 			// Get rate limit snapshot for headers
 			snapshot := limiter.getRateLimitSnapshot(tenantID)
 			snapshot.Remaining = 0 // Force to 0 for rate-limited response
+			snapshot.RateLimited = true
 
 			emitRateLimitHeaders(c, snapshot)
 

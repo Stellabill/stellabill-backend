@@ -30,6 +30,9 @@ type PooledHTTPClient struct {
 
 // NewPooledHTTPClient wraps pool as an outbox HTTPClient.
 func NewPooledHTTPClient(pool *httpx.Pool) *PooledHTTPClient {
+	if pool == nil {
+		pool = defaultHTTPPool
+	}
 	return &PooledHTTPClient{pool: pool}
 }
 
@@ -54,3 +57,37 @@ func (c *PooledHTTPClient) Post(ctx context.Context, url string, contentType str
 
 	return resp.StatusCode, nil
 }
+
+// PooledSlackClient adapts an httpx.Pool to the outbox SlackClient interface.
+type PooledSlackClient struct {
+	pool *httpx.Pool
+}
+
+// NewPooledSlackClient wraps pool as an outbox SlackClient.
+func NewPooledSlackClient(pool *httpx.Pool) *PooledSlackClient {
+	if pool == nil {
+		pool = defaultHTTPPool
+	}
+	return &PooledSlackClient{pool: pool}
+}
+
+// PostSlack implements SlackClient by routing the request through the shared pool.
+func (c *PooledSlackClient) PostSlack(ctx context.Context, url string, body []byte) (int, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, "", fmt.Errorf("slack: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.pool.Do(req)
+	if err != nil {
+		return 0, "", fmt.Errorf("slack: http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	buf := make([]byte, 4096)
+	_, _ = resp.Body.Read(buf)
+
+	return resp.StatusCode, resp.Header.Get("Retry-After"), nil
+}
+

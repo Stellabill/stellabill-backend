@@ -120,7 +120,7 @@ type SecretsProvider interface {
 // from secrets[secretKey] on every Publish call.
 func NewSlackPublisher(secretKey string, secrets SecretsProvider, client SlackClient) *SlackPublisher {
 	if client == nil {
-		client = NewDefaultSlackClient(0)
+		client = NewPooledSlackClient(defaultHTTPPool)
 	}
 	return &SlackPublisher{
 		secretKey: secretKey,

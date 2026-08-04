@@ -1,6 +1,7 @@
 package tracing
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -65,13 +66,15 @@ func NewTenantAwareSampler(enterpriseRatio, freeRatio, defaultRatio float64) *Te
 }
 
 // ShouldSample inspects the tier attribute (or baggage) and delegates to the
-// appropriate tier sampler. It then increments the tracing_sampled_total
-// counter with the detected tier.
+// appropriate tier sampler. It increments the tracing_sampled_total counter
+// only when the trace is actually sampled.
 func (s *TenantAwareSampler) ShouldSample(params sdktrace.SamplingParameters) sdktrace.SamplingResult {
 	tier := extractTier(params)
 	sampler := s.samplerForTier(tier)
 	result := sampler.ShouldSample(params)
-	tracesSampledTotal.WithLabelValues(tier).Inc()
+	if result.Decision == sdktrace.RecordAndSample {
+		tracesSampledTotal.WithLabelValues(tier).Inc()
+	}
 	return result
 }
 
@@ -92,31 +95,33 @@ func (s *TenantAwareSampler) samplerForTier(tier string) sdktrace.Sampler {
 	}
 }
 
-// extractTier reads the tenant tier from span attributes first and falls back
-// to baggage if not found among attributes.
+// extractTier reads the tenant tier from span attributes first (checking tier, tenant_tier, tenant.tier)
+// and falls back to baggage if not found among attributes.
 func extractTier(params sdktrace.SamplingParameters) string {
 	for _, a := range params.Attributes {
-		if a.Key == "tier" {
+		if a.Key == "tier" || a.Key == "tenant_tier" || a.Key == "tenant.tier" {
 			return a.Value.AsString()
 		}
 	}
 	bag := baggage.FromContext(params.ParentContext)
-	if member := bag.Member("tier"); member.Key() != "" {
-		return member.Value()
+	for _, key := range []string{"tier", "tenant_tier", "tenant.tier"} {
+		if member := bag.Member(key); member.Key() != "" {
+			return member.Value()
+		}
 	}
 	return "unknown"
 }
 
 // InitTracer creates a TracerProvider with a TenantAwareSampler and sets it
 // as the global tracer provider along with W3C TraceContext + Baggage
-// propagators. Ratios are read from environment variables:
+// propagators and BaggageSpanProcessor. Ratios are read from environment variables:
 //
 //	TRACING_ENTERPRISE_RATIO (default 1.0  = 100%)
 //	TRACING_FREE_RATIO       (default 0.01 =   1%)
 //	TRACING_DEFAULT_RATIO    (default 0.05 =   5%)
 //
 // The returned shutdown function drains and shuts down the provider.
-func InitTracer(serviceName string) (func(), error) {
+func InitTracer(serviceName string) (func() error, error) {
 	enterpriseRatio := getEnvFloat("TRACING_ENTERPRISE_RATIO", DefaultEnterpriseRatio)
 	freeRatio := getEnvFloat("TRACING_FREE_RATIO", DefaultFreeRatio)
 	defaultRatio := getEnvFloat("TRACING_DEFAULT_RATIO", DefaultGlobalRatio)
@@ -125,12 +130,16 @@ func InitTracer(serviceName string) (func(), error) {
 
 	provider := sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sampler),
+		sdktrace.WithSpanProcessor(BaggageSpanProcessor{}),
 	)
 
 	otel.SetTracerProvider(provider)
 	otel.SetTextMapPropagator(InitPropagators())
 
-	return provider.Shutdown, nil
+	shutdown := func() error {
+		return provider.Shutdown(context.Background())
+	}
+	return shutdown, nil
 }
 
 func getEnvFloat(key string, fallback float64) float64 {

@@ -18,6 +18,8 @@ import (
 
 // tailConfig holds configuration for the tail sampling processor.
 type tailConfig struct {
+	enabled        bool
+	baselineRate   float64
 	maxTraces      int
 	maxSpans       int
 	decisionWindow time.Duration
@@ -27,10 +29,36 @@ type tailConfig struct {
 // tailConfigFromEnv reads tail sampling configuration from environment variables.
 func tailConfigFromEnv() (tailConfig, error) {
 	cfg := tailConfig{
+		enabled:        false,
+		baselineRate:   0.0,
 		maxTraces:      10000,
 		maxSpans:       500,
 		decisionWindow: 10 * time.Second,
 		latency:        500 * time.Millisecond,
+	}
+	if v := os.Getenv("TRACING_TAIL_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid TRACING_TAIL_ENABLED: %w", err)
+		}
+		cfg.enabled = b
+		if !b {
+			return cfg, nil
+		}
+	}
+	if v := os.Getenv("TRACING_TAIL_LATENCY_MS"); v != "" {
+		ms, err := strconv.Atoi(v)
+		if err != nil || ms <= 0 || ms > 60000 {
+			return cfg, fmt.Errorf("invalid TRACING_TAIL_LATENCY_MS")
+		}
+		cfg.latency = time.Duration(ms) * time.Millisecond
+	}
+	if v := os.Getenv("TRACING_TAIL_ERROR_RATE"); v != "" {
+		rate, err := strconv.ParseFloat(v, 64)
+		if err != nil || rate < 0 || rate > 1 {
+			return cfg, fmt.Errorf("invalid TRACING_TAIL_ERROR_RATE")
+		}
+		cfg.baselineRate = rate
 	}
 	if v := os.Getenv("TAIL_MAX_TRACES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

@@ -54,7 +54,11 @@ func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 
 	// Create publisher based on configuration
 	var publisher Publisher
-	httpClient := NewPooledHTTPClient(defaultHTTPPool)
+	pool := config.HTTPPool
+	if pool == nil {
+		pool = defaultHTTPPool
+	}
+	httpClient := NewPooledHTTPClient(pool)
 	switch config.PublisherType {
 	case "console":
 		publisher = NewConsolePublisher()

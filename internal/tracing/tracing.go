@@ -13,6 +13,9 @@ import (
 var AllowedBaggageKeys = map[string]bool{
 	"tenant_id":   true,
 	"customer_id": true,
+	"tier":        true,
+	"tenant_tier": true,
+	"tenant.tier": true,
 }
 
 // InitPropagators registers both W3C TraceContext and Baggage propagators.

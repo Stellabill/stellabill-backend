@@ -130,7 +130,9 @@ func InitTracer(serviceName string) (func(), error) {
 	otel.SetTracerProvider(provider)
 	otel.SetTextMapPropagator(InitPropagators())
 
-	return provider.Shutdown, nil
+	return func() {
+		_ = provider.Shutdown(context.Background())
+	}, nil
 }
 
 func getEnvFloat(key string, fallback float64) float64 {

@@ -1,0 +1,28 @@
+name: Tracing Sampler CI
+on:
+  push:
+    branches: [main, 'feat/tracing*']
+    paths: ['pkg/tracing/**', 'internal/tracing/**']
+  pull_request:
+    paths: ['pkg/tracing/**', 'internal/tracing/**']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: stellabill_test
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - run: go test ./pkg/tracing/... -v -race -coverprofile=coverage.out
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/stellabill_test?sslmode=disable
+      - run: go test ./internal/tracing/... -v -race

@@ -3,7 +3,6 @@ package security
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"sync"
 	"time"
@@ -44,7 +43,7 @@ func NewSVIDRotator(ctx context.Context, socketPath string) (*SVIDRotator, error
 // - Accepts only clients presenting a SPIFFE ID in the allowed set
 // - Automatically uses the latest SVID on each new connection
 func (r *SVIDRotator) ServerTLSConfig(allowedIDs ...spiffeid.ID) *tls.Config {
-	return tlsconfig.MTLSServerConfig(r.source, r.source, tlsconfig.AuthorizeAnyOf(allowedIDs...))
+	return tlsconfig.MTLSServerConfig(r.source, r.source, tlsconfig.AuthorizeOneOf(allowedIDs...))
 }
 
 // ClientTLSConfig returns a tls.Config for gRPC client dials that:

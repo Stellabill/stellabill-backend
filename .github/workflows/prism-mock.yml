@@ -1,39 +1,47 @@
-name: Prism OpenAPI Mock Verification
+name: Prism Contract Verification
 
 on:
-  workflow_dispatch:
   pull_request:
+    paths:
+      - 'openapi/**'
+      - 'tests/pact/**'
+      - '.github/workflows/prism-mock.yml'
+  push:
+    branches: [main]
     paths:
       - 'openapi/**'
       - 'tests/pact/**'
 
 jobs:
   prism-contract:
+    name: Verify OpenAPI contract with Prism mock
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Start Prism mock server
         run: |
-          docker run -d --name prism -p 4010:4010 -v "$PWD/openapi:/spec" stoplight/prism:5 mock -h 0.0.0.0 /spec/openapi.yaml
-
-      - name: Wait for Prism
-        run: |
+          docker run --rm -d --name prism \
+            -p 4010:4010 \
+            -v "$PWD/openapi:/tmp/openapi:ro" \
+            stoplight/prism:5 mock -h 0.0.0.0 /tmp/openapi/openapi.yaml
+          echo "Waiting for Prism to become ready..."
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:4010/api/health >/dev/null 2>&1; then
-              echo "Prism ready"
+            if curl -sf http://127.0.0.1:4010/ >/dev/null 2>&1; then
+              echo "Prism is ready"
               break
             fi
             sleep 2
+            if [ "$i" = "30" ]; then
+              echo "::error::Prism failed to start within 60s"
+              docker logs prism
+              exit 1
+            fi
           done
 
-      - name: Replay recorded request corpus
+      - name: Replay recorded request corpus against Prism
         run: |
-          python3 scripts/prism_replay.py tests/pact/prism-replay-corpus.json http://localhost:4010
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: prism-coverage
-          path: prism-coverage.json
+          node tests/pact/replay-prism.mjs tests/pact
+        env:
+          PRISM_URL: http://127.0.0.1:4010

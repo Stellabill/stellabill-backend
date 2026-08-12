@@ -1,40 +1,32 @@
-name: K6 Spike Test - Plans
+name: k6 Spike Test
 
 on:
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Test environment'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          - production
+  pull_request:
+    paths:
+      - 'tests/k6/**'
+      - '.github/workflows/k6-spike-test.yml'
 
 jobs:
-  spike-test:
+  spike:
+    name: Plans read-path spike (10 -> 2000 VUs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup k6
-        run: |
-          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6-stable.list
-          sudo apt-get update
-          sudo apt-get install -y k6
-
-      - name: Run Spike Test
-        env:
-          BASE_URL: ${{ secrets[format('K6_{0}_BASE_URL', github.event.inputs.environment)] }}
-          API_KEY: ${{ secrets[format('K6_{0}_API_KEY', github.event.inputs.environment)] }}
-        run: |
-          k6 run tests/k6/plans-spike.js --out=json=results.json
-
-      - name: Upload JSON Summary
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Run k6 spike profile
+        uses: grafana/k6-action@v0.3.1
         with:
-          name: k6-spike-results
-          path: results.json
+          filename: tests/k6/plans-spike.js
+          flags: --summary-export=results/k6-spike-summary.json
+        env:
+          BASE_URL: ${{ secrets.STAGING_URL }}
+          API_KEY: ${{ secrets.STAGING_API_KEY }}
+
+      - name: Publish JSON summary artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-spike-summary
+          path: results/k6-spike-summary.json
+          if-no-files-found: warn

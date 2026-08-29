@@ -12,6 +12,7 @@ import (
 	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
@@ -200,10 +201,40 @@ func Register(r *gin.Engine) {
 			}
 			c.JSON(200, gin.H{"reports": reports})
 		})
+
+		// Outbox dead-letter inspection and manual recovery. Both endpoints are
+		// gated behind manage:reconciliation (admin-only role) and the requeue
+		// endpoint is idempotency-keyed so a retried POST cannot reset an
+		// already-requeued event a second time.
+		outboxAdmin := handlers.NewOutboxAdminHandler(newOutboxRepository(cfg))
+		admin.GET("/outbox/dead-letter",
+			auth.RequirePermission(auth.PermManageReconciliation),
+			outboxAdmin.ListDeadLetteredEvents)
+		admin.POST("/outbox/:id/requeue",
+			auth.RequirePermission(auth.PermManageReconciliation),
+			middleware.Idempotency(nil),
+			outboxAdmin.RequeueOutboxEvent)
 	}
 }
 
 type noopS3Uploader struct{}
+
+// newOutboxRepository builds an outbox.Repository backed by a dedicated
+// pgx pool. It mirrors the defensive pattern used by startAnalyzeJob: when the
+// database is not configured (empty DBConn) or unreachable it returns a nil
+// repository, and the admin outbox handlers respond 503 rather than failing
+// server boot.
+func newOutboxRepository(cfg config.Config) outbox.Repository {
+	pool, err := db.NewPool(context.Background(), cfg)
+	if err != nil {
+		log.Printf("outbox admin: db pool creation failed: %v", err)
+		return nil
+	}
+	if pool == nil {
+		return nil
+	}
+	return outbox.NewPostgresPgxRepository(pool)
+}
 
 // startAnalyzeJob initializes the database pool and starts the periodic ANALYZE
 // background job. If the pool cannot be created (e.g. no DATABASE_URL in

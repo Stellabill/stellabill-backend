@@ -77,6 +77,10 @@ type Config struct {
 	MaxRequestSize         int64
 	MaxGzipUncompressed    int64
 	MaxGzipRatio           float64
+	// MaxGzipCompressed caps the compressed payload size before decompression
+	// starts (env: MAX_GZIP_COMPRESSED, default: same as MaxRequestSize).
+	// Set to 0 to fall back to MaxGzipUncompressed (legacy behaviour).
+	MaxGzipCompressed int64
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
 	RedisURL string `json:"redis_url" secret:"true"`
@@ -271,6 +275,7 @@ func Load(opts ...Option) (Config, error) {
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
+		MaxGzipCompressed:      getEnvInt64("MAX_GZIP_COMPRESSED", 1024*1024*10),  // 10MB default (= MaxRequestSize)
 		// DB pool — safe production defaults
 		DBReplicaConn:    getEnv("DB_REPLICA_URL", ""),
 		RedisURL:         getEnv("REDIS_URL", ""),

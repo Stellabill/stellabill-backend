@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
-	"github.com/klauspost/compress/brotli"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -363,6 +363,46 @@ func TestGzipPolicy_CompressionRatioBomb(t *testing.T) {
 
 	if res.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413 for ratio bomb, got %d body=%s", res.Code, res.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "decompression_bomb" {
+		t.Fatalf("expected error='decompression_bomb', got %v", resp)
+	}
+}
+
+func TestGzipPolicy_RejectsHighRatioBombBeforeFullDecode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxDecodedBytes: 64,
+		MaxRatio:        1000,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"should_not": "reach"})
+	})
+
+	payload := bytes.Repeat([]byte("A"), 10*1024*1024)
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(payload); err != nil {
+		t.Fatalf("write compressed payload: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(buf.Bytes()))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for gzip bomb, got %d body=%s", res.Code, res.Body.String())
 	}
 
 	var resp map[string]interface{}

@@ -224,6 +224,25 @@ func TestLoadShutdownTimeoutDefault(t *testing.T) {
 	})
 }
 
+func TestLoadUsesDecodedGzipLimitAlias(t *testing.T) {
+	withEnvVars(t, map[string]string{
+		"ENV":                   "development",
+		"MAX_GZIP_DECODED":      "131072",
+		"MAX_GZIP_UNCOMPRESSED": "262144",
+	}, func() {
+		cfg, err := Load(WithSecretsProvider(newValidProvider()))
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if cfg.MaxGzipDecoded != 131072 {
+			t.Fatalf("expected MaxGzipDecoded=131072, got %d", cfg.MaxGzipDecoded)
+		}
+		if cfg.MaxGzipUncompressed != 131072 {
+			t.Fatalf("expected MaxGzipUncompressed=131072, got %d", cfg.MaxGzipUncompressed)
+		}
+	})
+}
+
 func TestIsValidSecretRequiresSpecialCharacter(t *testing.T) {
 	if isValidSecret("NoSpecialChars123") {
 		t.Fatal("expected secret without special char to fail")

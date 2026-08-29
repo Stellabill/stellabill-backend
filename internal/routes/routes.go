@@ -75,6 +75,7 @@ func Register(r *gin.Engine) {
 	// Request size and Gzip
 	r.Use(middleware.RequestSizeLimit(cfg.MaxRequestSize))
 	r.Use(middleware.GzipPolicy(middleware.GzipPolicyConfig{
+		MaxDecodedBytes:      cfg.MaxGzipDecoded,
 		MaxUncompressedBytes: cfg.MaxGzipUncompressed,
 		MaxRatio:             cfg.MaxGzipRatio,
 	}))

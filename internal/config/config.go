@@ -41,17 +41,17 @@ func (e *ConfigError) Error() string {
 
 // Config holds all application configuration
 type Config struct {
-	Env                    string   `json:"env"`
-	Port                   int      `json:"port"`
-	DBConn                 string   `json:"db_conn" secret:"true"`
-	JWTSecret              string   `json:"jwt_secret" secret:"true"`
-	MaxHeaderBytes         int      `json:"max_header_bytes"`
-	ReadTimeout            int      `json:"read_timeout"`
-	WriteTimeout           int      `json:"write_timeout"`
-	IdleTimeout            int      `json:"idle_timeout"`
-	AllowedOrigins         string   `json:"allowed_origins"`
-	AdminToken             string   `json:"admin_token" secret:"true"`
-	DBReplicaConn          string   `json:"db_replica_conn" secret:"true"`
+	Env            string `json:"env"`
+	Port           int    `json:"port"`
+	DBConn         string `json:"db_conn" secret:"true"`
+	JWTSecret      string `json:"jwt_secret" secret:"true"`
+	MaxHeaderBytes int    `json:"max_header_bytes"`
+	ReadTimeout    int    `json:"read_timeout"`
+	WriteTimeout   int    `json:"write_timeout"`
+	IdleTimeout    int    `json:"idle_timeout"`
+	AllowedOrigins string `json:"allowed_origins"`
+	AdminToken     string `json:"admin_token" secret:"true"`
+	DBReplicaConn  string `json:"db_replica_conn" secret:"true"`
 	// Rate limiting configuration
 	RateLimitEnabled   bool     `json:"rate_limit_enabled"`
 	RateLimitMode      string   `json:"rate_limit_mode"`
@@ -59,24 +59,25 @@ type Config struct {
 	RateLimitBurst     int      `json:"rate_limit_burst"`
 	RateLimitWhitelist []string `json:"rate_limit_whitelist"`
 	// Tracing configuration
-	TracingExporter        string
-	TracingServiceName     string
-	SecurityFrameAncestors string
+	TracingExporter        string `json:"tracing_exporter"`
+	TracingServiceName     string `json:"tracing_service_name"`
+	SecurityFrameAncestors string `json:"security_frame_ancestors"`
 	// SecurityCSPReportURI is the endpoint browsers will POST CSP violation
 	// reports to. Set to the /api/v1/csp-reports sink. Leave empty to omit
 	// the report-uri directive (no collection).
-	SecurityCSPReportURI string
+	SecurityCSPReportURI string `json:"security_csp_report_uri"`
 	// CSPReportRPS is the per-tenant sustained rate (requests per second)
 	// allowed on the /api/v1/csp-reports endpoint. Default: 5.
-	CSPReportRPS int
+	CSPReportRPS int `json:"csp_report_rps"`
 	// CSPReportBurst is the per-tenant burst size for /api/v1/csp-reports.
 	// Default: 10.
-	CSPReportBurst int
-	SpiffeSocketPath   string
-	SpiffeTrustDomain  string
-	MaxRequestSize         int64
-	MaxGzipUncompressed    int64
-	MaxGzipRatio           float64
+	CSPReportBurst      int     `json:"csp_report_burst"`
+	SpiffeSocketPath    string  `json:"spiffe_socket_path"`
+	SpiffeTrustDomain   string  `json:"spiffe_trust_domain"`
+	MaxRequestSize      int64   `json:"max_request_size"`
+	MaxGzipDecoded      int64   `json:"max_gzip_decoded"`
+	MaxGzipUncompressed int64   `json:"max_gzip_uncompressed"`
+	MaxGzipRatio        float64 `json:"max_gzip_ratio"`
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
 	RedisURL string `json:"redis_url" secret:"true"`
@@ -123,22 +124,22 @@ type Config struct {
 	//   PGBOUNCER_MAX_CONN_IDLE_IN_TRANSACTION  (default 30) – idle-in-transaction
 	//                             server-side timeout forwarded into pgbouncer.ini
 	//                             as query_wait_timeout / idle_transaction_timeout.
-	PgBouncerEnabled        bool
-	PgBouncerHost           string
-	PgBouncerPort           int
-	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
-	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+	PgBouncerEnabled         bool   `json:"pgbouncer_enabled"`
+	PgBouncerHost            string `json:"pgbouncer_host"`
+	PgBouncerPort            int    `json:"pgbouncer_port"`
+	DBStatementCacheMode     string `json:"db_statement_cache_mode"`      // "prepare" | "describe" | "simple"
+	PgBouncerIdleInTxTimeout int    `json:"pgbouncer_idle_in_tx_timeout"` // seconds; written into pgbouncer.ini
 	// GracefulShutdownTimeout is the maximum seconds the server waits for
 	// in-flight requests to complete before forcing shutdown. Env:
 	// GRACEFUL_SHUTDOWN_TIMEOUT (default: DefaultGracefulShutdownTimeout).
-	GracefulShutdownTimeout int // seconds
+	GracefulShutdownTimeout int `json:"graceful_shutdown_timeout"` // seconds
 	// ConcurrencyCapsPath is the path to the per-endpoint concurrency caps YAML
 	// configuration file. When empty, concurrency shedding is disabled.
 	// Env: CONCURRENCY_CAPS_PATH (default: "" — disabled; set to deploy/concurrency-caps.yaml to enable)
-	ConcurrencyCapsPath string
+	ConcurrencyCapsPath string `json:"concurrency_caps_path"`
 
 	// OTelLogsEnabled toggles OpenTelemetry log export (env: OTEL_LOGS_ENABLED).
-	OTelLogsEnabled bool
+	OTelLogsEnabled bool `json:"otel_logs_enabled"`
 }
 
 // ValidationResult holds the result of configuration validation
@@ -186,8 +187,7 @@ const (
 	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
 
 	// Graceful shutdown defaults — coordinate with k8s terminationGracePeriodSeconds.
-	DefaultGracefulShutdownTimeout = 30   // 30 s to drain in-flight requests and pool
-
+	DefaultGracefulShutdownTimeout = 30 // 30 s to drain in-flight requests and pool
 
 	// Validation bounds
 	MinDBPoolMaxConns = 1
@@ -196,12 +196,12 @@ const (
 	MaxDBPoolTimeout  = 300 // seconds
 
 	// PgBouncer sidecar defaults.
-	DefaultPgBouncerHost           = "127.0.0.1"
-	DefaultPgBouncerPort           = 5432
-	DefaultDBStatementCacheMode    = "prepare"
+	DefaultPgBouncerHost            = "127.0.0.1"
+	DefaultPgBouncerPort            = 5432
+	DefaultDBStatementCacheMode     = "prepare"
 	DefaultPgBouncerIdleInTxTimeout = 30 // seconds
-	MinPgBouncerPort               = 1
-	MaxPgBouncerPort               = 65535
+	MinPgBouncerPort                = 1
+	MaxPgBouncerPort                = 65535
 
 	// Valid DB_STATEMENT_CACHE_MODE values.
 	StatementCacheModeDescribe = "describe"
@@ -252,6 +252,7 @@ func Load(opts ...Option) (Config, error) {
 		fn(o)
 	}
 
+	maxGzipDecoded := getEnvInt64("MAX_GZIP_DECODED", getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50))
 	cfg := Config{
 		Env:                    getEnv("ENV", "development"),
 		Port:                   DefaultPort,
@@ -268,13 +269,14 @@ func Load(opts ...Option) (Config, error) {
 		SecurityCSPReportURI:   getEnv("SECURITY_CSP_REPORT_URI", "/api/v1/csp-reports"),
 		CSPReportRPS:           getEnvInt("CSP_REPORT_RPS", 5),
 		CSPReportBurst:         getEnvInt("CSP_REPORT_BURST", 10),
-		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
-		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
+		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10), // 10MB
+		MaxGzipDecoded:         maxGzipDecoded,
+		MaxGzipUncompressed:    maxGzipDecoded,
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
 		// DB pool — safe production defaults
-		DBReplicaConn:    getEnv("DB_REPLICA_URL", ""),
-		RedisURL:         getEnv("REDIS_URL", ""),
-		CacheTTL:         getEnvInt("CACHE_TTL", 60), // 60 second default
+		DBReplicaConn:           getEnv("DB_REPLICA_URL", ""),
+		RedisURL:                getEnv("REDIS_URL", ""),
+		CacheTTL:                getEnvInt("CACHE_TTL", 60), // 60 second default
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
 		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,

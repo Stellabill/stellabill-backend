@@ -38,6 +38,23 @@ func (s *FileSink) WriteEvent(e AuditEvent) error {
 	return err
 }
 
+// StderrSink writes JSONL audit entries to stderr for environments without a configured file path.
+type StderrSink struct{}
+
+// NewStderrSink returns a sink that writes JSONL data to stderr.
+func NewStderrSink() *StderrSink {
+	return &StderrSink{}
+}
+
+func (s *StderrSink) WriteEvent(e AuditEvent) error {
+	encoded, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stderr.Write(append(encoded, '\n'))
+	return err
+}
+
 // MemorySink keeps audit entries in-memory, intended for tests.
 type MemorySink struct {
 	mu      sync.Mutex

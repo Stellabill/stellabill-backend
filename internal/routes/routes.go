@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/db"
@@ -83,6 +84,10 @@ func Register(r *gin.Engine) {
 	subRepo := repository.NewMockSubscriptionRepo()
 	planRepo := repository.NewMockPlanRepo()
 	stmtRepo := repository.NewMockStatementRepo()
+	auditLogger := audit.NewLogger(cfg.JWTSecret, audit.NewSinkFromEnv())
+	if auditLogger != nil {
+		r.Use(audit.Middleware(auditLogger))
+	}
 
 	r.Use(middleware.DataLoaderMiddleware(planRepo, subRepo))
 

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,15 @@ func NewLogger(secret string, sink Sink) *Logger {
 		secret: []byte(s),
 		sink:   sink,
 	}
+}
+
+// NewSinkFromEnv creates a sink from AUDIT_LOG_PATH, falling back to stderr.
+func NewSinkFromEnv() Sink {
+	path := strings.TrimSpace(os.Getenv("AUDIT_LOG_PATH"))
+	if path == "" {
+		return NewStderrSink()
+	}
+	return NewFileSink(path)
 }
 
 func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) {

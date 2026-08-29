@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sony/gobreaker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -113,6 +114,31 @@ func TestPoolPinger_SatisfiesDBPinger(t *testing.T) {
 		PingContext(ctx context.Context) error
 	}
 	var _ dbPinger = (*PoolPinger)(nil)
+}
+
+func TestBreakerPool_OpenStateFailsFastAndRecovers(t *testing.T) {
+	breaker := &BreakerPool{
+		breaker: gobreaker.NewCircuitBreaker(gobreaker.Settings{
+			Name:         "db-test",
+			MaxRequests:  1,
+			Interval:     0,
+			Timeout:      10 * time.Millisecond,
+			ReadyToTrip:  func(counts gobreaker.Counts) bool { return counts.ConsecutiveFailures >= 2 },
+			IsSuccessful: func(err error) bool { return err == nil },
+		}),
+	}
+
+	assert.Error(t, breaker.execute(func() error { return assert.AnError }))
+	assert.Error(t, breaker.execute(func() error { return assert.AnError }))
+	assert.Error(t, breaker.execute(func() error { return nil }))
+	assert.Contains(t, breaker.execute(func() error { return assert.AnError }).Error(), "circuit breaker open")
+}
+
+func TestBreakerPool_BreakerStateSnapshot(t *testing.T) {
+	breaker := NewBreakerPool(nil, 2, 1, 1)
+	state := breaker.BreakerState()
+	assert.NotNil(t, state)
+	assert.Contains(t, state["state"], "closed")
 }
 
 // ─── DrainPool tests ────────────────────────────────────────────────────────

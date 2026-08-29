@@ -227,6 +227,25 @@ func TestCheckDatabase_Uninitialized(t *testing.T) {
 	assert.Equal(t, "not_configured", depHealth.Status)
 }
 
+func TestCheckDatabase_CircuitBreakerOpen(t *testing.T) {
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	defer os.Unsetenv("DATABASE_URL")
+
+	checker := &HealthChecker{
+		db: &errOnlyPinger{err: errors.New("circuit breaker open: state: open")},
+	}
+
+	result := checker.checkDatabase(context.Background())
+	depHealth, ok := result.(DependencyHealth)
+	require.True(t, ok)
+	assert.Equal(t, StatusUnhealthy, depHealth.Status)
+	assert.Contains(t, depHealth.Message, "circuit breaker open")
+}
+
+type errOnlyPinger struct{ err error }
+
+func (e *errOnlyPinger) PingContext(context.Context) error { return e.err }
+
 // TestCheckOutbox_Healthy tests outbox health check when healthy
 func TestCheckOutbox_Healthy(t *testing.T) {
 	stats := map[string]interface{}{

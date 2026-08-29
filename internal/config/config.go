@@ -45,6 +45,7 @@ type Config struct {
 	Port                   int      `json:"port"`
 	DBConn                 string   `json:"db_conn" secret:"true"`
 	JWTSecret              string   `json:"jwt_secret" secret:"true"`
+	JWKSURL                string   `json:"jwks_url"`
 	MaxHeaderBytes         int      `json:"max_header_bytes"`
 	ReadTimeout            int      `json:"read_timeout"`
 	WriteTimeout           int      `json:"write_timeout"`
@@ -257,6 +258,7 @@ func Load(opts ...Option) (Config, error) {
 		Port:                   DefaultPort,
 		DBConn:                 "",
 		JWTSecret:              "",
+		JWKSURL:                "",
 		MaxHeaderBytes:         MaxHeaderBytes,
 		ReadTimeout:            DefaultReadTimeout,
 		WriteTimeout:           DefaultWriteTimeout,
@@ -340,8 +342,12 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	}
 
 	// Validate required secrets are present via the provider
+	jwksURL := os.Getenv("JWKS_URL")
 	for _, key := range secretKeys {
 		if err, failed := secretErrs[key]; failed {
+			if key == "JWT_SECRET" && jwksURL != "" {
+				continue
+			}
 			if errors.Is(err, secrets.ErrSecretNotFound) {
 				result.Errors = append(result.Errors, ConfigError{
 					Type:    ErrMissingEnvVar,
@@ -397,7 +403,7 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	}
 
 	// Validate JWT_SECRET
-	if secret, ok := resolvedSecrets["JWT_SECRET"]; ok {
+	if secret, ok := resolvedSecrets["JWT_SECRET"]; ok && (jwksURL == "" || secret != "") {
 		if !isValidSecret(secret) {
 			result.Errors = append(result.Errors, ConfigError{
 				Type:    ErrWeakSecret,
@@ -407,6 +413,19 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.JWTSecret = secret
+		}
+	}
+
+	if jwksURL != "" {
+		if !isValidJWKSURL(jwksURL) {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "JWKS_URL",
+				Message: "must be a valid absolute URL with http or https scheme",
+				Value:   jwksURL,
+			})
+		} else {
+			c.JWKSURL = jwksURL
 		}
 	}
 
@@ -643,6 +662,16 @@ func isValidDatabaseURL(dbURL string) bool {
 	default:
 		return parsed.Host != ""
 	}
+}
+
+// isValidJWKSURL validates that the JWKS URL is an absolute http(s) URL
+func isValidJWKSURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return (scheme == "https" || scheme == "http") && parsed.Host != ""
 }
 
 // isValidSecret validates that the secret meets security requirements

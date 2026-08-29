@@ -11,6 +11,7 @@ import (
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
@@ -52,6 +53,13 @@ func Register(r *gin.Engine) {
 	r.Use(otelgin.Middleware(cfg.TracingServiceName))
 	r.Use(middleware.TailSamplingSignals())
 	r.Use(middleware.TraceIDMiddleware())
+
+	// Prometheus HTTP metrics — observes per-request latency and counts by
+	// route, method, and status for every request entering the router, using
+	// c.FullPath() so label cardinality stays bounded by the route table.
+	// Exposed via the dedicated /metrics handler below (no auth; IP-restricted
+	// by network policy).
+	r.Use(metrics.MetricsMiddleware())
 
 	// Per-endpoint concurrency shedding — shed excess load before rate limiting
 	if cfg.ConcurrencyCapsPath != "" {

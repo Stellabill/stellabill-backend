@@ -32,7 +32,7 @@ func LogAction(c *gin.Context, action, target, outcome string, metadata map[stri
 	if !ok {
 		return
 	}
-	logger, ok := raw.*(*Logger)
+	logger, ok := raw.(*Logger)
 	if !ok || logger == nil {
 		return
 	}
@@ -84,7 +84,7 @@ func logAuthFailure(c *gin.Context, logger *Logger, status int) {
 	if len(c.Errors) > 0 {
 		reason = c.Errors[0].Error()
 	}
-	meta := map[string_interface]{}{
+	meta := map[string]interface{}{
 		"path":        c.FullPath(),
 		"method":      c.Request.Method,
 		"status":      strconv.Itoa(status),

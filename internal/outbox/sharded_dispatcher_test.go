@@ -208,15 +208,15 @@ func TestShardedDispatcher_PartitionFiltering(t *testing.T) {
 			UpdatedAt:  time.Now(),
 			Version:    1,
 		}
-		require.NoError(t, repo.Store(event))
+		require.NoError(t, repo.Store(context.Background(), event))
 	}
 
 	cfg := DispatcherConfig{
 		ShardCount:        4,
 		OwnedShards:       []int{0},
 		PollInterval:      20 * time.Millisecond,
-		BatchSize:          10,
-		ProcessingTimeout:  200 * time.Millisecond,
+		BatchSize:         10,
+		ProcessingTimeout: 200 * time.Millisecond,
 		HeartbeatInterval: time.Hour,
 	}
 
@@ -262,7 +262,7 @@ func TestShardedDispatcher_PublishesCorrectShardEvents(t *testing.T) {
 			UpdatedAt:  time.Now(),
 			Version:    1,
 		}
-		require.NoError(t, repo.Store(event))
+		require.NoError(t, repo.Store(context.Background(), event))
 	}
 
 	// Determine which shard tenant-A maps to
@@ -276,18 +276,18 @@ func TestShardedDispatcher_PublishesCorrectShardEvents(t *testing.T) {
 			if ring.GetPartition(candidate) == 2 {
 				for j := 0; j < 5; j++ {
 					event := &Event{
-						ID:        uuid.New(),
-						EventType: "shard2.event",
-						EventData: json.RawMessage(`{"type":"shard2"}`),
-						TenantID:  &candidate,
-						Partition: 2,
-						Status:    StatusPending,
+						ID:         uuid.New(),
+						EventType:  "shard2.event",
+						EventData:  json.RawMessage(`{"type":"shard2"}`),
+						TenantID:   &candidate,
+						Partition:  2,
+						Status:     StatusPending,
 						OccurredAt: time.Now(),
 						CreatedAt:  time.Now(),
 						UpdatedAt:  time.Now(),
-						Version:   1,
+						Version:    1,
 					}
-					require.NoError(t, repo.Store(event))
+					require.NoError(t, repo.Store(context.Background(), event))
 				}
 				break
 			}
@@ -298,8 +298,8 @@ func TestShardedDispatcher_PublishesCorrectShardEvents(t *testing.T) {
 		ShardCount:        4,
 		OwnedShards:       []int{2},
 		PollInterval:      20 * time.Millisecond,
-		BatchSize:          20,
-		ProcessingTimeout:  200 * time.Millisecond,
+		BatchSize:         20,
+		ProcessingTimeout: 200 * time.Millisecond,
 		HeartbeatInterval: time.Hour,
 	}
 
@@ -339,15 +339,15 @@ func TestShardedDispatcher_FailureIsolation(t *testing.T) {
 		UpdatedAt:  time.Now(),
 		Version:    1,
 	}
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 
 	cfg := DispatcherConfig{
 		ShardCount:        4,
 		OwnedShards:       []int{0},
 		PollInterval:      20 * time.Millisecond,
-		BatchSize:          10,
-		ProcessingTimeout:  200 * time.Millisecond,
-		MaxRetries:         1,
+		BatchSize:         10,
+		ProcessingTimeout: 200 * time.Millisecond,
+		MaxRetries:        1,
 		HeartbeatInterval: time.Hour,
 	}
 
@@ -380,15 +380,15 @@ func TestShardedDispatcher_CleanupCompletedEvents(t *testing.T) {
 	event.Status = StatusCompleted
 	event.UpdatedAt = time.Now().Add(-time.Hour)
 	event.Partition = 0
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 
 	cfg := DispatcherConfig{
-		ShardCount:         4,
-		OwnedShards:        []int{0},
-		PollInterval:       time.Hour,
-		CleanupInterval:    20 * time.Millisecond,
-		CompletedEventTTL:  time.Millisecond,
-		HeartbeatInterval:  time.Hour,
+		ShardCount:        4,
+		OwnedShards:       []int{0},
+		PollInterval:      time.Hour,
+		CleanupInterval:   20 * time.Millisecond,
+		CompletedEventTTL: time.Millisecond,
+		HeartbeatInterval: time.Hour,
 	}
 
 	d, err := NewShardedDispatcher(repo, publisher, db, cfg)
@@ -424,7 +424,7 @@ func TestShardedDispatcher_HighWaterMarkSkipsDeliveredEvents(t *testing.T) {
 		UpdatedAt:  time.Now(),
 		Version:    1,
 	}
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 	// Mark as already delivered
 	repo.progress["default"] = event.ID
 
@@ -432,8 +432,8 @@ func TestShardedDispatcher_HighWaterMarkSkipsDeliveredEvents(t *testing.T) {
 		ShardCount:        4,
 		OwnedShards:       []int{0},
 		PollInterval:      20 * time.Millisecond,
-		BatchSize:          5,
-		ProcessingTimeout:  200 * time.Millisecond,
+		BatchSize:         5,
+		ProcessingTimeout: 200 * time.Millisecond,
 		HeartbeatInterval: time.Hour,
 	}
 
@@ -460,15 +460,15 @@ func TestShardedDispatcher_PermanentErrorDeadLetters(t *testing.T) {
 	event, err := NewEvent("perm.fail", map[string]string{"x": "y"}, nil, nil)
 	require.NoError(t, err)
 	event.Partition = 0
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 	publisher.SetPublishError(event.ID, &PermanentPublishError{Reason: "missing key"})
 
 	cfg := DispatcherConfig{
 		ShardCount:        4,
 		OwnedShards:       []int{0},
 		PollInterval:      20 * time.Millisecond,
-		BatchSize:          10,
-		ProcessingTimeout:  200 * time.Millisecond,
+		BatchSize:         10,
+		ProcessingTimeout: 200 * time.Millisecond,
 		HeartbeatInterval: time.Hour,
 	}
 
@@ -504,15 +504,15 @@ func TestShardedDispatcher_FallbackFilteringWithoutShardedRepo(t *testing.T) {
 			Partition:  partition,
 			OccurredAt: time.Now(),
 		}
-		repo.Store(e)
+		repo.Store(context.Background(), e)
 	}
 
 	cfg := DispatcherConfig{
 		ShardCount:        4,
 		OwnedShards:       []int{0},
 		PollInterval:      20 * time.Millisecond,
-		BatchSize:          20,
-		ProcessingTimeout:  200 * time.Millisecond,
+		BatchSize:         20,
+		ProcessingTimeout: 200 * time.Millisecond,
 		HeartbeatInterval: time.Hour,
 	}
 
@@ -543,7 +543,7 @@ func TestShardedDispatcher_TransientRetryBackoff(t *testing.T) {
 	event, err := NewEvent("retry.me", map[string]string{"k": "v"}, nil, nil)
 	require.NoError(t, err)
 	event.Partition = 0
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 	publisher.SetPublishError(event.ID, errors.New("transient"))
 
 	cfg := DispatcherConfig{
@@ -595,15 +595,15 @@ func TestShardedDispatcher_EmptyOwnedShardsDrainSkips(t *testing.T) {
 		UpdatedAt:  time.Now(),
 		Version:    1,
 	}
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 
 	cfg := DispatcherConfig{
 		ShardCount:        4,
 		OwnedShards:       []int{0},
 		PollInterval:      20 * time.Millisecond,
-		BatchSize:          10,
-		ProcessingTimeout:  200 * time.Millisecond,
-		HeartbeatInterval:  time.Hour,
+		BatchSize:         10,
+		ProcessingTimeout: 200 * time.Millisecond,
+		HeartbeatInterval: time.Hour,
 	}
 
 	d, err := NewShardedDispatcher(repo, publisher, db, cfg)
@@ -641,16 +641,16 @@ func TestShardedDispatcher_ContextTimeoutDuringPublish(t *testing.T) {
 		UpdatedAt:  time.Now(),
 		Version:    1,
 	}
-	require.NoError(t, repo.Store(event))
+	require.NoError(t, repo.Store(context.Background(), event))
 
 	slowPub := &slowFailPublisher{}
 	cfg := DispatcherConfig{
 		ShardCount:        4,
 		OwnedShards:       []int{0},
 		PollInterval:      20 * time.Millisecond,
-		BatchSize:          10,
-		ProcessingTimeout:  10 * time.Millisecond,
-		HeartbeatInterval:  time.Hour,
+		BatchSize:         10,
+		ProcessingTimeout: 10 * time.Millisecond,
+		HeartbeatInterval: time.Hour,
 	}
 
 	d, err := NewShardedDispatcher(repo, slowPub, db, cfg)

@@ -24,15 +24,18 @@ func (m *MockOutboxRepo) Store(event *outbox.Event) error {
 	args := m.Called(event)
 	return args.Error(0)
 }
-func (m *MockOutboxRepo) GetPendingEvents(limit int) ([]*outbox.Event, error)         { return nil, nil }
-func (m *MockOutboxRepo) GetByID(id uuid.UUID) (*outbox.Event, error)                 { return nil, nil }
-func (m *MockOutboxRepo) UpdateStatus(id uuid.UUID, status outbox.Status, errorMessage *string) error { return nil }
-func (m *MockOutboxRepo) MarkAsProcessing(id uuid.UUID) error                         { return nil }
-func (m *MockOutboxRepo) IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time, errorMessage *string) error { return nil }
-func (m *MockOutboxRepo) DeleteCompletedEvents(olderThan time.Time) (int64, error)    { return 0, nil }
-func (m *MockOutboxRepo) ListDeadLetteredEvents(limit int) ([]*outbox.Event, error)   { return nil, nil }
-func (m *MockOutboxRepo) RequeueEvent(id uuid.UUID) error                             { return nil }
-
+func (m *MockOutboxRepo) GetPendingEvents(limit int) ([]*outbox.Event, error) { return nil, nil }
+func (m *MockOutboxRepo) GetByID(id uuid.UUID) (*outbox.Event, error)         { return nil, nil }
+func (m *MockOutboxRepo) UpdateStatus(id uuid.UUID, status outbox.Status, errorMessage *string) error {
+	return nil
+}
+func (m *MockOutboxRepo) MarkAsProcessing(id uuid.UUID) error { return nil }
+func (m *MockOutboxRepo) IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time, errorMessage *string) error {
+	return nil
+}
+func (m *MockOutboxRepo) DeleteCompletedEvents(olderThan time.Time) (int64, error)  { return 0, nil }
+func (m *MockOutboxRepo) ListDeadLetteredEvents(limit int) ([]*outbox.Event, error) { return nil, nil }
+func (m *MockOutboxRepo) RequeueEvent(id uuid.UUID) error                           { return nil }
 
 func TestWorker_PreservesOrdering(t *testing.T) {
 	if testing.Short() {
@@ -76,7 +79,7 @@ func TestWorker_PreservesOrdering(t *testing.T) {
 		ID        string
 		CreatedAt time.Time
 	}
-	
+
 	webhooks := []webhook{
 		{ID: uuid.NewString(), CreatedAt: now.Add(-3 * time.Second)},
 		{ID: uuid.NewString(), CreatedAt: now.Add(-2 * time.Second)},
@@ -109,11 +112,11 @@ func TestWorker_PreservesOrdering(t *testing.T) {
 	mockOutbox.AssertNumberOfCalls(t, "Store", 1)
 
 	w.processBatch(ctx)
-	
+
 	var secondStatus string
 	err = pool.QueryRow(ctx, "SELECT status FROM webhook_inbox WHERE id = $1", webhooks[1].ID).Scan(&secondStatus)
 	require.NoError(t, err)
 	assert.Equal(t, "processed", secondStatus, "The second oldest webhook should now be processed")
-	
+
 	mockOutbox.AssertNumberOfCalls(t, "Store", 2)
 }

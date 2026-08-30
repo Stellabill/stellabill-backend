@@ -18,11 +18,11 @@ import (
 // ADDING A NEW ERROR WITHOUT ADDING IT HERE AND REGISTERING IT WILL FAIL CI.
 //
 // To add a new error code:
-//   1. Define the var ErrXxx = errors.New(...) in the appropriate package.
-//   2. Add errcode.Register(...) in that package's init().
-//   3. Add the code constant to internal/errcode/registry.go.
-//   4. Add the sentinel to the list below.
-//   5. Document the new code in docs/error-codes.md.
+//  1. Define the var ErrXxx = errors.New(...) in the appropriate package.
+//  2. Add errcode.Register(...) in that package's init().
+//  3. Add the code constant to internal/errcode/registry.go.
+//  4. Add the sentinel to the list below.
+//  5. Document the new code in docs/error-codes.md.
 var registeredSentinelErrors = []struct {
 	name string
 	err  error

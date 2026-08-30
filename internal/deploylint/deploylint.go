@@ -49,9 +49,9 @@ type KyvernoPolicy struct {
 }
 
 type kyvernoSpec struct {
-	ValidationFailureAction string          `yaml:"validationFailureAction"`
-	Background             bool            `yaml:"background"`
-	Rules                  []kyvernoRule   `yaml:"rules"`
+	ValidationFailureAction string        `yaml:"validationFailureAction"`
+	Background              bool          `yaml:"background"`
+	Rules                   []kyvernoRule `yaml:"rules"`
 }
 
 type kyvernoRule struct {
@@ -73,7 +73,7 @@ type verifyImagesEntry struct {
 }
 
 type kyvernoAttestor struct {
-	Count   int                 `yaml:"count"`
+	Count   int                    `yaml:"count"`
 	Entries []kyvernoAttestorEntry `yaml:"entries"`
 }
 
@@ -88,8 +88,8 @@ type kyvernoKeyless struct {
 }
 
 type kyvernoAttest struct {
-	PredicateType string             `yaml:"predicateType"`
-	Attestors     []kyvernoAttestor  `yaml:"attestors"`
+	PredicateType string            `yaml:"predicateType"`
+	Attestors     []kyvernoAttestor `yaml:"attestors"`
 }
 
 // ValidateKyvernoPolicy parses and statically verifies a ClusterPolicy used
@@ -228,10 +228,10 @@ func validateAttestors(ruleIdx int, ruleName string, entryIdx int, where string,
 // GitHubWorkflow is a minimal structural model used to assert that the
 // release workflow declares the right permissions for OIDC keyless signing.
 type GitHubWorkflow struct {
-	Name        string                    `yaml:"name"`
-	On          any                       `yaml:"on"`
-	Permissions any                       `yaml:"permissions"`
-	Jobs        map[string]gitHubJob      `yaml:"jobs"`
+	Name        string               `yaml:"name"`
+	On          any                  `yaml:"on"`
+	Permissions any                  `yaml:"permissions"`
+	Jobs        map[string]gitHubJob `yaml:"jobs"`
 }
 
 type gitHubJob struct {
@@ -330,10 +330,10 @@ func jobPermissions(perms map[string]any, key string) (string, bool) {
 // wraps an SLSA v1 provenance predicate. Only the fields the Kyverno policy
 // inspects are kept.
 type SLSAProvenance struct {
-	Type          string             `json:"_type"`
-	PredicateType string             `json:"predicateType"`
-	Subject       []slsaSubject      `json:"subject"`
-	Predicate     slsaPredicate      `json:"predicate"`
+	Type          string        `json:"_type"`
+	PredicateType string        `json:"predicateType"`
+	Subject       []slsaSubject `json:"subject"`
+	Predicate     slsaPredicate `json:"predicate"`
 }
 
 type slsaSubject struct {
@@ -343,12 +343,12 @@ type slsaSubject struct {
 
 type slsaPredicate struct {
 	BuildDefinition slsaBuildDefinition `json:"buildDefinition"`
-	RunDetails       slsaRunDetails      `json:"runDetails"`
+	RunDetails      slsaRunDetails      `json:"runDetails"`
 }
 
 type slsaBuildDefinition struct {
-	BuildType          string         `json:"buildType"`
-	ExternalParameters map[string]any `json:"externalParameters"`
+	BuildType            string           `json:"buildType"`
+	ExternalParameters   map[string]any   `json:"externalParameters"`
 	ResolvedDependencies []map[string]any `json:"resolvedDependencies"`
 }
 

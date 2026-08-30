@@ -1,7 +1,7 @@
 // Package security provides primitives for admin authentication hardening,
 // including exponential lockout tracking for failed login attempts.
 //
-// Lockout reset procedure
+// # Lockout reset procedure
 //
 // A lockout is automatically reset when a successful login occurs for the
 // same source+account pair.  Operators can also manually reset a lockout

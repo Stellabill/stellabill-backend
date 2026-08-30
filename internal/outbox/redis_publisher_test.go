@@ -239,7 +239,7 @@ func TestRedisPublisher_Publish_MovedRedirect(t *testing.T) {
 	// Override the client with one that returns MOVED on the first call
 	var callCount int32
 	mockClient := &movedInjectorClient{
-		inner:   client,
+		inner: client,
 		onFirst: func() error {
 			return &redis.MovedError{Slot: 1234, Addr: s2.Addr()}
 		},
@@ -295,7 +295,7 @@ func TestRedisPublisher_Publish_AskRedirect(t *testing.T) {
 
 	var callCount int32
 	mockClient := &askInjectorClient{
-		inner:   client,
+		inner: client,
 		onFirst: func() error {
 			return &redis.AskError{Slot: 1234, Addr: s2.Addr()}
 		},
@@ -377,11 +377,11 @@ func TestRedisPublisher_EventToValues(t *testing.T) {
 func TestRedisPublisher_EventToValues_NilPointers(t *testing.T) {
 	p := &RedisPublisher{}
 	event := &Event{
-		ID:        uuid.New(),
-		EventType: "test",
-		EventData: json.RawMessage(`{}`),
+		ID:         uuid.New(),
+		EventType:  "test",
+		EventData:  json.RawMessage(`{}`),
 		OccurredAt: time.Now(),
-		Version:   1,
+		Version:    1,
 	}
 
 	values := p.eventToValues(event)

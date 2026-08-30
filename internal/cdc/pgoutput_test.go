@@ -357,9 +357,9 @@ func TestDecodeBeginCommit(t *testing.T) {
 
 	tx = append(tx, 'C')
 	commitRest := make([]byte, 25)
-	commitRest[0] = 0               // flags
-	binary.BigEndian.PutUint64(commitRest[1:9], 200)  // commit LSN
-	binary.BigEndian.PutUint64(commitRest[9:17], 300)  // end LSN
+	commitRest[0] = 0                                               // flags
+	binary.BigEndian.PutUint64(commitRest[1:9], 200)                // commit LSN
+	binary.BigEndian.PutUint64(commitRest[9:17], 300)               // end LSN
 	binary.BigEndian.PutUint64(commitRest[17:25], 1700000000000000) // ts
 	tx = append(tx, commitRest...)
 
@@ -1186,7 +1186,7 @@ func TestConsumerStartError(t *testing.T) {
 // TestNewConsumerAllDefaults verifies all defaults are properly set.
 func TestNewConsumerAllDefaults(t *testing.T) {
 	c, err := NewConsumer(ConsumerConfig{
-		ConnString:          "postgres://test",
+		ConnString:           "postgres://test",
 		MaxReconnectAttempts: -1, // negative, treated as zero
 	})
 	if err != nil {

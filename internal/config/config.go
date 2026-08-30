@@ -41,17 +41,17 @@ func (e *ConfigError) Error() string {
 
 // Config holds all application configuration
 type Config struct {
-	Env                    string   `json:"env"`
-	Port                   int      `json:"port"`
-	DBConn                 string   `json:"db_conn" secret:"true"`
-	JWTSecret              string   `json:"jwt_secret" secret:"true"`
-	MaxHeaderBytes         int      `json:"max_header_bytes"`
-	ReadTimeout            int      `json:"read_timeout"`
-	WriteTimeout           int      `json:"write_timeout"`
-	IdleTimeout            int      `json:"idle_timeout"`
-	AllowedOrigins         string   `json:"allowed_origins"`
-	AdminToken             string   `json:"admin_token" secret:"true"`
-	DBReplicaConn          string   `json:"db_replica_conn" secret:"true"`
+	Env            string `json:"env"`
+	Port           int    `json:"port"`
+	DBConn         string `json:"db_conn" secret:"true"`
+	JWTSecret      string `json:"jwt_secret" secret:"true"`
+	MaxHeaderBytes int    `json:"max_header_bytes"`
+	ReadTimeout    int    `json:"read_timeout"`
+	WriteTimeout   int    `json:"write_timeout"`
+	IdleTimeout    int    `json:"idle_timeout"`
+	AllowedOrigins string `json:"allowed_origins"`
+	AdminToken     string `json:"admin_token" secret:"true"`
+	DBReplicaConn  string `json:"db_replica_conn" secret:"true"`
 	// Rate limiting configuration
 	RateLimitEnabled   bool     `json:"rate_limit_enabled"`
 	RateLimitMode      string   `json:"rate_limit_mode"`
@@ -71,12 +71,12 @@ type Config struct {
 	CSPReportRPS int
 	// CSPReportBurst is the per-tenant burst size for /api/v1/csp-reports.
 	// Default: 10.
-	CSPReportBurst int
-	SpiffeSocketPath   string
-	SpiffeTrustDomain  string
-	MaxRequestSize         int64
-	MaxGzipUncompressed    int64
-	MaxGzipRatio           float64
+	CSPReportBurst      int
+	SpiffeSocketPath    string
+	SpiffeTrustDomain   string
+	MaxRequestSize      int64
+	MaxGzipUncompressed int64
+	MaxGzipRatio        float64
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
 	RedisURL string `json:"redis_url" secret:"true"`
@@ -123,11 +123,11 @@ type Config struct {
 	//   PGBOUNCER_MAX_CONN_IDLE_IN_TRANSACTION  (default 30) – idle-in-transaction
 	//                             server-side timeout forwarded into pgbouncer.ini
 	//                             as query_wait_timeout / idle_transaction_timeout.
-	PgBouncerEnabled        bool
-	PgBouncerHost           string
-	PgBouncerPort           int
-	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
-	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+	PgBouncerEnabled         bool
+	PgBouncerHost            string
+	PgBouncerPort            int
+	DBStatementCacheMode     string // "prepare" | "describe" | "simple"
+	PgBouncerIdleInTxTimeout int    // seconds; written into pgbouncer.ini
 	// GracefulShutdownTimeout is the maximum seconds the server waits for
 	// in-flight requests to complete before forcing shutdown. Env:
 	// GRACEFUL_SHUTDOWN_TIMEOUT (default: DefaultGracefulShutdownTimeout).
@@ -186,8 +186,7 @@ const (
 	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
 
 	// Graceful shutdown defaults — coordinate with k8s terminationGracePeriodSeconds.
-	DefaultGracefulShutdownTimeout = 30   // 30 s to drain in-flight requests and pool
-
+	DefaultGracefulShutdownTimeout = 30 // 30 s to drain in-flight requests and pool
 
 	// Validation bounds
 	MinDBPoolMaxConns = 1
@@ -196,12 +195,12 @@ const (
 	MaxDBPoolTimeout  = 300 // seconds
 
 	// PgBouncer sidecar defaults.
-	DefaultPgBouncerHost           = "127.0.0.1"
-	DefaultPgBouncerPort           = 5432
-	DefaultDBStatementCacheMode    = "prepare"
+	DefaultPgBouncerHost            = "127.0.0.1"
+	DefaultPgBouncerPort            = 5432
+	DefaultDBStatementCacheMode     = "prepare"
 	DefaultPgBouncerIdleInTxTimeout = 30 // seconds
-	MinPgBouncerPort               = 1
-	MaxPgBouncerPort               = 65535
+	MinPgBouncerPort                = 1
+	MaxPgBouncerPort                = 65535
 
 	// Valid DB_STATEMENT_CACHE_MODE values.
 	StatementCacheModeDescribe = "describe"
@@ -275,9 +274,9 @@ func Load(opts ...Option) (Config, error) {
 		//
 		// DATABASE_REPLICA_URL is the canonical env var for the hot-standby
 		// read replica; DB_REPLICA_URL is kept as a backward-compatible alias.
-		DBReplicaConn:    getEnvFirst("", "DATABASE_REPLICA_URL", "DB_REPLICA_URL"),
-		RedisURL:         getEnv("REDIS_URL", ""),
-		CacheTTL:         getEnvInt("CACHE_TTL", 60), // 60 second default
+		DBReplicaConn:           getEnvFirst("", "DATABASE_REPLICA_URL", "DB_REPLICA_URL"),
+		RedisURL:                getEnv("REDIS_URL", ""),
+		CacheTTL:                getEnvInt("CACHE_TTL", 60), // 60 second default
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
 		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,

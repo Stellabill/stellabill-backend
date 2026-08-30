@@ -26,12 +26,12 @@ const (
 	webhookBodyKey = "webhook_raw_body"
 
 	// Webhook signature verification default settings
-	DefaultSignatureHeader  = "X-Webhook-Signature"
-	DefaultTimestampHeader  = "X-Webhook-Timestamp"
-	DefaultEventIDHeader    = "X-Webhook-Event-Id"
-	DefaultSignatureVersion = "v2"
-	DefaultMaxSignatureAge  = 5 * time.Minute
-	DefaultTimestampSkew    = 300 // 5 minutes in seconds
+	DefaultSignatureHeader         = "X-Webhook-Signature"
+	DefaultTimestampHeader         = "X-Webhook-Timestamp"
+	DefaultEventIDHeader           = "X-Webhook-Event-Id"
+	DefaultSignatureVersion        = "v2"
+	DefaultMaxSignatureAge         = 5 * time.Minute
+	DefaultTimestampSkew           = 300             // 5 minutes in seconds
 	DefaultMaxBodySize      uint64 = 1024 * 1024 * 5 // 5MB
 
 	// Provider-specific defaults
@@ -126,12 +126,12 @@ const (
 type WebhookProvider string
 
 const (
-	ProviderGeneric    WebhookProvider = "generic"
-	ProviderStripe     WebhookProvider = "stripe"
-	ProviderPayPal     WebhookProvider = "paypal"
-	ProviderSquare     WebhookProvider = "square"
-	ProviderGitHub     WebhookProvider = "github"
-	ProviderCustom     WebhookProvider = "custom"
+	ProviderGeneric WebhookProvider = "generic"
+	ProviderStripe  WebhookProvider = "stripe"
+	ProviderPayPal  WebhookProvider = "paypal"
+	ProviderSquare  WebhookProvider = "square"
+	ProviderGitHub  WebhookProvider = "github"
+	ProviderCustom  WebhookProvider = "custom"
 )
 
 func (p WebhookProvider) String() string {
@@ -191,16 +191,16 @@ type WebhookConfig struct {
 // DefaultWebhookConfig returns a secure default configuration for generic webhooks.
 func DefaultWebhookConfig() *WebhookConfig {
 	return &WebhookConfig{
-		Provider:              ProviderGeneric,
-		SignatureHeader:       DefaultSignatureHeader,
-		TimestampHeader:       DefaultTimestampHeader,
-		EventIDHeader:         DefaultEventIDHeader,
-		SignatureVersion:      DefaultSignatureVersion,
-		Algorithm:             HMACSHA256,
-		Tolerance:             int64(DefaultTimestampSkew),
-		MaxBodySize:           DefaultMaxBodySize,
-		RequireTimestamp:      true,
-		RequireEventID:        true,
+		Provider:               ProviderGeneric,
+		SignatureHeader:        DefaultSignatureHeader,
+		TimestampHeader:        DefaultTimestampHeader,
+		EventIDHeader:          DefaultEventIDHeader,
+		SignatureVersion:       DefaultSignatureVersion,
+		Algorithm:              HMACSHA256,
+		Tolerance:              int64(DefaultTimestampSkew),
+		MaxBodySize:            DefaultMaxBodySize,
+		RequireTimestamp:       true,
+		RequireEventID:         true,
 		EnableReplayProtection: true,
 	}
 }
@@ -258,6 +258,12 @@ func ProviderConfig(provider WebhookProvider) *WebhookConfig {
 }
 
 // Validate validates the webhook configuration.
+// WithSecret sets the secret key and returns the config for chaining.
+func (c *WebhookConfig) WithSecret(secret string) *WebhookConfig {
+	c.SecretKey = secret
+	return c
+}
+
 func (c *WebhookConfig) Validate() error {
 	if c.SecretKey == "" {
 		return fmt.Errorf("%w: secret key is required", ErrInvalidConfig)

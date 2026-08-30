@@ -230,9 +230,9 @@ func TestLoadShutdownTimeoutDefault(t *testing.T) {
 func TestLoadReplicaURLEnvVars(t *testing.T) {
 	t.Run("canonical DATABASE_REPLICA_URL wins", func(t *testing.T) {
 		withEnvVars(t, map[string]string{
-			"ENV":                   "development",
-			"DATABASE_REPLICA_URL":  "postgres://replica:pass@replica-host:5432/db",
-			"DB_REPLICA_URL":        "postgres://legacy:pass@legacy-host:5432/db",
+			"ENV":                  "development",
+			"DATABASE_REPLICA_URL": "postgres://replica:pass@replica-host:5432/db",
+			"DB_REPLICA_URL":       "postgres://legacy:pass@legacy-host:5432/db",
 		}, func() {
 			cfg, err := Load(WithSecretsProvider(newValidProvider()))
 			if err != nil {
@@ -246,8 +246,8 @@ func TestLoadReplicaURLEnvVars(t *testing.T) {
 
 	t.Run("legacy DB_REPLICA_URL is honoured", func(t *testing.T) {
 		withEnvVars(t, map[string]string{
-			"ENV":                  "development",
-			"DB_REPLICA_URL":       "postgres://legacy:pass@legacy-host:5432/db",
+			"ENV":            "development",
+			"DB_REPLICA_URL": "postgres://legacy:pass@legacy-host:5432/db",
 		}, func() {
 			cfg, err := Load(WithSecretsProvider(newValidProvider()))
 			if err != nil {

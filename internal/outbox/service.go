@@ -151,8 +151,8 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 	}
 
 	// Compute partition from tenant_id using the consistent hash ring.
-	if s.ring != nil && event.TenantID != nil {
-		event.Partition = s.ring.GetPartition(*event.TenantID)
+	if s.ring != nil && event.TenantID != "" {
+		event.Partition = s.ring.GetPartition(event.TenantID)
 	}
 
 	if err := s.storeEventInTransaction(ctx, event); err != nil {
@@ -190,8 +190,8 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 		eventData, err = PrepareEncryptedEventData(eventType, data, subscriberID, s.jwe.Keys, encryptor, sensitive)
 	} else {
 		event, createErr := NewEventWithDeduplication(eventType, data, aggregateID, aggregateType, deduplicationID)
-		if event != nil {
-			event.TenantID = tenantID
+		if event != nil && tenantID != nil {
+			event.TenantID = *tenantID
 		}
 		return event, createErr
 	}
@@ -211,7 +211,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 				UpdatedAt:       time.Now(),
 				Version:         1,
 				DeduplicationID: deduplicationID,
-				TenantID:        tenantID,
+				TenantID:        tenantIDValue(tenantID),
 			}
 			errMsg := err.Error()
 			event.ErrorMessage = &errMsg
@@ -234,7 +234,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 		UpdatedAt:       time.Now(),
 		Version:         1,
 		DeduplicationID: deduplicationID,
-		TenantID:        tenantID,
+		TenantID:        tenantIDValue(tenantID),
 	}, nil
 }
 
@@ -261,7 +261,7 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 
 // PublishEventWithTx publishes an event within an existing transaction
 func (s *Service) PublishEventWithTx(ctx context.Context, tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
-	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
+	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil, extractTenantID(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
@@ -425,4 +425,11 @@ func extractTenantID(ctx context.Context) *string {
 		}
 	}
 	return nil
+}
+
+func tenantIDValue(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

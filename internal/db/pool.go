@@ -188,6 +188,7 @@ func NewPoolConfig(cfg config.Config) (*pgxpool.Config, error) {
 	if cfg.PgBouncerEnabled && poolCfg.ConnConfig != nil {
 		poolCfg.ConnConfig.Host = cfg.PgBouncerHost
 		poolCfg.ConnConfig.Port = uint16(cfg.PgBouncerPort) //nolint:gosec // port validated 1–65535
+		applyStatementCacheMode(poolCfg.ConnConfig, cfg.DBStatementCacheMode)
 	}
 
 	poolCfg.MaxConns = int32(cfg.DBPoolMaxConns)
@@ -204,6 +205,30 @@ func NewPoolConfig(cfg config.Config) (*pgxpool.Config, error) {
 	}
 
 	return poolCfg, nil
+}
+
+// applyStatementCacheMode configures the pgx query-exec mode on a connection
+// config according to the statement cache mode selected in configuration.
+//
+//   - "describe" → QueryExecModeDescribeExec, with the statement cache disabled
+//     (capacity 0) so pgx never silently falls back to prepared statements.
+//   - "simple" → QueryExecModeSimpleProtocol, with the statement cache disabled.
+//   - anything else (including "prepare" and empty) → QueryExecModeCacheStatement,
+//     which is the standard pgx behaviour.
+func applyStatementCacheMode(connCfg *pgx.ConnConfig, mode string) {
+	if connCfg == nil {
+		return
+	}
+	switch mode {
+	case config.StatementCacheModeDescribe:
+		connCfg.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+		connCfg.StatementCacheCapacity = 0
+	case config.StatementCacheModeSimple:
+		connCfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+		connCfg.StatementCacheCapacity = 0
+	default:
+		connCfg.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+	}
 }
 
 type queryStartTimeKey struct{}

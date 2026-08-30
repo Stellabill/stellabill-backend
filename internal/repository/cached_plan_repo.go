@@ -208,3 +208,28 @@ func (cpr *CachedPlanRepo) Metrics() (hits uint64, misses uint64, stales uint64)
 		atomic.LoadUint64(&cpr.misses),
 		atomic.LoadUint64(&cpr.stales)
 }
+
+// Flush evicts all cached plan entries and clears invalidation markers.
+// It implements cache.Purgeable for the admin purge endpoint.
+func (cpr *CachedPlanRepo) Flush(ctx context.Context) (int, error) {
+	n, err := cache.Flush(ctx, cpr.cache)
+	if err != nil {
+		return n, err
+	}
+	cpr.invalidatedMu.Lock()
+	for k := range cpr.invalidatedAt {
+		delete(cpr.invalidatedAt, k)
+	}
+	cpr.invalidatedMu.Unlock()
+	return n, nil
+}
+
+// ResetMetrics zeroes the hit/miss/stale counters.
+func (cpr *CachedPlanRepo) ResetMetrics() {
+	atomic.StoreUint64(&cpr.hits, 0)
+	atomic.StoreUint64(&cpr.misses, 0)
+	atomic.StoreUint64(&cpr.stales, 0)
+}
+
+// Namespace returns the purge summary label for plan caches.
+func (cpr *CachedPlanRepo) Namespace() string { return "plans" }

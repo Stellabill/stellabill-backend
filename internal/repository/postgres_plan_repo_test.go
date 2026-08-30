@@ -14,6 +14,18 @@ import (
 
 var testBaseTime = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
+var findPlanByIDQuery = `-- name: FindPlanByID :one
+SELECT id, tenant_id, name, amount_cents::text, currency, interval, description, updated_at, version
+FROM plans
+WHERE id = $1
+`
+
+var listPlansQuery = `-- name: ListPlans :many
+SELECT id, tenant_id, name, amount_cents::text, currency, interval, description, updated_at, version
+FROM plans
+ORDER BY name, id
+`
+
 func TestPostgresPlanRepoFindByID(t *testing.T) {
 	db, mock := newPlanSQLMock(t)
 	repo := NewPostgresPlanRepo(db)

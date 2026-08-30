@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	slolint "stellarbill-backend/tools/slo-lint"
 )
 
 func main() {
@@ -32,7 +30,7 @@ func main() {
 				continue
 			}
 
-			rules, err := slolint.GenerateRules(content)
+			rules, err := GenerateRules(content)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error generating rules for %s: %v\n", match, err)
 				hasError = true

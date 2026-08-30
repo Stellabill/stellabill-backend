@@ -1,9 +1,8 @@
-package middleware
+package repository
 
 import (
 	"net/http"
 	"net/http/httptest"
-	"stellarbill-backend/internal/repository"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -12,8 +11,8 @@ import (
 func TestDataLoaderMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	planRepo := repository.NewMockPlanRepo()
-	subRepo := repository.NewMockSubscriptionRepo()
+	planRepo := NewMockPlanRepo()
+	subRepo := NewMockSubscriptionRepo()
 
 	r := gin.New()
 	r.Use(DataLoaderMiddleware(planRepo, subRepo))
@@ -27,7 +26,7 @@ func TestDataLoaderMiddleware(t *testing.T) {
 			retrievedFromGinContext = true
 		}
 
-		loader2 := repository.LoaderFromContext(c.Request.Context())
+		loader2 := LoaderFromContext(c.Request.Context())
 		if loader2 != nil {
 			retrievedFromStdContext = true
 		}

@@ -42,6 +42,14 @@ func (m *mockPlanRepo) FindByID(ctx context.Context, id string) (*repository.Pla
 	return nil, nil
 }
 
+func (m *mockPlanRepo) FindByIDs(ctx context.Context, ids []string) ([]*repository.PlanRow, error) {
+	return m.plans, nil
+}
+
+func (m *mockPlanRepo) FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*repository.PlanRow, error) {
+	return m.plans, nil
+}
+
 func TestStandaloneListPlans(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

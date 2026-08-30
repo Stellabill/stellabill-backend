@@ -1,6 +1,7 @@
 package tracing
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -116,7 +117,7 @@ func extractTier(params sdktrace.SamplingParameters) string {
 //	TRACING_DEFAULT_RATIO    (default 0.05 =   5%)
 //
 // The returned shutdown function drains and shuts down the provider.
-func InitTracer(serviceName string) (func(), error) {
+func InitTracer(serviceName string) (func() error, error) {
 	enterpriseRatio := getEnvFloat("TRACING_ENTERPRISE_RATIO", DefaultEnterpriseRatio)
 	freeRatio := getEnvFloat("TRACING_FREE_RATIO", DefaultFreeRatio)
 	defaultRatio := getEnvFloat("TRACING_DEFAULT_RATIO", DefaultGlobalRatio)
@@ -130,7 +131,9 @@ func InitTracer(serviceName string) (func(), error) {
 	otel.SetTracerProvider(provider)
 	otel.SetTextMapPropagator(InitPropagators())
 
-	return provider.Shutdown, nil
+	return func() error {
+		return provider.Shutdown(context.Background())
+	}, nil
 }
 
 func getEnvFloat(key string, fallback float64) float64 {

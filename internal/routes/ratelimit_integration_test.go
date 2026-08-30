@@ -85,11 +85,22 @@ func rateLimitTestToken(sub string) string {
 		"tenant": "test-tenant",
 		"exp":    time.Now().Add(time.Hour).Unix(),
 	})
-	signed, err := token.SignedString([]byte("Test-Secret-Must-Be-Long-And-Complex-123!"))
+	signed, err := token.SignedString([]byte("Test1!JwtSecret-MixedAlphaNumeric@123"))
 	if err != nil {
 		panic(err)
 	}
 	return signed
+}
+
+// makeRatelimitJWT creates a JWT signed with the secret configured by
+// setupRouter (JWT_SECRET) so rate-limit tests authenticate successfully.
+func makeRatelimitJWT(t *testing.T, sub string, roles []auth.Role) string {
+	t.Helper()
+	token, err := createToken("Test1!JwtSecret-MixedAlphaNumeric@123", sub, roles, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create rate-limit JWT: %v", err)
+	}
+	return token
 }
 
 func serveAuthorizedRateLimit(r *gin.Engine, method, path, remoteAddr, sub string) *httptest.ResponseRecorder {
@@ -135,7 +146,7 @@ func TestRouter_BurstLimit_IsHonored(t *testing.T) {
 	r := setupRouter()
 
 	path := "/api/v1/subscriptions"
-	token := makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
+	makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
 
 	// first 2 requests should pass (burst = 2)
 	for i := 0; i < 2; i++ {
@@ -156,9 +167,7 @@ func TestRouter_RateLimit_Disabled(t *testing.T) {
 	os.Setenv("RATE_LIMIT_BURST", "1")
 
 	r := setupRouter()
-
-	path := "/api/v1/subscriptions"
-	token := makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
+	makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
 
 	for i := 0; i < 30; i++ {
 		w := serveAuthorizedRateLimit(r, "GET", "/api/v1/subscriptions", "2.2.2.2:1234", "rate-user")
@@ -178,7 +187,7 @@ func TestRouter_RateLimit_Modes(t *testing.T) {
 		r := setupRouter()
 
 		path := "/api/v1/subscriptions"
-		token := makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
+		makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
 
 		// IP1 exhausts
 		w1 := serveAuthorizedRateLimit(r, "GET", path, "10.0.0.1:1111", "ip-user")
@@ -221,7 +230,7 @@ func TestRouter_RateLimit_Modes(t *testing.T) {
 		path := "/api/v1/subscriptions"
 
 		// user1 token
-		token1 := makeRatelimitJWT(t, "user1", []auth.Role{auth.RoleUser})
+		makeRatelimitJWT(t, "user1", []auth.Role{auth.RoleUser})
 
 		// same user different IP should be separate bucket
 		serveAuthorizedRateLimit(r, "GET", path, "10.0.0.1:1111", "hybrid-user")
@@ -240,7 +249,7 @@ func TestRouter_SustainedLoad_Behavior(t *testing.T) {
 	r := setupRouter()
 
 	path := "/api/v1/subscriptions"
-	token := makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
+	makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
 
 	success := 0
 	limited := 0

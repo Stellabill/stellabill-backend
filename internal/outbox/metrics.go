@@ -35,6 +35,8 @@ var (
 	OutboxBacklogDepth            *prometheus.GaugeVec
 	OutboxKafkaProduceLatency     *prometheus.HistogramVec
 	OutboxKafkaErrorsTotal        *prometheus.CounterVec
+	OutboxPublisherLimit          prometheus.Gauge
+	OutboxPublisherInflight       prometheus.Gauge
 	ChaosOutboxCancellationsTotal prometheus.Counter
 )
 
@@ -81,6 +83,18 @@ func init() {
 		Help: "Total number of outbox publish cancellations injected by the chaos hook (staging only)",
 	})
 	_ = prometheus.Register(ChaosOutboxCancellationsTotal)
+
+	OutboxPublisherLimit = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_publisher_limit",
+		Help: "Current adaptive concurrency limit for outbox publishers",
+	})
+	_ = prometheus.Register(OutboxPublisherLimit)
+
+	OutboxPublisherInflight = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_publisher_inflight",
+		Help: "Current number of in-flight outbox publish operations",
+	})
+	_ = prometheus.Register(OutboxPublisherInflight)
 }
 
 // CapTenantLabel normalizes and truncates a tenant id for Prometheus labels.

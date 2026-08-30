@@ -663,7 +663,7 @@ func TestExtractRolesFromClaims_RoleFallback(t *testing.T) {
 		t.Errorf("expected 1 role, got %d", len(roles))
 	}
 
-	if roles[0] != auth.RoleAdmin {
+	if roles[0] != string(auth.RoleAdmin) {
 		t.Errorf("expected role admin, got %s", roles[0])
 	}
 }

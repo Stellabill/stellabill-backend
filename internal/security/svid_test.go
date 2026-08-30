@@ -7,16 +7,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"fmt"
 	"math/big"
-	"net"
 	"testing"
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
 
@@ -31,10 +28,10 @@ func TestSVIDRotator_ServerTLSConfig_RequiresClientCert(t *testing.T) {
 	defer cancel()
 
 	// Create a test X509Source mock (in real scenario, would connect to SPIRE)
-	rotator, mockSource := newTestSVIDRotator(t, ctx)
+	rotator, _ := newTestSVIDRotator(t, ctx)
 	defer rotator.Close()
 
-	allowedID, err := spiffeid.IDFromString("spiffe://example.com/allowed")
+	allowedID, err := spiffeid.FromString("spiffe://example.com/allowed")
 	require.NoError(t, err)
 
 	// Get the server TLS config
@@ -59,10 +56,10 @@ func TestSVIDRotator_ClientTLSConfig_PresentsSVID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	rotator, mockSource := newTestSVIDRotator(t, ctx)
+	rotator, _ := newTestSVIDRotator(t, ctx)
 	defer rotator.Close()
 
-	serverID, err := spiffeid.IDFromString("spiffe://example.com/server")
+	serverID, err := spiffeid.FromString("spiffe://example.com/server")
 	require.NoError(t, err)
 
 	// Get the client TLS config
@@ -90,10 +87,10 @@ func TestSVIDRotator_MutualAuthentication_Succeeds(t *testing.T) {
 	rotator, _ := newTestSVIDRotator(t, ctx)
 	defer rotator.Close()
 
-	serverID, err := spiffeid.IDFromString("spiffe://example.com/server")
+	serverID, err := spiffeid.FromString("spiffe://example.com/server")
 	require.NoError(t, err)
 
-	clientID, err := spiffeid.IDFromString("spiffe://example.com/client")
+	clientID, err := spiffeid.FromString("spiffe://example.com/client")
 	require.NoError(t, err)
 
 	// In a real test, we would:
@@ -168,7 +165,7 @@ func TestServerCredentials_ReturnsTransportCredentials(t *testing.T) {
 	rotator, _ := newTestSVIDRotator(t, ctx)
 	defer rotator.Close()
 
-	allowedID, err := spiffeid.IDFromString("spiffe://example.com/allowed")
+	allowedID, err := spiffeid.FromString("spiffe://example.com/allowed")
 	require.NoError(t, err)
 
 	creds := rotator.ServerCredentials(allowedID)
@@ -195,7 +192,7 @@ func TestClientCredentials_ReturnsTransportCredentials(t *testing.T) {
 	rotator, _ := newTestSVIDRotator(t, ctx)
 	defer rotator.Close()
 
-	serverID, err := spiffeid.IDFromString("spiffe://example.com/server")
+	serverID, err := spiffeid.FromString("spiffe://example.com/server")
 	require.NoError(t, err)
 
 	creds := rotator.ClientCredentials(serverID)
@@ -317,7 +314,7 @@ func BenchmarkSVIDRotator_ClientTLSConfig(b *testing.B) {
 	rotator, _ := newTestSVIDRotator(&testing.T{}, ctx)
 	defer rotator.Close()
 
-	serverID, _ := spiffeid.IDFromString("spiffe://example.com/server")
+	serverID, _ := spiffeid.FromString("spiffe://example.com/server")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -337,7 +334,7 @@ func BenchmarkSVIDRotator_ServerTLSConfig(b *testing.B) {
 	rotator, _ := newTestSVIDRotator(&testing.T{}, ctx)
 	defer rotator.Close()
 
-	allowedID, _ := spiffeid.IDFromString("spiffe://example.com/allowed")
+	allowedID, _ := spiffeid.FromString("spiffe://example.com/allowed")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

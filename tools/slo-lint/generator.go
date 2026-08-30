@@ -1,4 +1,4 @@
-package slolint
+package main
 
 import (
 	"bytes"

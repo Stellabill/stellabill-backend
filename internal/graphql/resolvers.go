@@ -185,7 +185,6 @@ func resolvePlanField(p graphql.ResolveParams) (interface{}, error) {
 				"description": plan.Description,
 			}, nil
 		}, nil
-	}
 }
 
 // resolveSubscriptionField fetches the subscription associated with a statement using the dataloader.
@@ -233,4 +232,3 @@ func resolveSubscriptionField(p graphql.ResolveParams) (interface{}, error) {
 			}, nil
 		}, nil
 	}
-}

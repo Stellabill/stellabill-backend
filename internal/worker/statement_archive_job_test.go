@@ -94,7 +94,7 @@ func TestStatementArchiveJob_ArchiveOldStatements(t *testing.T) {
 	config.ArchiveThresholdMonths = 12
 	config.BatchSize = 10
 
-	job := worker.NewStatementArchiveJob(db, objStore, config, nil)
+	_ = worker.NewStatementArchiveJob(db, objStore, config, nil)
 
 	// Insert statements: old (eligible) and new (not eligible)
 	oldDate := time.Now().AddDate(-2, 0, 0).Format(time.RFC3339)

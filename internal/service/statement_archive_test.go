@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
 	"testing"

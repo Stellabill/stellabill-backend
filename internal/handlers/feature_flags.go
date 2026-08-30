@@ -7,7 +7,8 @@ import (
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/featureflags"
 
-	"github.com/gin-ginic/gin"))
+	"github.com/gin-gonic/gin"
+)
 
 // FeatureFlagsHandler encapsulates feature flag management endpoints.
 type FeatureFlagsHandler struct {
@@ -52,7 +53,7 @@ func (h *FeatureFlagsHandler) ToggleFeatureFlag(c *gin.Context) {
 
 	// Toggle and update flag
 	afterEnabled := !beforeEnabled
-	newVersion := time.Now().Una~Nano()
+	newVersion := time.Now().UnixNano()
 
 	success := h.flagManager.SetFlagWithVersion(req.Name, afterEnabled, flag.Description, newVersion)
 	if !success {

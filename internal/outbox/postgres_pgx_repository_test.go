@@ -9,25 +9,26 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"stellarbill-backend/internal/db"
 )
 
 type mockPgxPool struct {
-	execFn      func(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
-	copyFromFn  func(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
-	queryRowFn  func(ctx context.Context, sql string, args ...any) pgx.Row
-	queryFn     func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	beginFn     func(ctx context.Context) (pgx.Tx, error)
-	beginTxFn   func(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	execFn     func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	copyFromFn func(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
+	queryRowFn func(ctx context.Context, sql string, args ...any) pgx.Row
+	queryFn    func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	beginFn    func(ctx context.Context) (pgx.Tx, error)
+	beginTxFn  func(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 }
 
-func (m *mockPgxPool) Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error) {
+func (m *mockPgxPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	if m.execFn != nil {
 		return m.execFn(ctx, sql, args...)
 	}
-	return pgx.CommandTag("INSERT 0 1"), nil
+	return pgconn.NewCommandTag("INSERT 0 1"), nil
 }
 
 func (m *mockPgxPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
@@ -101,10 +102,10 @@ func TestPostgresPgxRepository_BulkInsert_SingleEvent(t *testing.T) {
 	var executedSQL string
 	var executedArgs []any
 	pool := &mockPgxPool{
-		execFn: func(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error) {
+		execFn: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 			executedSQL = sql
 			executedArgs = args
-			return pgx.CommandTag("INSERT 0 1"), nil
+			return pgconn.NewCommandTag("INSERT 0 1"), nil
 		},
 	}
 	repo := &PostgresPgxRepository{pool: pool}

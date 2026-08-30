@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type redisError string
+
+func (e redisError) Error() string { return string(e) }
+func (e redisError) RedisError()   {}
 
 // setupRedisPublisher creates a miniredis server and a RedisPublisher backed by it.
 func setupRedisPublisher(t *testing.T) (*RedisPublisher, *miniredis.Miniredis) {
@@ -32,7 +38,34 @@ func setupRedisPublisher(t *testing.T) (*RedisPublisher, *miniredis.Miniredis) {
 	return p, s
 }
 
-func makeTestEvent() *Event {
+func streamLenFor(t *testing.T, s *miniredis.Miniredis, stream string) int64 {
+	t.Helper()
+	client := redis.NewClient(&redis.Options{Addr: s.Addr()})
+	t.Cleanup(func() { client.Close() })
+	length, err := client.XLen(context.Background(), stream).Result()
+	require.NoError(t, err)
+	return length
+}
+
+func streamEntries(t *testing.T, s *miniredis.Miniredis, stream string, count int64) []redis.XMessage {
+	t.Helper()
+	client := redis.NewClient(&redis.Options{Addr: s.Addr()})
+	t.Cleanup(func() { client.Close() })
+	entries, err := client.XRangeN(context.Background(), stream, "-", "+", count).Result()
+	require.NoError(t, err)
+	return entries
+}
+
+func streamGroups(t *testing.T, s *miniredis.Miniredis, stream string) []redis.XInfoGroup {
+	t.Helper()
+	client := redis.NewClient(&redis.Options{Addr: s.Addr()})
+	t.Cleanup(func() { client.Close() })
+	groups, err := client.XInfoGroups(context.Background(), stream).Result()
+	require.NoError(t, err)
+	return groups
+}
+
+func makeRedisTestEvent() *Event {
 	data, _ := json.Marshal(EventData{
 		Type:      "test.event",
 		Data:      map[string]string{"foo": "bar"},
@@ -44,8 +77,8 @@ func makeTestEvent() *Event {
 		TenantID:      "tenant-1",
 		EventType:     "test.event",
 		EventData:     data,
-		AggregateID:   stringPtr("agg-1"),
-		AggregateType: stringPtr("subscription"),
+		AggregateID:   helperStrPtr("agg-1"),
+		AggregateType: helperStrPtr("subscription"),
 		OccurredAt:    time.Now(),
 		Version:       1,
 	}
@@ -53,19 +86,16 @@ func makeTestEvent() *Event {
 
 func TestRedisPublisher_Publish_Success(t *testing.T) {
 	p, s := setupRedisPublisher(t)
-	event := makeTestEvent()
+	event := makeRedisTestEvent()
 
 	err := p.Publish(context.Background(), event)
 	require.NoError(t, err)
 
 	// Verify the stream has the event
-	streamLen, err := s.XLen(p.stream)
-	require.NoError(t, err)
-	assert.Equal(t, 1, streamLen)
+	assert.EqualValues(t, 1, streamLenFor(t, s, p.stream))
 
 	// Verify stream contents
-	entries, err := s.XReadRange(p.stream, "-", "+", 10)
-	require.NoError(t, err)
+	entries := streamEntries(t, s, p.stream, 10)
 	require.Len(t, entries, 1)
 
 	entry := entries[0]
@@ -94,16 +124,14 @@ func TestRedisPublisher_Publish_MaxLenCap(t *testing.T) {
 
 	// Publish more events than the cap
 	for i := 0; i < 20; i++ {
-		event := makeTestEvent()
+		event := makeRedisTestEvent()
 		// Give each event a unique ID so miniredis treats them as distinct entries
 		event.ID = uuid.New()
 		require.NoError(t, p.Publish(context.Background(), event))
 	}
 
 	// Stream should be capped at ~maxLen entries
-	streamLen, err := s.XLen(p.stream)
-	require.NoError(t, err)
-	assert.LessOrEqual(t, streamLen, int(maxLen))
+	assert.LessOrEqual(t, streamLenFor(t, s, p.stream), maxLen)
 }
 
 func TestRedisPublisher_ConsumerGroupCreated(t *testing.T) {
@@ -120,8 +148,7 @@ func TestRedisPublisher_ConsumerGroupCreated(t *testing.T) {
 	require.NotNil(t, p)
 
 	// Verify the group exists
-	groups, err := s.XInfoGroups("test:stream")
-	require.NoError(t, err)
+	groups := streamGroups(t, s, "test:stream")
 	require.Len(t, groups, 1)
 	assert.Equal(t, "test-group", groups[0].Name)
 }
@@ -177,7 +204,7 @@ func TestRedisPublisher_Publish_WithApproxMaxLen(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = p.Publish(context.Background(), makeTestEvent())
+	err = p.Publish(context.Background(), makeRedisTestEvent())
 	require.NoError(t, err)
 }
 
@@ -197,7 +224,7 @@ func TestRedisPublisher_Publish_ConnectionRefused(t *testing.T) {
 		maxLen: 1000,
 	}
 
-	err := p.Publish(context.Background(), makeTestEvent())
+	err := p.Publish(context.Background(), makeRedisTestEvent())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redis: xadd")
 }
@@ -207,12 +234,11 @@ func TestRedisPublisher_HistogramMetricRecorded(t *testing.T) {
 
 	before := testutil.ToFloat64(redisPublishDuration)
 
-	err := p.Publish(context.Background(), makeTestEvent())
+	err := p.Publish(context.Background(), makeRedisTestEvent())
 	require.NoError(t, err)
 
 	// Force the stream to advance so miniredis picks up the entry
-	_, err = s.XLen(p.stream)
-	require.NoError(t, err)
+	_ = streamLenFor(t, s, p.stream)
 
 	after := testutil.ToFloat64(redisPublishDuration)
 	assert.Greater(t, after, before, "histogram should increment after a publish")
@@ -234,14 +260,14 @@ func TestRedisPublisher_Publish_MovedRedirect(t *testing.T) {
 		maxLen: 1000,
 	}
 
-	event := makeTestEvent()
+	event := makeRedisTestEvent()
 
 	// Override the client with one that returns MOVED on the first call
 	var callCount int32
 	mockClient := &movedInjectorClient{
-		inner:   client,
+		inner: client,
 		onFirst: func() error {
-			return &redis.MovedError{Slot: 1234, Addr: s2.Addr()}
+			return redisError(fmt.Sprintf("MOVED %d %s", 1234, s2.Addr()))
 		},
 		callCount: &callCount,
 	}
@@ -251,8 +277,7 @@ func TestRedisPublisher_Publish_MovedRedirect(t *testing.T) {
 	require.NoError(t, err, "should handle MOVED redirect and succeed")
 
 	// The event should be in stream on s2
-	entries, err := s2.XReadRange("test:stream", "-", "+", 10)
-	require.NoError(t, err)
+	entries := streamEntries(t, s2, "test:stream", 10)
 	require.Len(t, entries, 1)
 	assert.Equal(t, event.ID.String(), entries[0].Values["id"])
 }
@@ -291,13 +316,13 @@ func TestRedisPublisher_Publish_AskRedirect(t *testing.T) {
 		maxLen: 1000,
 	}
 
-	event := makeTestEvent()
+	event := makeRedisTestEvent()
 
 	var callCount int32
 	mockClient := &askInjectorClient{
-		inner:   client,
+		inner: client,
 		onFirst: func() error {
-			return &redis.AskError{Slot: 1234, Addr: s2.Addr()}
+			return redisError(fmt.Sprintf("ASK %d %s", 1234, s2.Addr()))
 		},
 		callCount: &callCount,
 	}
@@ -306,8 +331,7 @@ func TestRedisPublisher_Publish_AskRedirect(t *testing.T) {
 	err := p.Publish(context.Background(), event)
 	require.NoError(t, err)
 
-	entries, err := s2.XReadRange("test:stream", "-", "+", 10)
-	require.NoError(t, err)
+	entries := streamEntries(t, s2, "test:stream", 10)
 	require.Len(t, entries, 1)
 	assert.Equal(t, event.ID.String(), entries[0].Values["id"])
 }
@@ -347,13 +371,13 @@ func TestRedisPublisher_Publish_MovedPermanentError(t *testing.T) {
 	mockClient := &movedInjectorClient{
 		inner: client,
 		onFirst: func() error {
-			return &redis.MovedError{Slot: 1234, Addr: "127.0.0.1:1"}
+			return redisError(fmt.Sprintf("MOVED %d %s", 1234, "127.0.0.1:1"))
 		},
 		callCount: &callCount,
 	}
 	p.client = mockClient
 
-	err := p.Publish(context.Background(), makeTestEvent())
+	err := p.Publish(context.Background(), makeRedisTestEvent())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redis: xadd redirect to")
 }
@@ -361,7 +385,7 @@ func TestRedisPublisher_Publish_MovedPermanentError(t *testing.T) {
 func TestRedisPublisher_EventToValues(t *testing.T) {
 	p := &RedisPublisher{}
 
-	event := makeTestEvent()
+	event := makeRedisTestEvent()
 	values := p.eventToValues(event)
 
 	assert.Equal(t, event.ID.String(), values["id"])
@@ -377,11 +401,11 @@ func TestRedisPublisher_EventToValues(t *testing.T) {
 func TestRedisPublisher_EventToValues_NilPointers(t *testing.T) {
 	p := &RedisPublisher{}
 	event := &Event{
-		ID:        uuid.New(),
-		EventType: "test",
-		EventData: json.RawMessage(`{}`),
+		ID:         uuid.New(),
+		EventType:  "test",
+		EventData:  json.RawMessage(`{}`),
 		OccurredAt: time.Now(),
-		Version:   1,
+		Version:    1,
 	}
 
 	values := p.eventToValues(event)
@@ -423,7 +447,7 @@ func TestRedisPublisher_Publish_TransientError(t *testing.T) {
 		maxLen: 1000,
 	}
 
-	err := p.Publish(context.Background(), makeTestEvent())
+	err := p.Publish(context.Background(), makeRedisTestEvent())
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.DeadlineExceeded) || containsDialError(err), "expected a dial/connection error")
 }

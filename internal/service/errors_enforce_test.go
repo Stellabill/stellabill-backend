@@ -1,7 +1,6 @@
 package service_test
 
 import (
-	"errors"
 	"fmt"
 	"testing"
 

@@ -1,119 +1,171 @@
 package repository
 
 import (
-    "context"
-    "database/sql"
-    "errors"
-    "regexp"
-    "testing"
+	"context"
+	"database/sql"
+	"errors"
+	"regexp"
+	"testing"
+	"time"
 
-    "github.com/DATA-DOG/go-sqlmock"
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func TestCreateStatement(t *Testing.T) {
-    db, mock, err := sqlmock.New()
-    if err != nil { t.Fatal(err) }
-    defer db.Close()
+func TestStatementsRepoCreateInvalidInput(t *testing.T) {
+	db, _, _ := sqlmock.New()
+	defer db.Close()
 
-    stmt := &Statement{
-        ID: "stmt_1", SubscriptionID: "sub_1", CustomerID: "cust_1",
-        PeriodStart: "2024-05-01T00:00:00Z", PeriodEnd: "2024-05-31T00:00:00Z",
-        IssuedAt: "2024-05-01T00:00:00Z", TotalAmount: "100.00",
-        Currency: "USD", Kind: "invoice", Status: "issued",
-    }
-
-    // EnsureMonthPartition checks isTablePartitioned -> false
-    mock.ExpectQuery("SELECT EXISTS \\(.*pg_partitioned_table.*&).").
-        WithArgs("statements").
-        WillReturnRows(sqlmock.NewRows([]"exists"]).AddRow(false))
-
-    mock.ExpectExec("INSERT INTO statements").
-        WithArgs(stmt.ID, stmt.SubscriptionID, stmt.CustomerID, stmt.PeriodStart, stmt.PeriodEnd, stmt.IssuedAt, stmt.TotalAmount, stmt.Currency, stmt.Kind, stmt.Status, nil).
-        WillReturnResult(sqlmock.NewResult(1, 1))
-
-    err := CreateStatement(context.Background(), db, stmt)
-    if err != nil { t.Fatalf("CreateStatement() error = %v", err) }
-    if err := mock.ExpectationsWereMet(); err != nil { t.Error(err) }
+	repo := NewStatementsRepo(db)
+	id, err := repo.Create(context.Background(), &Statement{TenantID: ""})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if id != 0 {
+		t.Fatalf("expected id 0, got %d", id)
+	}
 }
 
-fung TestCreateStatementMissingPeriodStart(t *Testing.T) {
-    db, _, _ := sqlmock.New()
-    defer db.Close()
+func TestStatementsRepoCreate(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
-    stmt := &Statement{ID: "stmt_1", PeriodStart: ""}
-    err := CreateStatement(context.Background(), db, stmt)
-    if err == nil {
-        t.Error("expected error for missing period_start")
-    }
+	repo := NewStatementsRepo(db)
+
+	query := regexp.QuoteMeta("INSERT INTO statements (tenant_id, content, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id")
+	mock.ExpectQuery(query).
+		WithArgs("tenant-A", "hello", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(42)))
+
+	id, err := repo.Create(context.Background(), &Statement{TenantID: "tenant-A", Content: "hello"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if id != 42 {
+		t.Fatalf("expected id 42, got %d", id)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
 }
 
-func TestGetStatement(t *Testing.T) {
-    db, mock, _ := sqlmock.New()
-    defer db.Close()
+func TestStatementsRepoGet(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
 
-    rows := sqlmock.NewRows([]""id","subscription_id","customer_id","period_start","period_end","issued_at","total_amount","currency","kind","status","deleted_at"]).
-        AddRow("stmt_1","sub_1","cust_1","2024-05-01T00:00:00Z","2024-05-31T00:00:00Z","2024-05-01T00:00:00Z","100.00","USD","invoice","issued", nil)
+	repo := NewStatementsRepo(db)
+	createdAt := time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC)
 
-    mock.ExpectQuery("SELECT id, subscription_id, customer_id, period_start, period_end, issued_at, total_amount, currency, kind, status, deleted_at FROM statements WHERE id = $1 AND period_start = $2 AND deleted_at IS NULL").
-        WithArgs("stmt_1", "2024-05-01T00:00:00Z").
-        WillReturnRows(rows)
+	query := regexp.QuoteMeta("SELECT id, tenant_id, content, created_at, updated_at FROM statements WHERE tenant_id = ? AND id = ?")
+	mock.ExpectQuery(query).
+		WithArgs("tenant-A", 7).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "content", "created_at", "updated_at"}).
+			AddRow(7, "tenant-A", "content", createdAt, createdAt))
 
-    stmt, err := GetStatement(context.Background(), db, "stmt_1", "2024-05-01T00:00:00Z")
-    if err != nil { t.Fatalf("GetStatement() error = %v", err) }
-    if stmt.ID != "stmt_1" { t.Errorf("unexpected statement: %v", stmt) }
+	got, err := repo.Get(context.Background(), "tenant-A", 7)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.ID != 7 || got.TenantID != "tenant-A" || got.Content != "content" {
+		t.Fatalf("unexpected statement: %+v", got)
+	}
 }
 
-func TestGetStatementNotFound(t *Testing.T) {
-    db, mock, _ := sqlmock.New()
-    defer db.Close()
+func TestStatementsRepoGetInvalidInput(t *testing.T) {
+	db, _, _ := sqlmock.New()
+	defer db.Close()
 
-    mock.ExpectQuery(".*FROM statements.*&)).WithArgs("missing", "2024-05-01T00:00:00Z").
-        WillReturnRows(sqlmock.NewRows([]"result"].AddRow(null)))
-
-    _, err := GetStatement(context.Background(), db, "missing", "2024-05-01T00:00:00Z")
-    if !errors.Is(err, sql.ErrNoRows) {
-        t.Errorf("expected ErrNoRows, got %v", err)
-    }
+	repo := NewStatementsRepo(db)
+	if _, err := repo.Get(context.Background(), "", 1); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for empty tenant, got %v", err)
+	}
+	if _, err := repo.Get(context.Background(), "tenant-A", 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for zero id, got %v", err)
+	}
 }
 
-func TestListStatementsByCustomer(t *Testing.T) {
-    db, mock, _ := sqlmock.New()
-    defer db.Close()
+func TestStatementsRepoGetNotFound(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
 
-    rows := sqlmock.NewRows([]""id","subscription_id","customer_id","period_start","period_end","issued_at","total_amount","currency","kind","status","deleted_at"]).
-        AddRow("stmt_1","sub_1","cust_1","2024-05-01T00:00:00Z","2024-05-31T00:00:00Z","2024-05-01T00:00:00Z","100.00","USD","invoice","issued", nil).
-        AddRow("stmt_2","sub_2","cust_1","2024-06-01T00:00:00Z","2024-06-30T00:00:00Z","2024-06-01T00:00:00Z","200.00","USD","invoice","issued", nil)
+	repo := NewStatementsRepo(db)
 
-    mock.ExpectQuery("SELECT .* FROM statements WHERE customer_id = $1 AND period_start >= $2 AND period_start < $3 AND deleted_at IS NULL ORDER BY period_start").
-        WithArgs("cust_1", "2024-05-01T00:00:00Z", "2024-07-01T00:00:00Z").
-        WillReturnRows(rows)
+	query := regexp.QuoteMeta("SELECT id, tenant_id, content, created_at, updated_at FROM statements WHERE tenant_id = ? AND id = ?")
+	mock.ExpectQuery(query).
+		WithArgs("tenant-A", 99).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "content", "created_at", "updated_at"}))
 
-    stmts, err := ListStatementsByCustomer(context.Background(), db, "cust_1", "2024-05-01T00:00:00Z", "2024-07-01T00:00:00Z")
-    if err != nil { t.Fatalf("ListStatementsByCustomer() error = %v", err) }
-    if len(stmts) != 2 { t.Errorf("expected 2 statements, got %d", len(stmts)) }
+	_, err := repo.Get(context.Background(), "tenant-A", 99)
+	if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected no-rows/not-found error, got %v", err)
+	}
 }
 
-func TestListStatementsBySubscription(t *Testing.T) {
-    db, mock, _ := sqlmock.New()
-    defer db.Close()
+func TestStatementsRepoList(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
 
-    rows := sqlmock.NewRows([]"id","subscription_id","customer_id","period_start","period_end","issued_at","total_amount","currency","kind","status","deleted_at"]).
-        AddRow("stmt_1","sub_1","cust_1","2024-05-01T00:00:00Z","2024-05-31T00:00:00Z","2024-05-01T00:00:00Z","100.00","USD","invoice","issued", nil)
+	repo := NewStatementsRepo(db)
+	createdAt := time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC)
 
-    mock.ExpectQuery("SELECT .* FROM statements WHERE subscription_id = $1 AND period_start >= $2 AND period_start < $3 AND deleted_at IS NULL ORDER BY period_start").
-        WithArgs("sub_1", "2024-05-01T00:00:00Z", "2024-06-01T00:00:00Z").
-        WillReturnRows(rows)
+	mock.ExpectQuery("SELECT id, tenant_id, content, created_at, updated_at FROM statements WHERE tenant_id = \\? ORDER BY created_at").
+		WithArgs("tenant-A").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "content", "created_at", "updated_at"}).
+			AddRow(1, "tenant-A", "one", createdAt, createdAt).
+			AddRow(2, "tenant-A", "two", createdAt, createdAt))
 
-    stmts, err := ListStatementsBySubscription(context.Background(), db, "sub_1", "2024-05-01T00:00:00Z", "2024-06-01T00:00:00Z")
-    if err != nil { t.Fatalf("ListStatementsBySubscription() error = %v", err) }
-    if len(stmts) != 1 { t.Errorf("expected 1 statement, got %d", len(stmts)) }
+	stmts, err := repo.List(context.Background(), "tenant-A", nil, nil)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(stmts) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(stmts))
+	}
+	if stmts[0].ID != 1 || stmts[1].ID != 2 {
+		t.Fatalf("unexpected statement order: %+v", stmts)
+	}
 }
 
-func TestListStatementsByCustomerInvalidDates(t *Testing.T) {
-    db, _, _ := sqlmock.New()
-    defer db.Close()
+func TestStatementsRepoListInvalidInput(t *testing.T) {
+	db, _, _ := sqlmock.New()
+	defer db.Close()
 
-    if _, err := ListStatementsByCustomer(context.Background(), db, "cust_1", ", ""); err == nil {
-        t.Error("expected error when dates are empty")
-    }
+	repo := NewStatementsRepo(db)
+	if _, err := repo.List(context.Background(), "", nil, nil); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestStatementsRepoUpdateNotFound(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
+
+	repo := NewStatementsRepo(db)
+
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE statements SET content = ?, updated_at = ? WHERE tenant_id = ? AND id = ?")).
+		WithArgs("new", sqlmock.AnyArg(), "tenant-A", 9).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := repo.Update(context.Background(), "tenant-A", 9, "new")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestStatementsRepoDeleteNotFound(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
+
+	repo := NewStatementsRepo(db)
+
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM statements WHERE tenant_id = ? AND id = ?")).
+		WithArgs("tenant-A", 9).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := repo.Delete(context.Background(), "tenant-A", 9)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
 }

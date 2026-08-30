@@ -179,7 +179,7 @@ func (tpl *tenantPlanLoader) load(ctx context.Context, id string) (*PlanRow, err
 	case res := <-ch:
 		return res.row, res.err
 	case <-ctx.Done():
-		return nil, ctx.Done()
+		return nil, ctx.Err()
 	}
 }
 
@@ -269,7 +269,7 @@ func (tsl *tenantSubLoader) load(ctx context.Context, id string) (*SubscriptionR
 	case res := <-ch:
 		return res.row, res.err
 	case <-ctx.Done():
-		return nil, ctx.Done()
+		return nil, ctx.Err()
 	}
 }
 

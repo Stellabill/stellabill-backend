@@ -2,9 +2,12 @@ package routes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"stellarbill-backend/internal/auth"
@@ -12,8 +15,10 @@ import (
 	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/secrets"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/storage/s3"
@@ -31,11 +36,28 @@ func Register(r *gin.Engine) {
 	if err != nil {
 		panic(fmt.Sprintf("failed to load configuration: %v", err))
 	}
+	register(r, cfg)
+}
+
+// RegisterWithCleanup configures all routes on the provided router and returns
+// a cleanup function that stops background jobs started during registration.
+func RegisterWithCleanup(r *gin.Engine) (func(context.Context) error, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return func(context.Context) error { return nil }, err
+	}
+	return register(r, cfg), nil
+}
+
+// register wires the complete route table. The returned cleanup function
+// tears down background jobs created from the configuration.
+func register(r *gin.Engine, cfg config.Config) func(context.Context) error {
+	var stops []func() error
 
 	// Start the ANALYZE background job to keep table statistics fresh.
 	// Uses pgxpool so ANALYZE runs on the same connection pool as the rest
 	// of the application, avoiding a separate connection.
-	startAnalyzeJob(cfg)
+	stops = append(stops, startAnalyzeJob(cfg))
 
 	// Initialize tracing
 	if cfg.TracingExporter != "none" {
@@ -85,7 +107,7 @@ func Register(r *gin.Engine) {
 	planRepo := repository.NewMockPlanRepo()
 	stmtRepo := repository.NewMockStatementRepo()
 
-	r.Use(middleware.DataLoaderMiddleware(planRepo, subRepo))
+	r.Use(repository.DataLoaderMiddleware(planRepo, subRepo))
 
 	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
 	svc := service.NewSubscriptionService(subRepo, planRepo)
@@ -166,9 +188,21 @@ func Register(r *gin.Engine) {
 		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 	}
 
-	// Webhook receiver — signature verified by WebhookVerification middleware
+	// Webhook receivers — inbound provider events are HMAC-verified by
+	// provider-specific middleware and persisted to the outbox for async
+	// processing. Replays are rejected via the event-ID cache in the
+	// verification middleware (middleware.WebhookVerificationMiddleware).
+	// The legacy /webhooks route is retained for backward compatibility.
+	webhookHandler := handlers.NewWebhookHandler(webhookOutboxStore(cfg))
+	r.POST("/api/webhooks/stripe",
+		webhookReceiverMiddleware(middleware.ProviderStripe, cfg),
+		webhookHandler.Receive,
+	)
+	r.POST("/api/webhooks/generic",
+		webhookReceiverMiddleware(middleware.ProviderGeneric, cfg),
+		webhookHandler.Receive,
+	)
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
-	webhookHandler := handlers.NewWebhookHandler()
 	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
 	// Admin login (no JWT required — uses admin token directly)
 	r.POST("/api/admin/login", adminHandler.Login)
@@ -201,6 +235,16 @@ func Register(r *gin.Engine) {
 			c.JSON(200, gin.H{"reports": reports})
 		})
 	}
+
+	return func(ctx context.Context) error {
+		var errs []error
+		for _, stop := range stops {
+			if err := stop(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
 }
 
 type noopS3Uploader struct{}
@@ -210,24 +254,30 @@ type noopS3Uploader struct{}
 // development), it logs a warning and skips the job rather than failing
 // the entire startup.
 //
-// Note: The pool and job are intentionally not torn down on graceful shutdown.
-// The pool is long-lived (matching the server process lifetime) and ANALYZE is
-// non-blocking, so immediate termination on process exit is safe. A shutdown
-// hook can be added later if needed.
-func startAnalyzeJob(cfg config.Config) {
+// The returned stop function tears down the analyze job and closes the pool.
+// If no job could be started it is a no-op.
+func startAnalyzeJob(cfg config.Config) func() error {
 	pool, err := db.NewPool(context.Background(), cfg)
 	if err != nil {
 		log.Printf("analyze job: skipping — db pool creation failed: %v", err)
-		return
+		return func() error { return nil }
 	}
 	if pool == nil {
 		log.Println("analyze job: skipping — no database configured (empty DATABASE_URL)")
-		return
+		return func() error { return nil }
 	}
 
 	analyzeJob := worker.NewAnalyzeJob(pool, worker.DefaultAnalyzeConfig(), analyzeLogger{})
 	analyzeJob.Start()
 	log.Println("analyze job: started periodic ANALYZE for hot tables (outbox_events, statements, subscriptions)")
+
+	return func() error {
+		if err := analyzeJob.Stop(); err != nil {
+			return err
+		}
+		pool.Close()
+		return nil
+	}
 }
 
 // analyzeLogger adapts the standard log package to the worker's analyzeLogger
@@ -243,15 +293,53 @@ func (noopS3Uploader) PresignURL(context.Context, string, time.Duration) (s3.Pre
 	return s3.PresignedURL{URL: "", ExpiresAt: time.Time{}}, nil
 }
 
-func (m *mockHandlerPlanSvc) PatchPlan(c *gin.Context, id string, plan *handlers.Plan, expectedVersion int64) error {
-	repoPlan := &repository.PlanRow{
-		ID:          id,
-		Name:        plan.Name,
-		Description: plan.Description,
+// webhookOutboxStore returns an outbox repository for webhook persistence, or
+// nil when no database is configured (dev mode), in which case the receiver
+// validates and acknowledges events without persisting them.
+func webhookOutboxStore(cfg config.Config) outbox.Repository {
+	pool, err := db.NewPool(context.Background(), cfg)
+	if err != nil || pool == nil {
+		if err != nil {
+			log.Printf("webhook receiver: no outbox store (db pool: %v); events will be acknowledged without persistence", err)
+		}
+		return nil
 	}
-	return m.repo.Update(c.Request.Context(), repoPlan, expectedVersion)
+	return outbox.NewPostgresPgxRepository(pool)
 }
 
-func (m *mockHandlerPlanSvc) DeletePlan(c *gin.Context, id string, expectedVersion int64) error {
-	return m.repo.Delete(c.Request.Context(), id, expectedVersion)
+// webhookReceiverMiddleware builds the provider-specific webhook verification
+// middleware. The signing secret is resolved through the secrets provider
+// (WEBHOOK_SECRET_<PROVIDER>), falling back to the legacy WEBHOOK_SECRET
+// environment variable for backward compatibility.
+func webhookReceiverMiddleware(provider middleware.WebhookProvider, cfg config.Config) gin.HandlerFunc {
+	secret := os.Getenv("WEBHOOK_SECRET")
+	if p := secrets.NewDefaultProvider(); p != nil {
+		key := "WEBHOOK_SECRET_" + strings.ToUpper(provider.String())
+		if resolved, err := p.GetSecret(context.Background(), key); err == nil && resolved != "" {
+			secret = resolved
+		}
+	}
+
+	whCfg := middleware.ProviderConfig(provider)
+	whCfg.SecretKey = secret
+	if whCfg.SecretKey == "" {
+		return func(c *gin.Context) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error":   "webhook_receiver_unavailable",
+				"message": "webhook secret is not configured for provider " + provider.String(),
+			})
+		}
+	}
+
+	mw, err := middleware.WebhookVerificationMiddleware(whCfg)
+	if err != nil {
+		log.Printf("webhook receiver: provider %s disabled: %v", provider, err)
+		return func(c *gin.Context) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error":   "webhook_receiver_unavailable",
+				"message": err.Error(),
+			})
+		}
+	}
+	return mw
 }

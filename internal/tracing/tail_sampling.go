@@ -18,6 +18,8 @@ import (
 
 // tailConfig holds configuration for the tail sampling processor.
 type tailConfig struct {
+	enabled        bool
+	baselineRate   float64
 	maxTraces      int
 	maxSpans       int
 	decisionWindow time.Duration

@@ -26,6 +26,14 @@ func (m *mockExportPlanRepo) FindByID(_ context.Context, _ string) (*repository.
 	return nil, nil
 }
 
+func (m *mockExportPlanRepo) FindByIDs(_ context.Context, _ []string) ([]*repository.PlanRow, error) {
+	return m.plans, m.err
+}
+
+func (m *mockExportPlanRepo) FindByIDsAndTenant(_ context.Context, _ []string, _ string) ([]*repository.PlanRow, error) {
+	return m.plans, m.err
+}
+
 func (m *mockExportPlanRepo) List(_ context.Context) ([]*repository.PlanRow, error) {
 	return m.plans, m.err
 }
@@ -41,6 +49,10 @@ func (m *mockExportSubRepo) FindByID(_ context.Context, _ string) (*repository.S
 
 func (m *mockExportSubRepo) FindByIDAndTenant(_ context.Context, _, _ string) (*repository.SubscriptionRow, error) {
 	return nil, nil
+}
+
+func (m *mockExportSubRepo) FindByIDsAndTenant(_ context.Context, _ []string, _ string) ([]*repository.SubscriptionRow, error) {
+	return m.subs, m.err
 }
 
 func (m *mockExportSubRepo) UpdateStatus(_ context.Context, _, _, _ string) error {

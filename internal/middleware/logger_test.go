@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
 func TestLoggerNeverLeaksSecrets(t *testing.T) {
@@ -63,7 +64,7 @@ func TestLoggerNeverLeaksSecrets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			logger.Log.SetOutput(&buf)
-			logger.Log.SetFormatter(logger.NewLogSchemaFormatter(false))
+			logger.Log.SetFormatter(&logrus.JSONFormatter{})
 
 			r := gin.New()
 			r.Use(RequestLogger())

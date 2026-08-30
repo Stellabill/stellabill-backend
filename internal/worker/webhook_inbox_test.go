@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -20,8 +19,8 @@ type MockOutboxRepo struct {
 	mock.Mock
 }
 
-func (m *MockOutboxRepo) Store(event *outbox.Event) error {
-	args := m.Called(event)
+func (m *MockOutboxRepo) Store(ctx context.Context, event *outbox.Event) error {
+	args := m.Called(ctx, event)
 	return args.Error(0)
 }
 func (m *MockOutboxRepo) GetPendingEvents(limit int) ([]*outbox.Event, error)         { return nil, nil }
@@ -32,6 +31,14 @@ func (m *MockOutboxRepo) IncrementRetryCount(id uuid.UUID, nextRetryAt time.Time
 func (m *MockOutboxRepo) DeleteCompletedEvents(olderThan time.Time) (int64, error)    { return 0, nil }
 func (m *MockOutboxRepo) ListDeadLetteredEvents(limit int) ([]*outbox.Event, error)   { return nil, nil }
 func (m *MockOutboxRepo) RequeueEvent(id uuid.UUID) error                             { return nil }
+func (m *MockOutboxRepo) EnsurePublisherProgressTable() error                         { return nil }
+func (m *MockOutboxRepo) GetPublisherProgress(publisher string) (*uuid.UUID, error)   { return nil, nil }
+func (m *MockOutboxRepo) GetPendingEventsForPublisher(publisher string, limit int) ([]*outbox.Event, error) {
+	return nil, nil
+}
+func (m *MockOutboxRepo) MarkPublished(publisher string, event *outbox.Event, publishers []string) error {
+	return nil
+}
 
 
 func TestWorker_PreservesOrdering(t *testing.T) {
@@ -60,7 +67,7 @@ func TestWorker_PreservesOrdering(t *testing.T) {
 	require.NoError(t, err)
 
 	mockOutbox := new(MockOutboxRepo)
-	mockOutbox.On("Store", mock.Anything).Return(nil)
+	mockOutbox.On("Store", mock.Anything, mock.Anything).Return(nil)
 
 	w := &WebhookWorker{
 		DB:         pool,

@@ -213,3 +213,28 @@ func (csr *CachedSubscriptionRepo) Metrics() (hits uint64, misses uint64, stales
 		atomic.LoadUint64(&csr.misses),
 		atomic.LoadUint64(&csr.stales)
 }
+
+// Flush evicts all cached subscription entries and clears invalidation
+// markers. It implements cache.Purgeable for the admin purge endpoint.
+func (csr *CachedSubscriptionRepo) Flush(ctx context.Context) (int, error) {
+	n, err := cache.Flush(ctx, csr.cache)
+	if err != nil {
+		return n, err
+	}
+	csr.invalidatedMu.Lock()
+	for k := range csr.invalidatedAt {
+		delete(csr.invalidatedAt, k)
+	}
+	csr.invalidatedMu.Unlock()
+	return n, nil
+}
+
+// ResetMetrics zeroes the hit/miss/stale counters.
+func (csr *CachedSubscriptionRepo) ResetMetrics() {
+	atomic.StoreUint64(&csr.hits, 0)
+	atomic.StoreUint64(&csr.misses, 0)
+	atomic.StoreUint64(&csr.stales, 0)
+}
+
+// Namespace returns the purge summary label for subscription caches.
+func (csr *CachedSubscriptionRepo) Namespace() string { return "subscriptions" }

@@ -4,16 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"stellarbill-backend/internal/cache"
 	"stellarbill-backend/internal/featureflags"
-	"stellarbill-backend/internal/logger"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/timeutil"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// statementArchiveLogger is a minimal structured logger interface with a
+// forgiving key/value shape. It is defined locally (rather than depending on a
+// shared logger type) so the job is self-contained and easy to satisfy from
+// tests with a no-op. A nil logger is accepted and simply disables logging.
+type statementArchiveLogger interface {
+	Error(msg string, keysAndValues ...any)
+	Warn(msg string, keysAndValues ...any)
+}
 
 // StatementArchiveConfig holds configuration for the statement archival job.
 type StatementArchiveConfig struct {
@@ -49,7 +58,7 @@ type StatementArchiveJob struct {
 	db       *sql.DB
 	objStore cache.ObjectStore
 	config   StatementArchiveConfig
-	logger   logger.Logger
+	logger   statementArchiveLogger
 	clock    timeutil.Clock
 	leader   *leaderGuard
 
@@ -70,7 +79,7 @@ type StatementArchiveJob struct {
 }
 
 // NewStatementArchiveJob creates a new statement archival job.
-func NewStatementArchiveJob(db *sql.DB, objStore cache.ObjectStore, config StatementArchiveConfig, l logger.Logger) *StatementArchiveJob {
+func NewStatementArchiveJob(db *sql.DB, objStore cache.ObjectStore, config StatementArchiveConfig, l statementArchiveLogger) *StatementArchiveJob {
 	job := &StatementArchiveJob{
 		db:       db,
 		objStore: objStore,
@@ -370,7 +379,7 @@ func (j *StatementArchiveJob) archiveStatement(ctx context.Context, stmt *reposi
 	if err != nil {
 		// Attempt to delete from object store on failure (cleanup)
 		delErr := j.objStore.Delete(ctx, key)
-		if delErr != nil {
+		if delErr != nil && j.logger != nil {
 			j.logger.Warn("Failed to cleanup object after DB update failure",
 				"statement_id", stmt.ID,
 				"key", key,

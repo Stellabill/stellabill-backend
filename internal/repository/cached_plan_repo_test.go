@@ -278,6 +278,14 @@ func (erroringPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, erro
 	return nil, errors.New("backend down")
 }
 
+func (erroringPlanRepo) FindByIDs(ctx context.Context, ids []string) ([]*PlanRow, error) {
+	return nil, errors.New("backend down")
+}
+
+func (erroringPlanRepo) FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*PlanRow, error) {
+	return nil, errors.New("backend down")
+}
+
 func (erroringPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	return nil, errors.New("backend list down")
 }
@@ -376,6 +384,14 @@ func (c *countingPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 	c.mu.Unlock()
 	time.Sleep(50 * time.Millisecond) // simulate slow DB
 	return c.inner.FindByID(ctx, id)
+}
+
+func (c *countingPlanRepo) FindByIDs(ctx context.Context, ids []string) ([]*PlanRow, error) {
+	return c.inner.FindByIDs(ctx, ids)
+}
+
+func (c *countingPlanRepo) FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*PlanRow, error) {
+	return c.inner.FindByIDsAndTenant(ctx, ids, tenantID)
 }
 
 func (c *countingPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {

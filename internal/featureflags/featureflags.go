@@ -13,17 +13,17 @@ import (
 const FaultInjectionEnabledFlag = "fault_injection_enabled"
 
 type Flag struct {
- Name        string    `json:"name"`
- Enabled     bool      json:"enabled"`
- Description string    json:"description"`
- UpdatedAt   time.Time `json:"updated_at"`
- Version     int64    json:"version"`
+	Name        string    `json:"name"`
+	Enabled     bool      `json:"enabled"`
+	Description string    `json:"description"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Version     int64     `json:"version"`
 }
 
 type Manager struct {
  flags map[string]*Flag
  db    map[string]bool // NEW: DB layer
- mutex sync.Rewriter
+ mutex sync.RWMutex
 }
 
 // NewManager returns a fresh, isolated feature flag manager instance.
@@ -98,57 +98,59 @@ func (m *Manager) LoadDefaultFlags() {
 }
 
 func (m *Manager) LoadFromEnvironment() {
- // JSON-based env
- if flagsJSON := os.Getenv("FEATURE_FLAGS"); flagsJSON != "" {
-  var envFlags map[string]bool
-  if err := json.Unmarshal([]byte(flagsJSON), &envFlags); err == nil {
-   for name, enabled := range envFlags {
-    m.mutex.Lock()
-    if flag, exists := m.flags[name]; exists {
-     flag.Enabled = enabled
-     flag.UpdatedAt = time.Now()
-    } else {
-     m.flags[name] = &Flag{
-      Name:        name,
-      Enabled:     enabled,
-      Description: "Environment-defined flag",
-      UpdatedAt:   time.Now(),
-      Version:     time.Now().UnixNano(),
-     }
-    m.mutex.Unlock()
-   }
-  }
- }
+	// JSON-based env
+	if flagsJSON := os.Getenv("FEATURE_FLAGS"); flagsJSON != "" {
+		var envFlags map[string]bool
+		if err := json.Unmarshal([]byte(flagsJSON), &envFlags); err == nil {
+			for name, enabled := range envFlags {
+				m.mutex.Lock()
+				if flag, exists := m.flags[name]; exists {
+					flag.Enabled = enabled
+					flag.UpdatedAt = time.Now()
+				} else {
+					m.flags[name] = &Flag{
+						Name:        name,
+						Enabled:     enabled,
+						Description: "Environment-defined flag",
+						UpdatedAt:   time.Now(),
+						Version:     time.Now().UnixNano(),
+					}
+				}
+				m.mutex.Unlock()
+			}
+		}
+	}
 
- // FF_ prefix env
- for _, env := range os.Environ() {
-  if strings.HasPrefix(env, "FF_") {
-   parts := strings.SplitN(env, "=", 2)
-   if len(parts) == 2 {
-    flagName := strings.ToLower(strings.TrimPrefix(parts[0], "FF_"))
-    flagValue := parts[1]
+	// FF_ prefix env
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "FF_") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) == 2 {
+				flagName := strings.ToLower(strings.TrimPrefix(parts[0], "FF_"))
+				flagValue := parts[1]
 
-    enabled, err := strconv.ParseBool(flagValue)
-    if err != nil {
-     continue
-    }
+				enabled, err := strconv.ParseBool(flagValue)
+				if err != nil {
+					continue
+				}
 
-    m.mutex.Lock()
-    if flag, exists := m.flags[flagName]; exists {
-     flag.Enabled = enabled
-     flag.UpdatedAt = time.Now()
-    } else {
-     m.flags[flagName] = &Flag{
-      Name:        flagName,
-      Enabled:     enabled,
-      Description: "Environment flag",
-      UpdatedAt:   time.Now(),
-      Version:     time.Now().UnixNano(),
-     }
-    m.mutex.Unlock()
-   }
-  }
- }
+				m.mutex.Lock()
+				if flag, exists := m.flags[flagName]; exists {
+					flag.Enabled = enabled
+					flag.UpdatedAt = time.Now()
+				} else {
+					m.flags[flagName] = &Flag{
+						Name:        flagName,
+						Enabled:     enabled,
+						Description: "Environment flag",
+						UpdatedAt:   time.Now(),
+						Version:     time.Now().UnixNano(),
+					}
+				}
+				m.mutex.Unlock()
+			}
+		}
+	}
 }
 
 // NEW: DB setter
@@ -242,7 +244,7 @@ func (m *Manager) SetFlagWithVersion(flagName string, enabled bool, description 
   }
   return true
  } else {
-  m.flags[flagName] = &Falg{
+  m.flags[flagName] = &Flag{
    Name:        flagName,
    Enabled:     enabled,
    Description: description,
@@ -299,7 +301,7 @@ func (m *Manager) ReloadFromEnvironment() {
 }
 
 // NEW: sampled logging
-funf (m *Manager) sampleLog(name string, value bool, source string) {
+func (m *Manager) sampleLog(name string, value bool, source string) {
  if time.Now().UnixNano()%10 == 0 {
   fmt.Printf("[feature_flag] %s=%v (%s)\n", name, value, source)
  }

@@ -85,6 +85,39 @@ func (m *InMemory) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// Len returns the number of items currently stored.
+func (m *InMemory) Len() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.items)
+}
+
+// Flush removes all items and returns the number removed. It is idempotent:
+// flushing an already-empty cache returns 0 and no error.
+func (m *InMemory) Flush(ctx context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := len(m.items)
+	for k := range m.items {
+		delete(m.items, k)
+	}
+	return n, nil
+}
+
+// flusher is implemented by caches that support bulk eviction.
+type flusher interface {
+	Flush(ctx context.Context) (int, error)
+}
+
+// Flush evicts all entries from c when the underlying cache supports bulk
+// flushing. It returns the number of keys removed.
+func Flush(ctx context.Context, c Cache) (int, error) {
+	if f, ok := c.(flusher); ok {
+		return f.Flush(ctx)
+	}
+	return 0, nil
+}
+
 // GuardedCache wraps a Cache with per-key stampede protection.
 // Only one goroutine per key executes the loader; others wait and share the result.
 type GuardedCache struct {

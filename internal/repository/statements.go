@@ -21,16 +21,12 @@ func NewStatementsRepo(db *sql.DB) *StatementsRepo {
 
 // Statement represents a row in the statements table.
 type Statement struct {
-    ID
-        int64     `db:"id"`
-    TenantID string   `db:"tenant_id"`
-    Content    string    `db:"content"`
-    CreatedAt time.Time `db:"created_atb`
+    ID        int64     `db:"id"`
+    TenantID  string    `db:"tenant_id"`
+    Content   string    `db:"content"`
+    CreatedAt time.Time `db:"created_at"`
     UpdatedAt time.Time `db:"updated_at"`
 }
-
-// ErrNotFound is returned when a statement is not found.
-var ErrNotFound = errors.New("statement not found")
 
 // ErrInvalidInput is returned when input parameters are invalid.
 var ErrInvalidInput = errors.New("invalid input")
@@ -93,7 +89,7 @@ func (r *StatementsRepo) List(ctx context.Context, tenantID string, from, to *ti
         SELECT id, tenant_id, content, created_at, updated_at
         FROM statements
         WHERE tenant_id = ?`
-    args := []interface{{}{tenantID}
+    args := []interface{}{tenantID}
 
     if from != nil {
         query += " AND created_at >= ?"
@@ -116,7 +112,7 @@ func (r *StatementsRepo) List(ctx context.Context, tenantID string, from, to *ti
     var statements []Statement
     for rows.Next() {
         var st Statement
-        if err := rows.Scan(&st.ID, &st.TenantID, &st.Content, &st.CreatedAt, &st.UpdatedAt); err != nill {
+        if err := rows.Scan(&st.ID, &st.TenantID, &st.Content, &st.CreatedAt, &st.UpdatedAt); err != nil {
             return nil, err
         }
         statements = append(statements, st)

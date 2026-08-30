@@ -10,9 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
-	"github.com/lestrrat-go/jwx/v2/jws"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,8 +69,8 @@ func TestEd25519Signer_SignsPayload(t *testing.T) {
 		EventType:     "subscription.updated",
 		EventData:     json.RawMessage(`{"type":"subscription.updated","data":{"plan":"pro"},"timestamp":"2026-07-28T12:00:00Z","id":"evt-001"}`),
 		OccurredAt:    time.Now(),
-		AggregateID:   strPtr("sub-123"),
-		AggregateType: strPtr("subscription"),
+		AggregateID:   signerStrPtr("sub-123"),
+		AggregateType: signerStrPtr("subscription"),
 		Version:       2,
 	}
 
@@ -102,8 +100,8 @@ func TestEd25519Signer_VerifySignature(t *testing.T) {
 		EventType:     "payment.processed",
 		EventData:     json.RawMessage(`{"type":"payment.processed","data":{"amount":5000,"currency":"USD"},"timestamp":"2026-07-28T12:00:00Z","id":"evt-002"}`),
 		OccurredAt:    time.Now(),
-		AggregateID:   strPtr("sub-456"),
-		AggregateType: strPtr("subscription"),
+		AggregateID:   signerStrPtr("sub-456"),
+		AggregateType: signerStrPtr("subscription"),
 		Version:       1,
 	}
 
@@ -135,8 +133,8 @@ func TestEd25519Signer_TamperedSignature(t *testing.T) {
 		EventType:     "test.event",
 		EventData:     json.RawMessage(`{"type":"test.event","data":{"key":"value"},"timestamp":"2026-07-28T12:00:00Z","id":"evt-003"}`),
 		OccurredAt:    time.Now(),
-		AggregateID:   strPtr("sub-789"),
-		AggregateType: strPtr("subscription"),
+		AggregateID:   signerStrPtr("sub-789"),
+		AggregateType: signerStrPtr("subscription"),
 		Version:       1,
 	}
 
@@ -183,8 +181,8 @@ func TestEd25519Signer_WrongKeyFails(t *testing.T) {
 		EventType:     "test.event",
 		EventData:     json.RawMessage(`{"type":"test.event","data":{"msg":"hello"},"timestamp":"2026-07-28T12:00:00Z","id":"evt-005"}`),
 		OccurredAt:    time.Now(),
-		AggregateID:   strPtr("sub-000"),
-		AggregateType: strPtr("subscription"),
+		AggregateID:   signerStrPtr("sub-000"),
+		AggregateType: signerStrPtr("subscription"),
 		Version:       1,
 	}
 
@@ -216,8 +214,7 @@ func TestPublicJWKFromSigningKey(t *testing.T) {
 	assert.True(t, ok, "expected ed25519.PublicKey")
 
 	// Verify kid is preserved
-	kid, ok := pubJWK.KeyID()
-	assert.True(t, ok)
+	kid := pubJWK.KeyID()
 	assert.Equal(t, "test-kid-001", kid)
 }
 
@@ -232,8 +229,8 @@ func TestNewEd25519Signer_NilProviderDefaults(t *testing.T) {
 		EventType:     "test.event",
 		EventData:     json.RawMessage(`{"type":"test.event","data":{},"timestamp":"2026-07-28T12:00:00Z","id":"evt-006"}`),
 		OccurredAt:    time.Now(),
-		AggregateID:   strPtr("sub-111"),
-		AggregateType: strPtr("subscription"),
+		AggregateID:   signerStrPtr("sub-111"),
+		AggregateType: signerStrPtr("subscription"),
 		Version:       1,
 	}
 
@@ -253,8 +250,8 @@ func TestEd25519Signer_ProviderError(t *testing.T) {
 		EventType:     "test.event",
 		EventData:     json.RawMessage(`{"type":"test.event","data":{},"timestamp":"2026-07-28T12:00:00Z","id":"evt-007"}`),
 		OccurredAt:    time.Now(),
-		AggregateID:   strPtr("sub-222"),
-		AggregateType: strPtr("subscription"),
+		AggregateID:   signerStrPtr("sub-222"),
+		AggregateType: signerStrPtr("subscription"),
 		Version:       1,
 	}
 
@@ -276,14 +273,14 @@ func TestEd25519Signer_JWSRoundTrip(t *testing.T) {
 	signer := NewEd25519Signer(inner, provider)
 
 	originalData := map[string]interface{}{
-		"plan": "enterprise",
+		"plan":  "enterprise",
 		"seats": 50,
 	}
 	eventData, _ := json.Marshal(map[string]interface{}{
 		"type":      "plan.changed",
-		"data":     originalData,
+		"data":      originalData,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"id":       "evt-roundtrip",
+		"id":        "evt-roundtrip",
 	})
 
 	event := &Event{
@@ -291,8 +288,8 @@ func TestEd25519Signer_JWSRoundTrip(t *testing.T) {
 		EventType:     "plan.changed",
 		EventData:     eventData,
 		OccurredAt:    time.Now(),
-		AggregateID:   strPtr("plan-abc"),
-		AggregateType: strPtr("plan"),
+		AggregateID:   signerStrPtr("plan-abc"),
+		AggregateType: signerStrPtr("plan"),
 		Version:       1,
 	}
 
@@ -314,7 +311,7 @@ func TestEd25519Signer_JWSRoundTrip(t *testing.T) {
 	assert.Equal(t, "plan.changed", payload["type"])
 }
 
-// strPtr is a helper for creating *string values.
-func strPtr(s string) *string {
+// signerStrPtr is a helper for creating *string values.
+func signerStrPtr(s string) *string {
 	return &s
 }

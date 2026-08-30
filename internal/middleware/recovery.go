@@ -39,10 +39,15 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(bearer|token|auth|key|secret|password|passwd|pwd)([^\w])`),
 }
 
+// RecoveryOptions configures Recovery behavior.
+type RecoveryOptions struct {
+	// Reserved for future options (e.g. custom error envelope, log level).
+}
+
 // Recovery returns a Gin middleware that captures any panic raised by a
 // downstream handler or middleware, logs a structured event with the
 // request id, and writes a redacted error envelope to the client.
-func Recovery() gin.HandlerFunc {
+func Recovery(opts ...*RecoveryOptions) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {

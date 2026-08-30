@@ -115,7 +115,10 @@ func newRBACMatrixRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	cleanup := routes.RegisterWithCleanup(router)
+	cleanup, err := routes.RegisterWithCleanup(router)
+	if err != nil {
+		t.Fatalf("route registration failed: %v", err)
+	}
 	t.Cleanup(func() {
 		if err := cleanup(nil); err != nil {
 			t.Fatalf("route cleanup: %v", err)

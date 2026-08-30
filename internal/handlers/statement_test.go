@@ -7,10 +7,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
+	"stellarbill-backend/internal/storage/s3"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -45,6 +47,16 @@ func (m *mockStatementService) GetDetail(
 	statementID string,
 ) (*service.StatementDetail, []string, error) {
 	return m.getResult, nil, m.getErr
+}
+
+func (m *mockStatementService) ExportStatements(
+	_ context.Context,
+	_ string,
+	_ []string,
+	_, _ string,
+	_ s3.S3Uploader,
+) (*service.ExportResult, error) {
+	return &service.ExportResult{ObjectKey: "stub", URL: "https://example.invalid/export", ExpiresAt: time.Now().UTC()}, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -90,6 +90,7 @@ type APIRateLimiter struct {
 	config  RateLimiterConfig
 	buckets map[string]*TokenBucket
 	mutex   sync.RWMutex
+	stopCh  chan struct{}
 }
 
 // NewTokenBucket creates a new token bucket
@@ -142,13 +143,64 @@ func NewAPIRateLimiter(config RateLimiterConfig) *APIRateLimiter {
 	rl := &APIRateLimiter{
 		config:  config,
 		buckets: make(map[string]*TokenBucket),
+		stopCh:  make(chan struct{}),
 	}
 
 	if config.RouteConfigs == nil {
 		rl.config.RouteConfigs = make(map[string]RouteSpecificConfig)
 	}
 
+	rl.startCleanupLoop()
+
 	return rl
+}
+
+// Stop halts the background bucket cleanup loop.
+func (rl *APIRateLimiter) Stop() {
+	rl.mutex.Lock()
+	defer rl.mutex.Unlock()
+	if rl.stopCh == nil {
+		return
+	}
+	close(rl.stopCh)
+	rl.stopCh = nil
+}
+
+// cleanupExpiredBuckets removes buckets that have been idle past the
+// retention window to prevent unbounded memory growth.
+func (rl *APIRateLimiter) cleanupExpiredBuckets() {
+	retention := time.Minute
+	now := timeutil.NowUTC()
+
+	rl.mutex.Lock()
+	defer rl.mutex.Unlock()
+
+	for k, bucket := range rl.buckets {
+		bucket.mutex.Lock()
+		idle := now.Sub(bucket.lastRefill)
+		bucket.mutex.Unlock()
+
+		if idle > retention {
+			delete(rl.buckets, k)
+		}
+	}
+}
+
+// startCleanupLoop runs a periodic sweep goroutine until Stop is called.
+func (rl *APIRateLimiter) startCleanupLoop() {
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				rl.cleanupExpiredBuckets()
+			case <-rl.stopCh:
+				return
+			}
+		}
+	}()
 }
 
 // getBucket retrieves or creates a token bucket for the given key with route-specific config

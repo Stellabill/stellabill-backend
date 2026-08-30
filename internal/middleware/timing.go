@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -8,6 +9,11 @@ import (
 
 	"stellarbill-backend/internal/servertiming"
 )
+
+// RecorderFromContext extracts the Recorder from a std context.
+func RecorderFromContext(ctx context.Context) *servertiming.Recorder {
+	return servertiming.FromContext(ctx)
+}
 
 // RecorderFromGinContext extracts the Recorder from the Gin context.
 func RecorderFromGinContext(c *gin.Context) *servertiming.Recorder {

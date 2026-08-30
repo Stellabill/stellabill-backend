@@ -343,6 +343,14 @@ func (e errPlanRepo) FindByID(_ context.Context, _ string) (*repository.PlanRow,
 	return nil, fmt.Errorf("db error")
 }
 
+func (e errPlanRepo) FindByIDs(_ context.Context, _ []string) ([]*repository.PlanRow, error) {
+	return nil, fmt.Errorf("db error")
+}
+
+func (e errPlanRepo) FindByIDsAndTenant(_ context.Context, _ []string, _ string) ([]*repository.PlanRow, error) {
+	return nil, fmt.Errorf("db error")
+}
+
 func (e errPlanRepo) List(_ context.Context) ([]*repository.PlanRow, error) {
 	return nil, fmt.Errorf("db error")
 }

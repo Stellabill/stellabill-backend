@@ -1,5 +1,5 @@
 package outbox
 
-func stringPtr(s string) *string {
+func helperStrPtr(s string) *string {
 	return &s
 }

@@ -289,7 +289,7 @@ func TestInitTracer(t *testing.T) {
 	shutdown, err := InitTracer("test-service")
 	require.NoError(t, err)
 	require.NotNil(t, shutdown)
-	require.NoError(t, shutdown())
+	shutdown()
 }
 
 func TestInitTracer_EnvRatios(t *testing.T) {

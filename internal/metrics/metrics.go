@@ -1,14 +1,13 @@
 package metrics
 
 import (
-	"context"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"go.opentelemetry.io/otel/trace"
+	"stellarbill-backend/internal/tracing"
 )
 
 var (
@@ -118,7 +117,7 @@ func MetricsMiddleware() gin.HandlerFunc {
 		safeStatus := sanitizeLabel(status)
 
 		observer := HTTPRequestDuration.WithLabelValues(safeRoute, safeMethod, safeStatus)
-		if exemplar := spanExemplar(c.Request.Context()); exemplar != nil {
+		if exemplar := tracing.ExemplarLabels(c.Request.Context()); exemplar != nil {
 			if oe, ok := observer.(prometheus.ExemplarObserver); ok {
 				oe.ObserveWithExemplar(duration, exemplar)
 				HTTPRequestTotal.WithLabelValues(safeRoute, safeMethod, safeStatus).Inc()
@@ -127,20 +126,6 @@ func MetricsMiddleware() gin.HandlerFunc {
 		}
 		observer.Observe(duration)
 		HTTPRequestTotal.WithLabelValues(safeRoute, safeMethod, safeStatus).Inc()
-	}
-}
-
-// spanExemplar returns a prometheus.Labels map with trace_id and span_id when
-// the current span is sampled and recording. Returns nil otherwise.
-func spanExemplar(ctx context.Context) prometheus.Labels {
-	span := trace.SpanFromContext(ctx)
-	sc := span.SpanContext()
-	if !sc.IsSampled() || !span.IsRecording() {
-		return nil
-	}
-	return prometheus.Labels{
-		"trace_id": sc.TraceID().String(),
-		"span_id":  sc.SpanID().String(),
 	}
 }
 

@@ -20,10 +20,10 @@ type costAccumulatorContextKey struct{}
 
 // CostAccumulator tracks normalized cost units for a single request.
 type CostAccumulator struct {
-	mu           sync.Mutex
-	dbRowsRead   int64
+	mu            sync.Mutex
+	dbRowsRead    int64
 	externalCalls int64
-	egressBytes  int64
+	egressBytes   int64
 }
 
 // NewCostAccumulator creates a request-scoped cost accumulator.

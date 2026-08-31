@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"stellarbill-backend/internal/featureflags"
+	"stellarbill-backend/internal/middleware"
 )
 
 var mu sync.Mutex
@@ -25,6 +26,17 @@ func Register(r *gin.Engine) {
 		}
 		c.AbortWithStatus(http.StatusForbidden)
 	})
+
+	signing := middleware.RequestSigning()
+	a.Use(func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			c.Next()
+			return
+		}
+		signing(c)
+	})
+
 	a.GET("/feature-flags", h.GetFeatureFlags)
 	a.PATCH("/feature-flags", func(c *gin.Context) {
 		if c.GetHeader("Idempotency-Key") == "" {

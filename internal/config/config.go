@@ -41,23 +41,27 @@ func (e *ConfigError) Error() string {
 
 // Config holds all application configuration
 type Config struct {
-	Env                    string   `json:"env"`
-	Port                   int      `json:"port"`
-	DBConn                 string   `json:"db_conn" secret:"true"`
-	JWTSecret              string   `json:"jwt_secret" secret:"true"`
-	MaxHeaderBytes         int      `json:"max_header_bytes"`
-	ReadTimeout            int      `json:"read_timeout"`
-	WriteTimeout           int      `json:"write_timeout"`
-	IdleTimeout            int      `json:"idle_timeout"`
-	AllowedOrigins         string   `json:"allowed_origins"`
-	AdminToken             string   `json:"admin_token" secret:"true"`
-	DBReplicaConn          string   `json:"db_replica_conn" secret:"true"`
+	Env            string `json:"env"`
+	Port           int    `json:"port"`
+	DBConn         string `json:"db_conn" secret:"true"`
+	JWTSecret      string `json:"jwt_secret" secret:"true"`
+	MaxHeaderBytes int    `json:"max_header_bytes"`
+	ReadTimeout    int    `json:"read_timeout"`
+	WriteTimeout   int    `json:"write_timeout"`
+	IdleTimeout    int    `json:"idle_timeout"`
+	AllowedOrigins string `json:"allowed_origins"`
+	AdminToken     string `json:"admin_token" secret:"true"`
+	DBReplicaConn  string `json:"db_replica_conn" secret:"true"`
 	// Rate limiting configuration
 	RateLimitEnabled   bool     `json:"rate_limit_enabled"`
 	RateLimitMode      string   `json:"rate_limit_mode"`
 	RateLimitRPS       int      `json:"rate_limit_rps"`
 	RateLimitBurst     int      `json:"rate_limit_burst"`
 	RateLimitWhitelist []string `json:"rate_limit_whitelist"`
+	// Per-tenant rate limiting — layered after the global limiter on
+	// authenticated routes. Zero values (the default) leave it disabled.
+	RateLimitTenantRPS   int `json:"rate_limit_tenant_rps"`
+	RateLimitTenantBurst int `json:"rate_limit_tenant_burst"`
 	// Tracing configuration
 	TracingExporter        string
 	TracingServiceName     string
@@ -71,12 +75,12 @@ type Config struct {
 	CSPReportRPS int
 	// CSPReportBurst is the per-tenant burst size for /api/v1/csp-reports.
 	// Default: 10.
-	CSPReportBurst int
-	SpiffeSocketPath   string
-	SpiffeTrustDomain  string
-	MaxRequestSize         int64
-	MaxGzipUncompressed    int64
-	MaxGzipRatio           float64
+	CSPReportBurst      int
+	SpiffeSocketPath    string
+	SpiffeTrustDomain   string
+	MaxRequestSize      int64
+	MaxGzipUncompressed int64
+	MaxGzipRatio        float64
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
 	RedisURL string `json:"redis_url" secret:"true"`
@@ -104,6 +108,13 @@ type Config struct {
 	DBPoolHealthCheckPeriod int `json:"db_pool_health_check_period"`
 	DBPoolMetricsInterval   int `json:"db_pool_metrics_interval"`
 
+	// DB circuit-breaker configuration for the long-lived pgx pool. These values
+	// are used by both the repository layer and the readiness probe to fail fast
+	// instead of amplifying outages with repeated Ping() calls.
+	DBBreakerMaxFailures         uint32 `json:"db_breaker_max_failures"`
+	DBBreakerTimeoutSeconds      uint32 `json:"db_breaker_timeout_seconds"`
+	DBBreakerHalfOpenMaxRequests uint32 `json:"db_breaker_half_open_max_requests"`
+
 	// PgBouncer sidecar configuration.
 	//
 	//   PGBOUNCER_ENABLED        (default false) – route connections through the
@@ -123,11 +134,11 @@ type Config struct {
 	//   PGBOUNCER_MAX_CONN_IDLE_IN_TRANSACTION  (default 30) – idle-in-transaction
 	//                             server-side timeout forwarded into pgbouncer.ini
 	//                             as query_wait_timeout / idle_transaction_timeout.
-	PgBouncerEnabled        bool
-	PgBouncerHost           string
-	PgBouncerPort           int
-	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
-	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+	PgBouncerEnabled         bool
+	PgBouncerHost            string
+	PgBouncerPort            int
+	DBStatementCacheMode     string // "prepare" | "describe" | "simple"
+	PgBouncerIdleInTxTimeout int    // seconds; written into pgbouncer.ini
 	// GracefulShutdownTimeout is the maximum seconds the server waits for
 	// in-flight requests to complete before forcing shutdown. Env:
 	// GRACEFUL_SHUTDOWN_TIMEOUT (default: DefaultGracefulShutdownTimeout).
@@ -139,6 +150,19 @@ type Config struct {
 
 	// OTelLogsEnabled toggles OpenTelemetry log export (env: OTEL_LOGS_ENABLED).
 	OTelLogsEnabled bool
+
+	// OutboxPublisherURL is the endpoint outbox dispatcher uses to publish
+	// events. Env: OUTBOX_PUBLISHER_URL (default: "").
+	OutboxPublisherURL string `json:"outbox_publisher_url"`
+
+	// OutboxPublisherTimeout is the HTTP client timeout for outbox publishes in
+	// seconds. Env: OUTBOX_PUBLISHER_TIMEOUT (default: 10).
+	OutboxPublisherTimeout int `json:"outbox_publisher_timeout"`
+
+	// OutboxPublisherCAFile is an optional path to a PEM CA bundle. When set,
+	// the outbox publisher pins the server certificate to this root. Env:
+	// OUTBOX_PUBLISHER_CA_FILE (default: "").
+	OutboxPublisherCAFile string `json:"outbox_publisher_ca_file"`
 }
 
 // ValidationResult holds the result of configuration validation
@@ -177,17 +201,22 @@ const (
 
 	// DB pool defaults — chosen to be safe for a typical single-instance
 	// Postgres with max_connections=100.  Tune upward for larger deployments.
-	DefaultDBPoolMaxConns          = 25   // leave headroom for other clients
-	DefaultDBPoolMinConns          = 2    // keep 2 warm to avoid cold-start latency
-	DefaultDBPoolMaxConnLifetime   = 3600 // 1 hour — recycle before firewalls drop
-	DefaultDBPoolMaxConnIdleTime   = 600  // 10 min — evict idle before firewall timeout
-	DefaultDBPoolConnectTimeout    = 5    // 5 s per dial attempt
-	DefaultDBPoolHealthCheckPeriod = 30   // 30 s proactive idle-conn check
-	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
+	DefaultDBPoolMaxConns               = 25   // leave headroom for other clients
+	DefaultDBPoolMinConns               = 2    // keep 2 warm to avoid cold-start latency
+	DefaultDBPoolMaxConnLifetime        = 3600 // 1 hour — recycle before firewalls drop
+	DefaultDBPoolMaxConnIdleTime        = 600  // 10 min — evict idle before firewall timeout
+	DefaultDBPoolConnectTimeout         = 5    // 5 s per dial attempt
+	DefaultDBPoolHealthCheckPeriod      = 30   // 30 s proactive idle-conn check
+	DefaultDBPoolMetricsInterval        = 15   // 15 s Prometheus scrape cadence
+	DefaultDBBreakerMaxFailures         = 5    // trip after this many consecutive failures
+	DefaultDBBreakerTimeoutSeconds      = 30   // cool-down period before half-open probes are allowed
+	DefaultDBBreakerHalfOpenMaxRequests = 1    // permit a single probe while half-open
 
 	// Graceful shutdown defaults — coordinate with k8s terminationGracePeriodSeconds.
-	DefaultGracefulShutdownTimeout = 30   // 30 s to drain in-flight requests and pool
+	DefaultGracefulShutdownTimeout = 30 // 30 s to drain in-flight requests and pool
 
+	// Outbox publisher defaults.
+	DefaultOutboxPublisherTimeout = 10 // seconds
 
 	// Validation bounds
 	MinDBPoolMaxConns = 1
@@ -196,12 +225,12 @@ const (
 	MaxDBPoolTimeout  = 300 // seconds
 
 	// PgBouncer sidecar defaults.
-	DefaultPgBouncerHost           = "127.0.0.1"
-	DefaultPgBouncerPort           = 5432
-	DefaultDBStatementCacheMode    = "prepare"
+	DefaultPgBouncerHost            = "127.0.0.1"
+	DefaultPgBouncerPort            = 5432
+	DefaultDBStatementCacheMode     = "prepare"
 	DefaultPgBouncerIdleInTxTimeout = 30 // seconds
-	MinPgBouncerPort               = 1
-	MaxPgBouncerPort               = 65535
+	MinPgBouncerPort                = 1
+	MaxPgBouncerPort                = 65535
 
 	// Valid DB_STATEMENT_CACHE_MODE values.
 	StatementCacheModeDescribe = "describe"
@@ -216,6 +245,10 @@ const (
 	MaxRateLimitRPS       = 1000
 	MinRateLimitBurst     = 1
 	MaxRateLimitBurst     = 2000
+	MinRateLimitTenantRPS   = 1
+	MaxRateLimitTenantRPS   = 1000
+	MinRateLimitTenantBurst = 1
+	MaxRateLimitTenantBurst = 2000
 )
 
 // Option configures the Load function.
@@ -257,6 +290,7 @@ func Load(opts ...Option) (Config, error) {
 		Port:                   DefaultPort,
 		DBConn:                 "",
 		JWTSecret:              "",
+		JWKSURL:                "",
 		MaxHeaderBytes:         MaxHeaderBytes,
 		ReadTimeout:            DefaultReadTimeout,
 		WriteTimeout:           DefaultWriteTimeout,
@@ -271,13 +305,14 @@ func Load(opts ...Option) (Config, error) {
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
+		MaxGzipCompressed:      getEnvInt64("MAX_GZIP_COMPRESSED", 1024*1024*10),  // 10MB default (= MaxRequestSize)
 		// DB pool — safe production defaults
 		//
 		// DATABASE_REPLICA_URL is the canonical env var for the hot-standby
 		// read replica; DB_REPLICA_URL is kept as a backward-compatible alias.
-		DBReplicaConn:    getEnvFirst("", "DATABASE_REPLICA_URL", "DB_REPLICA_URL"),
-		RedisURL:         getEnv("REDIS_URL", ""),
-		CacheTTL:         getEnvInt("CACHE_TTL", 60), // 60 second default
+		DBReplicaConn:           getEnvFirst("", "DATABASE_REPLICA_URL", "DB_REPLICA_URL"),
+		RedisURL:                getEnv("REDIS_URL", ""),
+		CacheTTL:                getEnvInt("CACHE_TTL", 60), // 60 second default
 		DBPoolMaxConns:          DefaultDBPoolMaxConns,
 		DBPoolMinConns:          DefaultDBPoolMinConns,
 		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
@@ -293,6 +328,9 @@ func Load(opts ...Option) (Config, error) {
 		PgBouncerIdleInTxTimeout: DefaultPgBouncerIdleInTxTimeout,
 		GracefulShutdownTimeout:  DefaultGracefulShutdownTimeout,
 		ConcurrencyCapsPath:      getEnv("CONCURRENCY_CAPS_PATH", ""),
+		OutboxPublisherURL:       getEnv("OUTBOX_PUBLISHER_URL", ""),
+		OutboxPublisherTimeout:   getEnvInt("OUTBOX_PUBLISHER_TIMEOUT", DefaultOutboxPublisherTimeout),
+		OutboxPublisherCAFile:    getEnv("OUTBOX_PUBLISHER_CA_FILE", ""),
 	}
 
 	// Resolve secrets through the provider
@@ -340,8 +378,12 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	}
 
 	// Validate required secrets are present via the provider
+	jwksURL := os.Getenv("JWKS_URL")
 	for _, key := range secretKeys {
 		if err, failed := secretErrs[key]; failed {
+			if key == "JWT_SECRET" && jwksURL != "" {
+				continue
+			}
 			if errors.Is(err, secrets.ErrSecretNotFound) {
 				result.Errors = append(result.Errors, ConfigError{
 					Type:    ErrMissingEnvVar,
@@ -397,7 +439,7 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	}
 
 	// Validate JWT_SECRET
-	if secret, ok := resolvedSecrets["JWT_SECRET"]; ok {
+	if secret, ok := resolvedSecrets["JWT_SECRET"]; ok && (jwksURL == "" || secret != "") {
 		if !isValidSecret(secret) {
 			result.Errors = append(result.Errors, ConfigError{
 				Type:    ErrWeakSecret,
@@ -407,6 +449,19 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.JWTSecret = secret
+		}
+	}
+
+	if jwksURL != "" {
+		if !isValidJWKSURL(jwksURL) {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "JWKS_URL",
+				Message: "must be a valid absolute URL with http or https scheme",
+				Value:   jwksURL,
+			})
+		} else {
+			c.JWKSURL = jwksURL
 		}
 	}
 
@@ -545,6 +600,48 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		})
 	}
 
+	// Per-tenant rate limiting (layered after the global limiter). Unset by
+	// default — both RPS and Burst must be 0 to stay disabled.
+	if val := os.Getenv("RATE_LIMIT_TENANT_RPS"); val != "" {
+		if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitTenantRPS && rps <= MaxRateLimitTenantRPS {
+			c.RateLimitTenantRPS = rps
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_RPS",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitTenantRPS, MaxRateLimitTenantRPS),
+				Value:   val,
+			})
+		}
+	}
+
+	if val := os.Getenv("RATE_LIMIT_TENANT_BURST"); val != "" {
+		if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitTenantBurst && burst <= MaxRateLimitTenantBurst {
+			c.RateLimitTenantBurst = burst
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitTenantBurst, MaxRateLimitTenantBurst),
+				Value:   val,
+			})
+		}
+	}
+
+	if c.RateLimitTenantRPS > 0 {
+		if c.RateLimitTenantBurst == 0 {
+			c.RateLimitTenantBurst = c.RateLimitTenantRPS * 2 // Conservative default: 2x RPS
+		}
+		if c.RateLimitTenantBurst < c.RateLimitTenantRPS {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: "must be greater than or equal to RATE_LIMIT_TENANT_RPS",
+				Value:   strconv.Itoa(c.RateLimitTenantBurst),
+			})
+		}
+	}
+
 	if whitelist := os.Getenv("RATE_LIMIT_WHITELIST"); whitelist != "" {
 		paths := strings.Split(whitelist, ",")
 		for i, path := range paths {
@@ -596,9 +693,50 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		}
 	}
+	// Validate OUTBOX_PUBLISHER_TIMEOUT
+	if val := os.Getenv("OUTBOX_PUBLISHER_TIMEOUT"); val != "" {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
+			c.OutboxPublisherTimeout = timeout
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "OUTBOX_PUBLISHER_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
+		}
+	}
 
-	// Validate DB pool configuration
+	// Validate OUTBOX_PUBLISHER_URL
+	if val := os.Getenv("OUTBOX_PUBLISHER_URL"); val != "" {
+		c.OutboxPublisherURL = val
+		u, err := url.Parse(val)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "OUTBOX_PUBLISHER_URL",
+				Message: "must be a valid http(s) URL",
+				Value:   val,
+			})
+		}
+	}
+
+	// Validate OUTBOX_PUBLISHER_CA_FILE
+	if val := os.Getenv("OUTBOX_PUBLISHER_CA_FILE"); val != "" {
+		c.OutboxPublisherCAFile = val
+		if info, err := os.Stat(val); err != nil || info.IsDir() {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "OUTBOX_PUBLISHER_CA_FILE",
+				Message: "must reference an existing CA bundle file",
+				Value:   val,
+			})
+		}
+	}
+
+	// Validate DB pool and circuit-breaker configuration
 	validateDBPool(c, result)
+	validateDBBreaker(c, result)
 
 	// Validate PgBouncer sidecar configuration
 	validatePgBouncer(c, result)
@@ -643,6 +781,16 @@ func isValidDatabaseURL(dbURL string) bool {
 	default:
 		return parsed.Host != ""
 	}
+}
+
+// isValidJWKSURL validates that the JWKS URL is an absolute http(s) URL
+func isValidJWKSURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return (scheme == "https" || scheme == "http") && parsed.Host != ""
 }
 
 // isValidSecret validates that the secret meets security requirements
@@ -811,6 +959,27 @@ func validateDBPool(c *Config, result *ValidationResult) {
 				"idle connections will be evicted before lifetime recycle fires — consider reducing idle time",
 				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
 	}
+}
+
+func validateDBBreaker(c *Config, result *ValidationResult) {
+	setUint32FromEnv := func(envKey string, target *uint32, defVal uint32, min uint32, max uint32) {
+		raw := os.Getenv(envKey)
+		if raw == "" {
+			return
+		}
+		v, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || uint32(v) < min || uint32(v) > max {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("%s invalid (value=%q, allowed %d–%d), using default %d",
+					envKey, raw, min, max, defVal))
+			return
+		}
+		*target = uint32(v)
+	}
+
+	setUint32FromEnv("DB_BREAKER_MAX_FAILURES", &c.DBBreakerMaxFailures, DefaultDBBreakerMaxFailures, 1, 100)
+	setUint32FromEnv("DB_BREAKER_TIMEOUT_SECONDS", &c.DBBreakerTimeoutSeconds, DefaultDBBreakerTimeoutSeconds, 1, 300)
+	setUint32FromEnv("DB_BREAKER_HALF_OPEN_MAX_REQUESTS", &c.DBBreakerHalfOpenMaxRequests, DefaultDBBreakerHalfOpenMaxRequests, 1, 20)
 }
 
 // validatePgBouncer reads PGBOUNCER_* and DB_STATEMENT_CACHE_MODE env vars,

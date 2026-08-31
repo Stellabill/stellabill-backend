@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"stellarbill-backend/internal/outbox"
@@ -480,7 +479,7 @@ func (p *WebSocketOutboxPublisher) Publish(ctx context.Context, event *outbox.Ev
 		Status:         payload.Data.Status,
 		Timestamp:      event.OccurredAt.Format(time.RFC3339),
 	}
-	
+
 	select {
 	case hub.broadcast <- wsEvent:
 	case <-time.After(1 * time.Second):

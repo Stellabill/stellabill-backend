@@ -44,6 +44,9 @@ func (d *DiagnosticsHandler) Handle(c *gin.Context) {
 		UptimeSeconds: time.Since(d.startedAt).Seconds(),
 		Checks:        results,
 	}
+	if breaker, ok := any(d.db).(interface{ BreakerState() map[string]interface{} }); ok {
+		resp.CircuitBreaker = breaker.BreakerState()
+	}
 
 	code := http.StatusOK
 	if resp.Status != "ready" {

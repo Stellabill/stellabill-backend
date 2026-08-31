@@ -15,12 +15,12 @@ import (
 )
 
 type mockPgxPool struct {
-	execFn      func(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
-	copyFromFn  func(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
-	queryRowFn  func(ctx context.Context, sql string, args ...any) pgx.Row
-	queryFn     func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	beginFn     func(ctx context.Context) (pgx.Tx, error)
-	beginTxFn   func(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	execFn     func(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
+	copyFromFn func(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
+	queryRowFn func(ctx context.Context, sql string, args ...any) pgx.Row
+	queryFn    func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	beginFn    func(ctx context.Context) (pgx.Tx, error)
+	beginTxFn  func(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 }
 
 func (m *mockPgxPool) Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error) {

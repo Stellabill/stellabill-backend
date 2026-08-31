@@ -1,14 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Stellabill Log Schema",
-  "description": "JSON schema for structured log entries",
+  "description": "JSON schema for structured log entries. The project accepts both legacy `time` and canonical `timestamp` names for compatibility while requiring a timestamp, level, and msg payload.",
   "type": "object",
-  "required": ["time", "level", "msg", "request_id", "trace_id", "tenant_id"],
+  "required": ["level", "msg"],
+  "anyOf": [
+    { "required": ["time"] },
+    { "required": ["timestamp"] }
+  ],
   "properties": {
     "time": {
       "type": "string",
       "format": "date-time",
-      "description": "Timestamp of the log entry"
+      "description": "Legacy timestamp field for structured log entries"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Canonical timestamp field for structured log entries"
     },
     "level": {
       "type": "string",
@@ -55,5 +64,6 @@
       "type": "string",
       "description": "Client IP address"
     }
-  }
+  },
+  "additionalProperties": true
 }

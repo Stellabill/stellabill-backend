@@ -2,7 +2,6 @@ package outbox
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -124,38 +123,9 @@ func (p *RedisPublisher) Publish(ctx context.Context, event *Event) error {
 	timer.ObserveDuration()
 
 	if err != nil {
-		var movedErr redis.MovedError
-		if errors.As(err, &movedErr) {
-			return p.redirectXAdd(ctx, movedErr.Addr, values)
-		}
-		var askErr redis.AskError
-		if errors.As(err, &askErr) {
-			return p.redirectXAdd(ctx, askErr.Addr, values)
-		}
 		return fmt.Errorf("redis: xadd: %w", err)
 	}
 
-	return nil
-}
-
-func (p *RedisPublisher) redirectXAdd(ctx context.Context, addr string, values map[string]interface{}) error {
-	redirectClient := redis.NewClient(&redis.Options{Addr: addr})
-	defer redirectClient.Close()
-
-	timer := prometheus.NewTimer(redisPublishDuration)
-
-	err := redirectClient.XAdd(ctx, &redis.XAddArgs{
-		Stream: p.stream,
-		MaxLen: p.maxLen,
-		Approx: p.approx,
-		Values: values,
-	}).Err()
-
-	timer.ObserveDuration()
-
-	if err != nil {
-		return fmt.Errorf("redis: xadd redirect to %s: %w", addr, err)
-	}
 	return nil
 }
 

@@ -211,21 +211,21 @@ func (c *Consumer) runReplication(ctx context.Context) error {
 			}
 
 			for _, change := range changes {
-			change.LSN = newLSN
-			// Write to all sinks before advancing LSN.
-			// If a sink fails, log and continue but do not advance
-			// past the last successfully written LSN.
-			allSinksOK := true
-			for _, sink := range c.cfg.Sinks {
-				if err := sink.WriteChange(ctx, change); err != nil {
-					log.Printf("cdc: sink write error: %v", err)
-					allSinksOK = false
+				change.LSN = newLSN
+				// Write to all sinks before advancing LSN.
+				// If a sink fails, log and continue but do not advance
+				// past the last successfully written LSN.
+				allSinksOK := true
+				for _, sink := range c.cfg.Sinks {
+					if err := sink.WriteChange(ctx, change); err != nil {
+						log.Printf("cdc: sink write error: %v", err)
+						allSinksOK = false
+					}
+				}
+				if allSinksOK {
+					c.updateLSN(newLSN)
 				}
 			}
-			if allSinksOK {
-				c.updateLSN(newLSN)
-			}
-		}
 
 		case *pgproto3.CopyDone:
 			log.Printf("cdc: server sent CopyDone, restarting replication")

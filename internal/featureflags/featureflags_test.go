@@ -255,7 +255,7 @@ func TestSetFlagWithVersion_Monotonic(t *testing.T) {
 	if !success {
 		t.Error("Expected set with newer version to succeed")
 	}
-	
+
 	flag, exists := manager.GetFlag("monotonic_test")
 	if !exists || flag.Enabled {
 		t.Error("Flag should be disabled now")

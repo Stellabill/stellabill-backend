@@ -1,21 +1,88 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/cache"
+	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/repository"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+const testSigningSecret = "test-admin-signing-secret"
+
+var adminTestNonce uint64
+
+func uniqueQuery(query string) string {
+	nonce := strconv.FormatUint(atomic.AddUint64(&adminTestNonce, 1), 10)
+	if query == "" {
+		return "nonce=" + nonce
+	}
+	return query + "&nonce=" + nonce
+}
+
+func canonicalAdminRequest(req *http.Request, body []byte, date string) string {
+	bodyHash := sha256.Sum256(body)
+	host := strings.ToLower(req.Host)
+	if host == "" {
+		host = strings.ToLower(req.URL.Host)
+	}
+	query := req.URL.Query().Encode()
+	return strings.Join([]string{
+		req.Method,
+		req.URL.Path,
+		query,
+		host,
+		date,
+		hex.EncodeToString(bodyHash[:]),
+	}, "\n")
+}
+
+func signAdminRequestAt(req *http.Request, body []byte, secret, date string) {
+	req.Header.Set("X-Stellabill-Date", date)
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(canonicalAdminRequest(req, body, date)))
+	req.Header.Set("X-Stellabill-Signature", hex.EncodeToString(mac.Sum(nil)))
+}
+
+func signAdminRequest(req *http.Request, body []byte, secret string) {
+	signAdminRequestAt(req, body, secret, time.Now().UTC().Format(time.RFC3339))
+}
+
+func newPurgeRequest(extraQuery string) *http.Request {
+	url := "/api/admin/purge"
+	if extraQuery != "" {
+		url += "?" + extraQuery
+	}
+	req, _ := http.NewRequest(http.MethodPost, url, nil)
+	return req
+}
+
+func serveRequest(r *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
+}
 
 // mockPurgeable is a test double for cache.Purgeable.
 type mockPurgeable struct {
@@ -61,25 +128,20 @@ func buildRouter(sink *audit.MemorySink, handler *AdminHandler) *gin.Engine {
 	r := gin.New()
 	logger := audit.NewLogger("secret", sink)
 	r.Use(audit.Middleware(logger))
-	r.POST("/api/admin/purge", handler.PurgeCache)
+	r.POST("/api/admin/purge", middleware.RequestSigning(testSigningSecret), handler.PurgeCache)
 	return r
 }
 
 func doRequest(r *gin.Engine, token, adminUser, extraQuery string) *httptest.ResponseRecorder {
-	url := "/api/admin/purge"
-	if extraQuery != "" {
-		url += "?" + extraQuery
-	}
-	req, _ := http.NewRequest(http.MethodPost, url, nil)
+	req := newPurgeRequest(uniqueQuery(extraQuery))
 	if token != "" {
 		req.Header.Set("X-Admin-Token", token)
 	}
 	if adminUser != "" {
 		req.Header.Set("X-Admin-User", adminUser)
 	}
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-	return rec
+	signAdminRequest(req, nil, testSigningSecret)
+	return serveRequest(r, req)
 }
 
 func decodePurgeResponse(t *testing.T, rec *httptest.ResponseRecorder) purgeResponse {
@@ -503,6 +565,113 @@ func TestAdminPurge_WithRealRepos(t *testing.T) {
 	p1, err := cachedPlans.FindByID(ctx, "p1")
 	if err != nil || p1.ID != "p1" {
 		t.Fatalf("post-purge FindByID: %v %v", p1, err)
+	}
+}
+
+func TestAdminPurge_MissingSignatureRejected(t *testing.T) {
+	sink := &audit.MemorySink{}
+	handler := NewAdminHandler("token")
+	r := buildRouter(sink, handler)
+
+	req := newPurgeRequest(uniqueQuery(""))
+	req.Header.Set("X-Admin-Token", "token")
+	req.Header.Set("X-Admin-User", "admin")
+	signAdminRequest(req, nil, testSigningSecret)
+	req.Header.Del("X-Stellabill-Signature")
+
+	rec := serveRequest(r, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when X-Stellabill-Signature is missing, got %d", rec.Code)
+	}
+}
+
+func TestAdminPurge_MissingDateRejected(t *testing.T) {
+	sink := &audit.MemorySink{}
+	handler := NewAdminHandler("token")
+	r := buildRouter(sink, handler)
+
+	req := newPurgeRequest(uniqueQuery(""))
+	req.Header.Set("X-Admin-Token", "token")
+	req.Header.Set("X-Admin-User", "admin")
+	signAdminRequest(req, nil, testSigningSecret)
+	req.Header.Del("X-Stellabill-Date")
+
+	rec := serveRequest(r, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when X-Stellabill-Date is missing, got %d", rec.Code)
+	}
+}
+
+func TestAdminPurge_InvalidSignatureRejected(t *testing.T) {
+	sink := &audit.MemorySink{}
+	handler := NewAdminHandler("token")
+	r := buildRouter(sink, handler)
+
+	req := newPurgeRequest(uniqueQuery(""))
+	req.Header.Set("X-Admin-Token", "token")
+	req.Header.Set("X-Admin-User", "admin")
+	signAdminRequest(req, nil, testSigningSecret)
+	req.Header.Set("X-Stellabill-Signature", strings.Repeat("0", 64))
+
+	rec := serveRequest(r, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for invalid signature, got %d", rec.Code)
+	}
+}
+
+func TestAdminPurge_SkewedTimestampRejected(t *testing.T) {
+	sink := &audit.MemorySink{}
+	handler := NewAdminHandler("token")
+	r := buildRouter(sink, handler)
+
+	req := newPurgeRequest(uniqueQuery(""))
+	req.Header.Set("X-Admin-Token", "token")
+	req.Header.Set("X-Admin-User", "admin")
+	skewed := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	signAdminRequestAt(req, nil, testSigningSecret, skewed)
+
+	rec := serveRequest(r, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for skewed timestamp, got %d", rec.Code)
+	}
+}
+
+func TestAdminPurge_BodyTamperingRejected(t *testing.T) {
+	sink := &audit.MemorySink{}
+	handler := NewAdminHandler("token")
+	r := buildRouter(sink, handler)
+
+	req := newPurgeRequest(uniqueQuery(""))
+	req.Header.Set("X-Admin-Token", "token")
+	req.Header.Set("X-Admin-User", "admin")
+	signAdminRequest(req, []byte(`{"approved":true}`), testSigningSecret)
+	req.Body = io.NopCloser(bytes.NewReader([]byte(`{"approved":false}`)))
+	req.ContentLength = int64(len(`{"approved":false}`))
+
+	rec := serveRequest(r, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for tampered body, got %d", rec.Code)
+	}
+}
+
+func TestAdminPurge_ReplayRejected(t *testing.T) {
+	sink := &audit.MemorySink{}
+	handler := NewAdminHandler("token")
+	r := buildRouter(sink, handler)
+
+	req := newPurgeRequest("nonce=replay-test")
+	req.Header.Set("X-Admin-Token", "token")
+	req.Header.Set("X-Admin-User", "admin")
+	signAdminRequest(req, nil, testSigningSecret)
+
+	rec1 := serveRequest(r, req)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first signed request: expected 200, got %d", rec1.Code)
+	}
+
+	rec2 := serveRequest(r, req)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed signed request: expected 401, got %d", rec2.Code)
 	}
 }
 

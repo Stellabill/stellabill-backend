@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,7 +16,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
+
+var tracer = otel.Tracer("handlers")
 
 // WebSocket for live subscription status streaming
 // - Hub with tenant and subscription ID filtering
@@ -34,7 +40,32 @@ func (s Subscription) GetID() string        { return s.ID }
 func (s Subscription) GetSortValue() string { return s.Customer } // Sort by customer for now
 
 func (h *Handler) ListSubscriptions(c *gin.Context) {
+	ctx, span := tracer.Start(c.Request.Context(), "handler.ListSubscriptions")
+	defer span.End()
+
+	c.Request = c.Request.WithContext(ctx)
+
+	if h == nil || h.Subscriptions == nil {
+		span.SetStatus(codes.Error, "subscription service is unavailable")
+		RenderProblem(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service is unavailable")
+		return
+	}
+
 	limitStr := c.DefaultQuery("limit", "10")
+	if limitStr != "" {
+		val, err := strconv.Atoi(limitStr)
+		if err != nil {
+			span.SetStatus(codes.Error, "Invalid pagination limit")
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeValidationFailed, "Invalid pagination limit")
+			return
+		}
+		if val > 100 {
+			span.SetStatus(codes.Error, "Limit exceeds maximum")
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeValidationFailed, "Limit exceeds maximum of 100")
+			return
+		}
+	}
+
 	limit, _ := strconv.Atoi(limitStr)
 	if limit <= 0 {
 		limit = 10
@@ -43,12 +74,15 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 	cursorStr := c.Query("cursor")
 	cursor, err := pagination.Decode(cursorStr)
 	if err != nil {
+		span.SetStatus(codes.Error, "invalid cursor format")
 		RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, "invalid cursor format")
 		return
 	}
 
 	allSubs, err := h.Subscriptions.ListSubscriptions(c)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "Failed to retrieve subscriptions")
 		return
 	}
@@ -129,10 +163,141 @@ func (h *Handler) PatchSubscription(c *gin.Context) {
 }
 
 // NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full
-// subscription detail using the provided SubscriptionService.
+// subscription detail using the provided SubscriptionService and records OpenTelemetry spans.
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"id": c.Param("id")})
+		ctx, span := tracer.Start(c.Request.Context(), "handler.GetSubscription")
+		defer span.End()
+
+		c.Request = c.Request.WithContext(ctx)
+
+		id := c.Param("id")
+		tenantID, _ := c.Get("tenantID")
+		tenantIDStr, _ := tenantID.(string)
+
+		callerID, _ := c.Get("callerID")
+		callerIDStr, _ := callerID.(string)
+
+		span.SetAttributes(
+			attribute.String("subscription.id", id),
+		)
+		if tenantIDStr != "" {
+			span.SetAttributes(attribute.String("tenant.id", tenantIDStr))
+		}
+		if callerIDStr != "" {
+			span.SetAttributes(attribute.String("caller.id", callerIDStr))
+		}
+
+		if svc == nil {
+			span.SetStatus(codes.Error, "subscription service is unavailable")
+			RenderProblem(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service is unavailable")
+			return
+		}
+
+		detail, warnings, err := svc.GetDetail(ctx, tenantIDStr, callerIDStr, id)
+		if err != nil {
+			if errors.Is(err, service.ErrNotFound) {
+				span.SetStatus(codes.Error, "The requested resource was not found")
+				RenderProblem(c, http.StatusNotFound, ErrorCodeNotFound, "The requested resource was not found")
+				return
+			}
+			if errors.Is(err, service.ErrDeleted) {
+				span.SetStatus(codes.Error, "deleted")
+				RenderProblem(c, http.StatusGone, ErrorCodeNotFound, "deleted")
+				return
+			}
+			if errors.Is(err, service.ErrForbidden) {
+				span.SetStatus(codes.Error, "forbidden")
+				RenderProblem(c, http.StatusForbidden, ErrorCodeForbidden, "forbidden")
+				return
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "Failed to retrieve subscription")
+			return
+		}
+
+		if detail != nil && detail.Plan != nil && detail.Plan.PlanID != "" {
+			span.SetAttributes(attribute.String("plan.id", detail.Plan.PlanID))
+		}
+
+		resp := gin.H{
+			"api_version": "1",
+			"data":        detail,
+		}
+		if len(warnings) > 0 {
+			resp["warnings"] = warnings
+		}
+		c.JSON(http.StatusOK, resp)
+	}
+}
+
+// NewChangeSubscriptionStatusHandler returns a gin.HandlerFunc that updates a subscription status.
+func NewChangeSubscriptionStatusHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, span := tracer.Start(c.Request.Context(), "handler.ChangeSubscriptionStatus")
+		defer span.End()
+
+		c.Request = c.Request.WithContext(ctx)
+
+		id := c.Param("id")
+		tenantID, _ := c.Get("tenantID")
+		tenantIDStr, _ := tenantID.(string)
+
+		callerID, _ := c.Get("callerID")
+		callerIDStr, _ := callerID.(string)
+
+		if tenantIDStr == "" {
+			span.SetStatus(codes.Error, "tenant context required")
+			RenderProblem(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "tenant context required")
+			return
+		}
+
+		var payload struct {
+			Status string `json:"status"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil || payload.Status == "" {
+			span.SetStatus(codes.Error, "status is required")
+			RenderProblem(c, http.StatusBadRequest, ErrorCodeBadRequest, "status is required")
+			return
+		}
+
+		span.SetAttributes(
+			attribute.String("subscription.id", id),
+			attribute.String("tenant.id", tenantIDStr),
+			attribute.String("target.status", payload.Status),
+		)
+
+		if svc == nil {
+			span.SetStatus(codes.Error, "subscription service unavailable")
+			RenderProblem(c, http.StatusServiceUnavailable, ErrorCodeServiceUnavailable, "subscription service unavailable")
+			return
+		}
+
+		change, err := svc.ChangeStatus(ctx, tenantIDStr, callerIDStr, id, payload.Status)
+		if err != nil {
+			if errors.Is(err, service.ErrNotFound) {
+				span.SetStatus(codes.Error, "not found")
+				RenderProblem(c, http.StatusNotFound, ErrorCodeNotFound, "subscription not found")
+				return
+			}
+			if errors.Is(err, service.ErrDeleted) {
+				span.SetStatus(codes.Error, "deleted")
+				RenderProblem(c, http.StatusGone, ErrorCodeNotFound, "subscription deleted")
+				return
+			}
+			if errors.Is(err, service.ErrInvalidStatus) || errors.Is(err, service.ErrInvalidTransition) || errors.Is(err, service.ErrUnknownCurrentState) {
+				span.SetStatus(codes.Error, err.Error())
+				RenderProblem(c, http.StatusConflict, ErrorCodeConflict, err.Error())
+				return
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			RenderProblem(c, http.StatusInternalServerError, ErrorCodeInternalError, "failed to change subscription status")
+			return
+		}
+
+		c.JSON(http.StatusOK, change)
 	}
 }
 

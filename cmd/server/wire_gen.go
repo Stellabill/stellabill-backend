@@ -19,20 +19,25 @@ import (
 //
 // The function signature is the public contract:
 //   - no inputs – all values come from the provider chain.
-//   - returns (*pgxpool.Pool, *http.Server, error) — the pool is needed so
-//     main() can drain it during graceful shutdown.
-func InitializeServer() (*pgxpool.Pool, *http.Server, error) {
+//   - returns (primary, replica *pgxpool.Pool, *http.Server, error). Both pools
+//     are returned so main() can drain them during graceful shutdown. The
+//     replica pool is nil when no replica is configured.
+func InitializeServer() (*pgxpool.Pool, *pgxpool.Pool, *http.Server, error) {
 	config, err := ProvideConfig()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	engine := ProvideRouter(config)
 	pool, err := ProvideDBPool(config)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	replicaPool, err := ProvideReplicaPool(config)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	server := ProvideHTTPServer(config, engine)
-	return pool, server, nil
+	return pool, replicaPool, server, nil
 }
 
 // wire.go:
@@ -46,5 +51,6 @@ var AppProviders = wire.NewSet(
 	ProvideConfig,
 	ProvideRouter,
 	ProvideDBPool,
+	ProvideReplicaPool,
 	ProvideHTTPServer,
 )

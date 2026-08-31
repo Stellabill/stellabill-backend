@@ -23,7 +23,7 @@ var listenAndServe = func(srv *http.Server) error {
 }
 
 func main() {
-	pool, srv, err := InitializeServer()
+	pool, replicaPool, srv, err := InitializeServer()
 	if err != nil {
 		printConfigError(err)
 		os.Exit(1)
@@ -34,15 +34,20 @@ func main() {
 
 	shutdownTimeout := time.Duration(shutdownTimeoutSecs()) * time.Second
 
-	// cleanup drains the database pool after the HTTP server has stopped
-	// accepting new connections. It always runs (even if HTTP shutdown timed
-	// out) so half-open connections are closed before the process exits.
+	// cleanup drains the primary and replica database pools after the HTTP
+	// server has stopped accepting new connections. It always runs (even if
+	// HTTP shutdown timed out) so half-open connections are closed before the
+	// process exits. DrainPool is a no-op for the nil replica pool when no
+	// replica is configured.
 	cleanup := func(cleanupCtx context.Context) error {
 		start := time.Now()
 		defer func() {
 			metrics.ShutdownDuration.Observe(time.Since(start).Seconds())
 		}()
-		return db.DrainPool(cleanupCtx, pool)
+		if err := db.DrainPool(cleanupCtx, pool); err != nil {
+			return err
+		}
+		return db.DrainPool(cleanupCtx, replicaPool)
 	}
 
 	log.Printf("server listening on %s", srv.Addr)

@@ -11,6 +11,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPostgresSubscriptionRepository_ListReadRouting(t *testing.T) {
+	primaryDB, primaryMock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer primaryDB.Close()
+
+	replicaDB, replicaMock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer replicaDB.Close()
+
+	router := db.NewReadRouter(primaryDB, replicaDB)
+	repo := NewSubscriptionRepository(router)
+
+	subCols := []string{"id", "plan_id", "customer_id", "merchant_id", "status", "amount", "currency", "interval", "current_period_start", "current_period_end", "cancel_at_period_end", "canceled_at", "ended_at", "trial_start", "trial_end", "created_at", "updated_at"}
+
+	t.Run("GetActiveSubscriptionsByMerchantID routes to replica", func(t *testing.T) {
+		replicaMock.ExpectQuery("SELECT id, plan_id, customer_id, merchant_id, status, amount, currency, interval,.* FROM subscriptions WHERE merchant_id = \\$1 AND.*").
+			WithArgs("merch-1").
+			WillReturnRows(sqlmock.NewRows(subCols).
+				AddRow("sub-1", "plan-1", "cust-1", "merch-1", "active", "1000", "USD", "month", time.Now(), time.Now(), false, nil, nil, nil, nil, time.Now(), time.Now()))
+
+		subs, err := repo.GetActiveSubscriptionsByMerchantID(context.Background(), "merch-1")
+		require.NoError(t, err)
+		require.Len(t, subs, 1)
+		assert.Equal(t, "sub-1", subs[0].ID)
+
+		assert.NoError(t, primaryMock.ExpectationsWereMet())
+		assert.NoError(t, replicaMock.ExpectationsWereMet())
+	})
+}
+
 func TestPostgresSubscriptionRepository_ReadRouting(t *testing.T) {
 	primaryDB, primaryMock, err := sqlmock.New()
 	require.NoError(t, err)

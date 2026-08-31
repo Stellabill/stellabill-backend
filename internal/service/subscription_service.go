@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
@@ -56,8 +57,11 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 		r, err := loader.LoadSubscription(ctx, tenantID, subscriptionID)
 		if err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
+				span.SetStatus(codes.Error, "subscription not found")
 				return nil, nil, ErrNotFound
 			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, nil, err
 		}
 		row = r
@@ -65,8 +69,11 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 		r, err := s.subRepo.FindByIDAndTenant(ctx, subscriptionID, tenantID)
 		if err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
+				span.SetStatus(codes.Error, "subscription not found")
 				return nil, nil, ErrNotFound
 			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, nil, err
 		}
 		row = r
@@ -74,11 +81,13 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 
 	// 2. Soft-delete check.
 	if row.DeletedAt != nil {
+		span.SetStatus(codes.Error, "subscription deleted")
 		return nil, nil, ErrDeleted
 	}
 
 	// 3. Ownership check.
 	if callerID != row.CustomerID {
+		span.SetStatus(codes.Error, "forbidden")
 		return nil, nil, ErrForbidden
 	}
 

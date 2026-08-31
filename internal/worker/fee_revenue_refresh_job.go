@@ -107,7 +107,8 @@ type FeeRevenueRefreshJob struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	running atomic.Int32
+	running   atomic.Int32
+	startOnce sync.Once
 
 	// populated tracks whether the view has held data at least once, so we know
 	// whether CONCURRENTLY is safe.
@@ -146,11 +147,13 @@ func (j *FeeRevenueRefreshJob) SetClock(c timeutil.Clock) {
 
 // Start begins the refresh loop. It is safe to call Start only once.
 func (j *FeeRevenueRefreshJob) Start() {
-	j.ctx, j.cancel = context.WithCancel(context.Background())
-	j.running.Store(1)
+	j.startOnce.Do(func() {
+		j.ctx, j.cancel = context.WithCancel(context.Background())
+		j.running.Store(1)
 
-	j.wg.Add(1)
-	go j.refreshLoop()
+		j.wg.Add(1)
+		go j.refreshLoop()
+	})
 }
 
 // Stop signals the refresh loop to exit and waits up to ShutdownTimeout for

@@ -9,7 +9,6 @@ import (
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/servertiming"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -251,6 +250,26 @@ func DrainPool(ctx context.Context, pool *pgxpool.Pool) error {
 	case <-ctx.Done():
 		return fmt.Errorf("drain database pool: %w", ctx.Err())
 	}
+}
+
+// NewReplicaPool opens a second pgx connection pool for the hot-standby read
+// replica configured through DATABASE_REPLICA_URL / DB_REPLICA_URL (loaded into
+// cfg.DBReplicaConn). It reuses the primary pool's DBPool* tuning and PgBouncer
+// settings so replicas and primary are provisioned consistently.
+//
+// When cfg.DBReplicaConn is empty (no replica configured) it returns (nil, nil)
+// so callers can degrade gracefully — the ReadRouter automatically routes all
+// reads to the primary in that case, preserving existing behavior.
+func NewReplicaPool(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
+	if cfg.DBReplicaConn == "" {
+		return nil, nil
+	}
+
+	// Reuse NewPool by pointing it at the replica DSN; all pool tuning fields
+	// and PgBouncer rewriting are identical for primary and replica.
+	replicaCfg := cfg
+	replicaCfg.DBConn = cfg.DBReplicaConn
+	return NewPool(ctx, replicaCfg)
 }
 
 // NewPool constructs a pgx connection pool from cfg, applying the DBPool*

@@ -65,6 +65,23 @@ func ProvideDBPool(cfg config.Config) (*pgxpool.Pool, error) {
 	return db.NewPool(ctx, cfg)
 }
 
+// ProvideReplicaPool creates a second *pgxpool.Pool for the hot-standby read
+// replica configured via DATABASE_REPLICA_URL / DB_REPLICA_URL
+// (cfg.DBReplicaConn). When no replica URL is configured it returns (nil, nil)
+// so the server starts primary-only. The ReadRouter falls back to primary for
+// all reads in that case, so disabling replicas is always safe.
+//
+// Like the primary pool, startup fails fast when the replica is unreachable
+// rather than silently serving traffic without read scaling.
+func ProvideReplicaPool(cfg config.Config) (*pgxpool.Pool, error) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(cfg.DBPoolConnectTimeout)*time.Second,
+	)
+	defer cancel()
+	return db.NewReplicaPool(ctx, cfg)
+}
+
 // ProvideHTTPServer assembles an *http.Server from the validated config and
 // the fully-wired router.  Every timeout is sourced from cfg so there is no
 // silent "infinite" default.

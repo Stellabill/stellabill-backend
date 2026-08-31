@@ -9,6 +9,8 @@ import (
 	"stellarbill-backend/internal/repository/postgres"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/codes"
 )
 
 // PostgresPlanRepo implements PlanRepository using PostgreSQL via sqlc.
@@ -41,11 +43,17 @@ func ApplySQLDBPoolConfig(db *sql.DB, cfg config.Config) {
 
 // FindByID fetches a plan by ID, returning ErrNotFound when it does not exist.
 func (r *PostgresPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, error) {
+	ctx, span := postgres.StartPlanSpan(ctx, "PlanRepo.FindByID", id)
+	defer span.End()
+
 	plan, err := r.queries.FindPlanByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			span.SetStatus(codes.Error, "plan not found")
 			return nil, ErrNotFound
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 

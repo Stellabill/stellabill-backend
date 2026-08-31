@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
-	"github.com/klauspost/compress/brotli"
+	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -1038,4 +1039,671 @@ func BenchmarkCompressionResponse_Gzip(b *testing.B) {
 			b.Fatalf("unexpected status: %d", res.Code)
 		}
 	}
+}
+
+// ─── gzip-bomb defense tests ────────────────────────────────────────────────
+//
+// These tests craft high-ratio gzip payloads and verify that the middleware
+// aborts decompression before exhausting memory, returning 413 without
+// allocating the full expanded body.
+
+// makeGzipBomb compresses `decompressedSize` zero-bytes into a gzip stream.
+// Returns (compressedBody []byte, decompressedSize int).
+// The produced stream is a true gzip bomb: very small compressed, very large
+// when expanded.
+func makeGzipBomb(t testing.TB, decompressedSize int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	chunk := make([]byte, 32*1024) // 32 KB zero-filled chunks
+	remaining := decompressedSize
+	for remaining > 0 {
+		n := remaining
+		if n > len(chunk) {
+			n = len(chunk)
+		}
+		if _, err := w.Write(chunk[:n]); err != nil {
+			t.Fatalf("makeGzipBomb: gzip write: %v", err)
+		}
+		remaining -= n
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("makeGzipBomb: gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// makeGzipOf compresses arbitrary plaintext.
+func makeGzipOf(t testing.TB, plain []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(plain); err != nil {
+		t.Fatalf("makeGzipOf: write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("makeGzipOf: close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestGzipPolicy_LargeZeroBomb_DecodedCap verifies that a gzip stream which
+// would expand to 10 MB of zeroes is blocked by the MaxUncompressedBytes cap.
+// Memory growth must stay bounded to roughly maxCap, not 10 MB.
+func TestGzipPolicy_LargeZeroBomb_DecodedCap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const bombSize = 10 * 1024 * 1024  // 10 MB expanded
+	const maxDecoded = 512 * 1024      // 512 KB decoded cap
+	const maxCompressed = 1024 * 1024  // 1 MB compressed cap (bomb is <100 KB)
+
+	compressed := makeGzipBomb(t, bombSize)
+	if int64(len(compressed)) > maxCompressed {
+		t.Fatalf("test setup: compressed bomb (%d B) exceeds maxCompressed (%d B)", len(compressed), maxCompressed)
+	}
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: maxDecoded,
+		MaxCompressedBytes:   maxCompressed,
+		MaxRatio:             0, // disabled; rely on absolute cap only
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		t.Fatal("handler must not be reached for a gzip bomb")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for 10MB gzip bomb, got %d body=%s", res.Code, res.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if resp["error"] != "decompression_bomb" {
+		t.Fatalf("expected error='decompression_bomb', got %v", resp)
+	}
+	// The response must report that the decoded cap was hit, not a compressed-size error.
+	if _, ok := resp["max_uncompressed"]; !ok {
+		t.Fatalf("expected 'max_uncompressed' field in error response, got %v", resp)
+	}
+}
+
+// TestGzipPolicy_LargeZeroBomb_RatioCap verifies the same 10 MB bomb is
+// stopped by the ratio cap when the absolute decoded cap is not the tightest
+// constraint.
+func TestGzipPolicy_LargeZeroBomb_RatioCap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const bombSize = 10 * 1024 * 1024 // 10 MB expanded
+	const maxRatio = 20.0              // ratio cap; bomb typically exceeds 100:1
+
+	compressed := makeGzipBomb(t, bombSize)
+	// MaxUncompressedBytes is set large enough that only the ratio cap triggers.
+	maxDecoded := int64(len(compressed)) * int64(maxRatio) // exactly ratio * compressed
+	// We need maxDecoded to be well below the bomb's decoded size.
+	if maxDecoded >= int64(bombSize) {
+		// ratio cap alone won't trigger; skip ratio-only path for this test.
+		t.Skip("compressed body too large; ratio cap does not kick in for this payload size")
+	}
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: int64(bombSize) + 1024*1024, // very generous absolute cap
+		MaxCompressedBytes:   int64(len(compressed)) + 1024*1024,
+		MaxRatio:             maxRatio,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		t.Fatal("handler must not be reached for a gzip ratio bomb")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for ratio-bomb, got %d body=%s", res.Code, res.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if resp["error"] != "decompression_bomb" {
+		t.Fatalf("expected error='decompression_bomb', got %v", resp)
+	}
+}
+
+// TestGzipPolicy_ExactlyAtDecodedCap verifies that a payload whose decompressed
+// size equals MaxUncompressedBytes exactly is allowed through.
+func TestGzipPolicy_ExactlyAtDecodedCap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const cap = 1024 // 1 KB
+
+	plain := bytes.Repeat([]byte("A"), cap)
+	compressed := makeGzipOf(t, plain)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: cap,
+		MaxRatio:             0, // no ratio limit
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			t.Fatalf("handler: read body: %v", err)
+		}
+		if len(body) != cap {
+			t.Fatalf("handler: expected %d bytes, got %d", cap, len(body))
+		}
+		c.JSON(http.StatusOK, gin.H{"received": len(body)})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 for payload exactly at decoded cap, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+// TestGzipPolicy_JustOverDecodedCap verifies that a payload whose decompressed
+// size is exactly MaxUncompressedBytes+1 is rejected with 413.
+func TestGzipPolicy_JustOverDecodedCap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const cap = 1024 // 1 KB decoded cap
+
+	plain := bytes.Repeat([]byte("A"), cap+1) // one byte over
+	compressed := makeGzipOf(t, plain)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: cap,
+		MaxRatio:             0, // no ratio limit
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		t.Fatal("handler must not be reached when decoded cap is exceeded")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for payload one byte over decoded cap, got %d body=%s", res.Code, res.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if resp["error"] != "decompression_bomb" {
+		t.Fatalf("expected error='decompression_bomb', got %v", resp)
+	}
+}
+
+// TestGzipPolicy_MaxCompressedBytes_Enforced verifies that a gzip body whose
+// compressed size exceeds MaxCompressedBytes is rejected with 413 before
+// decompression is attempted.
+func TestGzipPolicy_MaxCompressedBytes_Enforced(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	plain := bytes.Repeat([]byte("hello "), 500) // ~3 KB plain
+	compressed := makeGzipOf(t, plain)
+
+	// Allow the uncompressed cap to be huge; only the compressed cap should fire.
+	maxCompressed := int64(len(compressed)) - 1 // one byte under compressed size
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 1024 * 1024, // 1 MB — generous decoded cap
+		MaxCompressedBytes:   maxCompressed,
+		MaxRatio:             0,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		t.Fatal("handler must not be reached when compressed cap is exceeded")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 when compressed body exceeds MaxCompressedBytes, got %d body=%s", res.Code, res.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if resp["error"] != "request_too_large" {
+		t.Fatalf("expected error='request_too_large', got %v", resp)
+	}
+}
+
+// TestGzipPolicy_MaxCompressedBytes_ExactLimit verifies that a gzip body
+// exactly at MaxCompressedBytes passes through correctly.
+func TestGzipPolicy_MaxCompressedBytes_ExactLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	plain := []byte("exact compressed limit test payload")
+	compressed := makeGzipOf(t, plain)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 1024,
+		MaxCompressedBytes:   int64(len(compressed)), // exactly at limit
+		MaxRatio:             0,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		body, _ := io.ReadAll(c.Request.Body)
+		c.JSON(http.StatusOK, gin.H{"received": len(body)})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 for body exactly at MaxCompressedBytes, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+// TestGzipPolicy_NestedGzip verifies that a gzip stream wrapping another gzip
+// stream (double-compressed) is not recursively decompressed — the inner gzip
+// bytes are passed to the handler as-is.
+func TestGzipPolicy_NestedGzip(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	inner := makeGzipOf(t, []byte("inner payload"))
+	outer := makeGzipOf(t, inner) // outer gzip wraps inner gzip bytes
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 64 * 1024,
+		MaxRatio:             100,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		body, _ := io.ReadAll(c.Request.Body)
+		// The handler receives the inner gzip bytes, not "inner payload".
+		// Verify it looks like a valid gzip stream.
+		if len(body) < 10 || body[0] != 0x1f || body[1] != 0x8b {
+			t.Fatalf("expected inner gzip magic bytes, got %x", body[:min(10, len(body))])
+		}
+		c.JSON(http.StatusOK, gin.H{"inner_size": len(body)})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(outer))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 for nested gzip (no recursive decompression), got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+// TestGzipPolicy_MissingContentEncoding_PassesThrough verifies that a plain
+// body without Content-Encoding is never decompressed, even if the bytes happen
+// to look like gzip (magic bytes present). Backward compat check.
+func TestGzipPolicy_MissingContentEncoding_PassesThrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// A real gzip stream but sent without Content-Encoding.
+	compressed := makeGzipOf(t, []byte("plain passthrough"))
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 64 * 1024,
+		MaxRatio:             10,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		body, _ := io.ReadAll(c.Request.Body)
+		// Handler receives raw gzip bytes, not decompressed content.
+		if len(body) == 0 {
+			t.Fatal("expected non-empty body")
+		}
+		c.JSON(http.StatusOK, gin.H{"raw_size": len(body)})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	// No Content-Encoding header set intentionally.
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 for request with no Content-Encoding, got %d body=%s", res.Code, res.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if int(resp["raw_size"].(float64)) != len(compressed) {
+		t.Fatalf("expected raw_size=%d, got %v", len(compressed), resp["raw_size"])
+	}
+}
+
+// TestGzipPolicy_HighRatioSmall_Blocked verifies a small payload with
+// extremely high compression ratio (10 000 × ) is caught by the ratio cap.
+func TestGzipPolicy_HighRatioSmall_Blocked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const repeats = 10_000
+	const maxRatio = 50.0
+
+	plain := bytes.Repeat([]byte("Z"), repeats) // 10 KB; ratio >> 50
+	compressed := makeGzipOf(t, plain)
+
+	// Sanity: ratio must exceed maxRatio for this test to be meaningful.
+	actualRatio := float64(len(plain)) / float64(len(compressed))
+	if actualRatio <= maxRatio {
+		t.Skipf("compression ratio %.1f <= maxRatio %.1f; skipping ratio-cap test", actualRatio, maxRatio)
+	}
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: int64(repeats) + 1024*1024, // generous absolute cap
+		MaxCompressedBytes:   int64(len(compressed)) + 1024*1024,
+		MaxRatio:             maxRatio,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		t.Fatal("handler must not be reached when ratio cap is exceeded")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for high-ratio bomb (ratio=%.1f, max=%.1f), got %d body=%s",
+			actualRatio, maxRatio, res.Code, res.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if resp["error"] != "decompression_bomb" {
+		t.Fatalf("expected error='decompression_bomb', got %v", resp)
+	}
+}
+
+// TestGzipPolicy_AllLimitsDisabled_LargeBombPasses verifies that when all
+// limits are set to zero the middleware imposes no restriction and even a
+// large payload passes (relevant for opt-out scenarios).
+func TestGzipPolicy_AllLimitsDisabled_LargeBombPasses(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large decompression in -short mode")
+	}
+	gin.SetMode(gin.TestMode)
+	const bombSize = 2 * 1024 * 1024 // 2 MB — keep reasonable for CI
+	compressed := makeGzipBomb(t, bombSize)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 0,
+		MaxCompressedBytes:   0,
+		MaxRatio:             0,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		body, _ := io.ReadAll(c.Request.Body)
+		c.JSON(http.StatusOK, gin.H{"received": len(body)})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 with all limits disabled, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+// TestGzipPolicy_RequestSizeMiddleware_GzipBodyRejected tests the interaction
+// between RequestSizeLimit and GzipPolicy: a small compressed body that would
+// expand massively should be caught by GzipPolicy, not RequestSizeLimit.
+func TestGzipPolicy_RequestSizeMiddleware_GzipBodyRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const bombExpanded = 1 * 1024 * 1024 // 1 MB expanded
+	const maxCompressed = 512 * 1024     // 512 KB compressed cap
+	const maxDecoded = 256 * 1024        // 256 KB decoded cap
+
+	compressed := makeGzipBomb(t, bombExpanded)
+
+	router := gin.New()
+	// RequestSizeLimit runs first; it only sees the compressed payload.
+	router.Use(RequestSizeLimit(maxCompressed))
+	// GzipPolicy then enforces the decoded cap.
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: maxDecoded,
+		MaxCompressedBytes:   maxCompressed,
+		MaxRatio:             0,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		t.Fatal("handler must not be reached")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for gzip bomb through middleware chain, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+// TestRequestSizeLimit_GzipBomb_CompressedSize tests that RequestSizeLimit
+// correctly rejects a large compressed gzip body based on its wire size.
+func TestRequestSizeLimit_GzipBomb_CompressedSize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const bombExpanded = 5 * 1024 * 1024 // 5 MB expanded
+
+	compressed := makeGzipBomb(t, bombExpanded)
+	// Set limit to exactly the compressed size minus 1 byte.
+	limit := int64(len(compressed)) - 1
+
+	router := gin.New()
+	router.Use(RequestSizeLimit(limit))
+	router.POST("/test", func(c *gin.Context) {
+		t.Fatal("handler must not be reached")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 when compressed bomb exceeds RequestSizeLimit, got %d body=%s", res.Code, res.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if resp["error"] != "request_too_large" {
+		t.Fatalf("expected error='request_too_large', got %v", resp)
+	}
+}
+
+// TestRequestSizeLimit_GzipBomb_CompressedAtLimit tests that RequestSizeLimit
+// accepts a compressed gzip body exactly at the limit.
+func TestRequestSizeLimit_GzipBomb_CompressedAtLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const bombExpanded = 1 * 1024 * 1024 // 1 MB expanded
+
+	compressed := makeGzipBomb(t, bombExpanded)
+	limit := int64(len(compressed)) // exactly at limit
+
+	router := gin.New()
+	router.Use(RequestSizeLimit(limit))
+	// GzipPolicy with a large decoded cap so only the wire size is tested here.
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 2 * 1024 * 1024,
+		MaxCompressedBytes:   limit,
+		MaxRatio:             0,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "gzip")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 for compressed body exactly at RequestSizeLimit, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+// TestGzipPolicy_ConcurrentBombs verifies that concurrent requests each
+// carrying a gzip bomb are all rejected safely (no race, no goroutine leak).
+func TestGzipPolicy_ConcurrentBombs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const concurrency = 10
+	const bombExpanded = 512 * 1024 // 512 KB per bomb
+	const maxDecoded = 64 * 1024    // 64 KB decoded cap
+
+	compressed := makeGzipBomb(t, bombExpanded)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: maxDecoded,
+		MaxRatio:             0,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		t.Fatal("handler must not be reached for a gzip bomb")
+	})
+
+	results := make(chan int, concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+			req.Header.Set("Content-Encoding", "gzip")
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+			results <- res.Code
+		}()
+	}
+
+	timeout := time.After(10 * time.Second)
+	for i := 0; i < concurrency; i++ {
+		select {
+		case code := <-results:
+			if code != http.StatusRequestEntityTooLarge {
+				t.Errorf("goroutine %d: expected 413, got %d", i, code)
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for concurrent bomb results")
+		}
+	}
+}
+
+// ─── Benchmarks ─────────────────────────────────────────────────────────────
+
+// BenchmarkGzipBomb_Detection measures how quickly the middleware detects and
+// rejects a 5 MB gzip bomb, and ensures memory growth is bounded.
+func BenchmarkGzipBomb_Detection(b *testing.B) {
+	gin.SetMode(gin.TestMode)
+	const bombExpanded = 5 * 1024 * 1024 // 5 MB expanded
+	const maxDecoded = 64 * 1024         // 64 KB decoded cap
+
+	compressed := makeGzipBomb(b, bombExpanded)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: maxDecoded,
+		MaxRatio:             0,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		b.Fatal("handler must not be reached")
+	})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+		req.Header.Set("Content-Encoding", "gzip")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != http.StatusRequestEntityTooLarge {
+			b.Fatalf("expected 413, got %d", res.Code)
+		}
+	}
+}
+
+// BenchmarkGzipBomb_CompressedSizeCap measures rejection at the compressed-size
+// gate (before decompression even starts).
+func BenchmarkGzipBomb_CompressedSizeCap(b *testing.B) {
+	gin.SetMode(gin.TestMode)
+	const bombExpanded = 5 * 1024 * 1024 // 5 MB expanded
+	compressed := makeGzipBomb(b, bombExpanded)
+	maxCompressed := int64(len(compressed)) - 1
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 64 * 1024,
+		MaxCompressedBytes:   maxCompressed,
+		MaxRatio:             0,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		b.Fatal("handler must not be reached")
+	})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+		req.Header.Set("Content-Encoding", "gzip")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != http.StatusRequestEntityTooLarge {
+			b.Fatalf("expected 413, got %d", res.Code)
+		}
+	}
+}
+
+// BenchmarkGzipBomb_LegitimateSmallPayload measures overhead for a normal
+// small request that should pass through without issues.
+func BenchmarkGzipBomb_LegitimateSmallPayload(b *testing.B) {
+	gin.SetMode(gin.TestMode)
+	payload := []byte(`{"subscription_id":"sub-123","plan":"pro","amount":2999}`)
+	compressed := makeGzipOf(b, payload)
+
+	router := gin.New()
+	router.Use(GzipPolicy(GzipPolicyConfig{
+		MaxUncompressedBytes: 1024 * 1024,
+		MaxCompressedBytes:   512 * 1024,
+		MaxRatio:             50,
+	}))
+	router.POST("/test", func(c *gin.Context) {
+		io.ReadAll(c.Request.Body)
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(compressed))
+		req.Header.Set("Content-Encoding", "gzip")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			b.Fatalf("expected 200, got %d", res.Code)
+		}
+	}
+}
+
+// helper: min for integers (Go 1.21+ has builtin but keep compat)
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

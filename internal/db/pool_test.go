@@ -95,6 +95,28 @@ func TestNewPool_ConnectTimeout(t *testing.T) {
 	assert.Less(t, elapsed, 5*time.Second, "must fail fast via connect timeout, not hang")
 }
 
+// ─── NewReplicaPool tests ──────────────────────────────────────────────────
+
+func TestNewReplicaPool_NoReplicaURLReturnsNilNil(t *testing.T) {
+	cfg := baseCfg() // DBReplicaConn is empty here
+	pool, err := NewReplicaPool(context.Background(), cfg)
+	assert.NoError(t, err, "absent replica URL must degrade gracefully, not error")
+	assert.Nil(t, pool, "no replica pool should be created without a connection string")
+}
+
+// TestNewReplicaPool_UsesReplicaDSN verifies the replica pool is built from the
+// replica connection string (not the primary DSN): a malformed replica DSN must
+// surface a parse error and must not leak an open pool.
+func TestNewReplicaPool_UsesReplicaDSN(t *testing.T) {
+	cfg := baseCfg()
+	cfg.DBConn = "postgres://user:pass@localhost:5432/primary?sslmode=disable"
+	cfg.DBReplicaConn = "://not-a-valid-dsn"
+
+	pool, err := NewReplicaPool(context.Background(), cfg)
+	assert.Error(t, err, "invalid replica DSN must be rejected")
+	assert.Nil(t, pool, "failed replica pool must not be returned")
+}
+
 func TestPoolPinger_NilPool(t *testing.T) {
 	var p *PoolPinger
 	err := p.PingContext(context.Background())

@@ -3,11 +3,19 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"stellarbill-backend/internal/repository/postgres"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var subRepoTracer = otel.Tracer("repository/subscriptions")
 
 // PostgresSubscriptionRepo is a PostgreSQL-backed SubscriptionRepository.
 type PostgresSubscriptionRepo struct {
@@ -25,11 +33,19 @@ func NewPostgresSubscriptionRepo(db *sql.DB) *PostgresSubscriptionRepo {
 
 // FindByID queries subscriptions by id only.
 func (r *PostgresSubscriptionRepo) FindByID(ctx context.Context, id string) (*SubscriptionRow, error) {
+	ctx, span := subRepoTracer.Start(ctx, "SubscriptionRepo.FindByID", trace.WithAttributes(
+		attribute.String("subscription.id", id),
+	))
+	defer span.End()
+
 	sub, err := r.queries.FindSubscriptionByID(ctx, id)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
+			span.SetStatus(codes.Error, "subscription not found")
 			return nil, ErrNotFound
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 	return mapFindSubscriptionRow(sub), nil
@@ -37,14 +53,23 @@ func (r *PostgresSubscriptionRepo) FindByID(ctx context.Context, id string) (*Su
 
 // FindByIDAndTenant queries subscriptions by id and tenant_id in SQL.
 func (r *PostgresSubscriptionRepo) FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*SubscriptionRow, error) {
+	ctx, span := subRepoTracer.Start(ctx, "SubscriptionRepo.FindByID", trace.WithAttributes(
+		attribute.String("subscription.id", id),
+		attribute.String("tenant.id", tenantID),
+	))
+	defer span.End()
+
 	sub, err := r.queries.FindSubscriptionByIDAndTenant(ctx, postgres.FindSubscriptionByIDAndTenantParams{
 		ID:       id,
 		TenantID: tenantID,
 	})
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
+			span.SetStatus(codes.Error, "subscription not found")
 			return nil, ErrNotFound
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 	return mapFindSubscriptionByTenantRow(sub), nil

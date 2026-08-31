@@ -3,10 +3,12 @@ package tracing
 import (
 	"context"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // AllowedBaggageKeys enforces the strict allowlist for baggage attributes to prevent PII leaks.
@@ -27,7 +29,7 @@ func InitPropagators() propagation.TextMapPropagator {
 type BaggageSpanProcessor struct{}
 
 // OnStart reads baggage from the context and adds allowed items as span attributes.
-func (bsp BaggageSpanProcessor) OnStart(parent context.Context, s trace.ReadWriteSpan) {
+func (bsp BaggageSpanProcessor) OnStart(parent context.Context, s sdktrace.ReadWriteSpan) {
 	bag := baggage.FromContext(parent)
 	for _, member := range bag.Members() {
 		if AllowedBaggageKeys[member.Key()] {
@@ -43,4 +45,20 @@ func (bsp BaggageSpanProcessor) Shutdown(context.Context) error { return nil }
 func (bsp BaggageSpanProcessor) ForceFlush(context.Context) error { return nil }
 
 // OnEnd is a no-op for this processor.
-func (bsp BaggageSpanProcessor) OnEnd(s trace.ReadOnlySpan) {}
+func (bsp BaggageSpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {}
+
+// SetupTestTracerProvider initializes an in-memory span exporter and sets it as global tracer provider for testing.
+func SetupTestTracerProvider() (*tracetest.InMemoryExporter, func()) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSyncer(exporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(InitPropagators())
+
+	shutdown := func() {
+		_ = tp.Shutdown(context.Background())
+	}
+	return exporter, shutdown
+}

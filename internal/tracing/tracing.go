@@ -3,10 +3,12 @@ package tracing
 import (
 	"context"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -61,4 +63,23 @@ func SetupTestTracerProvider() (*tracetest.InMemoryExporter, func()) {
 		_ = tp.Shutdown(context.Background())
 	}
 	return exporter, shutdown
+}
+
+// ExemplarLabels extracts OpenTelemetry trace_id and span_id from the active
+// span in ctx and returns them as a prometheus.Labels map suitable for
+// attaching as exemplars on Prometheus histograms.
+//
+// Returns nil when the span is not sampled, not recording, or absent.
+// This ensures exemplars are only emitted for traces that are actively being
+// collected, avoiding cardinality bloat from unsampled requests.
+func ExemplarLabels(ctx context.Context) prometheus.Labels {
+	span := trace.SpanFromContext(ctx)
+	sc := span.SpanContext()
+	if !sc.IsValid() || !sc.IsSampled() || !span.IsRecording() {
+		return nil
+	}
+	return prometheus.Labels{
+		"trace_id": sc.TraceID().String(),
+		"span_id":  sc.SpanID().String(),
+	}
 }

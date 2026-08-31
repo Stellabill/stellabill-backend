@@ -41,17 +41,17 @@ func (e *ConfigError) Error() string {
 
 // Config holds all application configuration
 type Config struct {
-	Env                    string   `json:"env"`
-	Port                   int      `json:"port"`
-	DBConn                 string   `json:"db_conn" secret:"true"`
-	JWTSecret              string   `json:"jwt_secret" secret:"true"`
-	MaxHeaderBytes         int      `json:"max_header_bytes"`
-	ReadTimeout            int      `json:"read_timeout"`
-	WriteTimeout           int      `json:"write_timeout"`
-	IdleTimeout            int      `json:"idle_timeout"`
-	AllowedOrigins         string   `json:"allowed_origins"`
-	AdminToken             string   `json:"admin_token" secret:"true"`
-	DBReplicaConn          string   `json:"db_replica_conn" secret:"true"`
+	Env            string `json:"env"`
+	Port           int    `json:"port"`
+	DBConn         string `json:"db_conn" secret:"true"`
+	JWTSecret      string `json:"jwt_secret" secret:"true"`
+	MaxHeaderBytes int    `json:"max_header_bytes"`
+	ReadTimeout    int    `json:"read_timeout"`
+	WriteTimeout   int    `json:"write_timeout"`
+	IdleTimeout    int    `json:"idle_timeout"`
+	AllowedOrigins string `json:"allowed_origins"`
+	AdminToken     string `json:"admin_token" secret:"true"`
+	DBReplicaConn  string `json:"db_replica_conn" secret:"true"`
 	// Rate limiting configuration
 	RateLimitEnabled   bool     `json:"rate_limit_enabled"`
 	RateLimitMode      string   `json:"rate_limit_mode"`
@@ -75,16 +75,12 @@ type Config struct {
 	CSPReportRPS int
 	// CSPReportBurst is the per-tenant burst size for /api/v1/csp-reports.
 	// Default: 10.
-	CSPReportBurst int
-	SpiffeSocketPath   string
-	SpiffeTrustDomain  string
-	MaxRequestSize         int64
-	MaxGzipUncompressed    int64
-	MaxGzipRatio           float64
-	// MaxGzipCompressed caps the compressed payload size before decompression
-	// starts (env: MAX_GZIP_COMPRESSED, default: same as MaxRequestSize).
-	// Set to 0 to fall back to MaxGzipUncompressed (legacy behaviour).
-	MaxGzipCompressed int64
+	CSPReportBurst      int
+	SpiffeSocketPath    string
+	SpiffeTrustDomain   string
+	MaxRequestSize      int64
+	MaxGzipUncompressed int64
+	MaxGzipRatio        float64
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
 	RedisURL string `json:"redis_url" secret:"true"`
@@ -112,6 +108,13 @@ type Config struct {
 	DBPoolHealthCheckPeriod int `json:"db_pool_health_check_period"`
 	DBPoolMetricsInterval   int `json:"db_pool_metrics_interval"`
 
+	// DB circuit-breaker configuration for the long-lived pgx pool. These values
+	// are used by both the repository layer and the readiness probe to fail fast
+	// instead of amplifying outages with repeated Ping() calls.
+	DBBreakerMaxFailures         uint32 `json:"db_breaker_max_failures"`
+	DBBreakerTimeoutSeconds      uint32 `json:"db_breaker_timeout_seconds"`
+	DBBreakerHalfOpenMaxRequests uint32 `json:"db_breaker_half_open_max_requests"`
+
 	// PgBouncer sidecar configuration.
 	//
 	//   PGBOUNCER_ENABLED        (default false) – route connections through the
@@ -131,11 +134,11 @@ type Config struct {
 	//   PGBOUNCER_MAX_CONN_IDLE_IN_TRANSACTION  (default 30) – idle-in-transaction
 	//                             server-side timeout forwarded into pgbouncer.ini
 	//                             as query_wait_timeout / idle_transaction_timeout.
-	PgBouncerEnabled        bool
-	PgBouncerHost           string
-	PgBouncerPort           int
-	DBStatementCacheMode    string // "prepare" | "describe" | "simple"
-	PgBouncerIdleInTxTimeout int   // seconds; written into pgbouncer.ini
+	PgBouncerEnabled         bool
+	PgBouncerHost            string
+	PgBouncerPort            int
+	DBStatementCacheMode     string // "prepare" | "describe" | "simple"
+	PgBouncerIdleInTxTimeout int    // seconds; written into pgbouncer.ini
 	// GracefulShutdownTimeout is the maximum seconds the server waits for
 	// in-flight requests to complete before forcing shutdown. Env:
 	// GRACEFUL_SHUTDOWN_TIMEOUT (default: DefaultGracefulShutdownTimeout).
@@ -198,17 +201,19 @@ const (
 
 	// DB pool defaults — chosen to be safe for a typical single-instance
 	// Postgres with max_connections=100.  Tune upward for larger deployments.
-	DefaultDBPoolMaxConns          = 25   // leave headroom for other clients
-	DefaultDBPoolMinConns          = 2    // keep 2 warm to avoid cold-start latency
-	DefaultDBPoolMaxConnLifetime   = 3600 // 1 hour — recycle before firewalls drop
-	DefaultDBPoolMaxConnIdleTime   = 600  // 10 min — evict idle before firewall timeout
-	DefaultDBPoolConnectTimeout    = 5    // 5 s per dial attempt
-	DefaultDBPoolHealthCheckPeriod = 30   // 30 s proactive idle-conn check
-	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
+	DefaultDBPoolMaxConns               = 25   // leave headroom for other clients
+	DefaultDBPoolMinConns               = 2    // keep 2 warm to avoid cold-start latency
+	DefaultDBPoolMaxConnLifetime        = 3600 // 1 hour — recycle before firewalls drop
+	DefaultDBPoolMaxConnIdleTime        = 600  // 10 min — evict idle before firewall timeout
+	DefaultDBPoolConnectTimeout         = 5    // 5 s per dial attempt
+	DefaultDBPoolHealthCheckPeriod      = 30   // 30 s proactive idle-conn check
+	DefaultDBPoolMetricsInterval        = 15   // 15 s Prometheus scrape cadence
+	DefaultDBBreakerMaxFailures         = 5    // trip after this many consecutive failures
+	DefaultDBBreakerTimeoutSeconds      = 30   // cool-down period before half-open probes are allowed
+	DefaultDBBreakerHalfOpenMaxRequests = 1    // permit a single probe while half-open
 
 	// Graceful shutdown defaults — coordinate with k8s terminationGracePeriodSeconds.
-	DefaultGracefulShutdownTimeout = 30   // 30 s to drain in-flight requests and pool
-
+	DefaultGracefulShutdownTimeout = 30 // 30 s to drain in-flight requests and pool
 
 	// Outbox publisher defaults.
 	DefaultOutboxPublisherTimeout = 10 // seconds
@@ -220,12 +225,12 @@ const (
 	MaxDBPoolTimeout  = 300 // seconds
 
 	// PgBouncer sidecar defaults.
-	DefaultPgBouncerHost           = "127.0.0.1"
-	DefaultPgBouncerPort           = 5432
-	DefaultDBStatementCacheMode    = "prepare"
+	DefaultPgBouncerHost            = "127.0.0.1"
+	DefaultPgBouncerPort            = 5432
+	DefaultDBStatementCacheMode     = "prepare"
 	DefaultPgBouncerIdleInTxTimeout = 30 // seconds
-	MinPgBouncerPort               = 1
-	MaxPgBouncerPort               = 65535
+	MinPgBouncerPort                = 1
+	MaxPgBouncerPort                = 65535
 
 	// Valid DB_STATEMENT_CACHE_MODE values.
 	StatementCacheModeDescribe = "describe"
@@ -301,19 +306,19 @@ func Load(opts ...Option) (Config, error) {
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
 		MaxGzipCompressed:      getEnvInt64("MAX_GZIP_COMPRESSED", 1024*1024*10),  // 10MB default (= MaxRequestSize)
 		// DB pool — safe production defaults
-		//
-		// DATABASE_REPLICA_URL is the canonical env var for the hot-standby
-		// read replica; DB_REPLICA_URL is kept as a backward-compatible alias.
-		DBReplicaConn:    getEnvFirst("", "DATABASE_REPLICA_URL", "DB_REPLICA_URL"),
-		RedisURL:         getEnv("REDIS_URL", ""),
-		CacheTTL:         getEnvInt("CACHE_TTL", 60), // 60 second default
-		DBPoolMaxConns:          DefaultDBPoolMaxConns,
-		DBPoolMinConns:          DefaultDBPoolMinConns,
-		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
-		DBPoolMaxConnIdleTime:   DefaultDBPoolMaxConnIdleTime,
-		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
-		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
-		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
+		DBReplicaConn:                getEnv("DB_REPLICA_URL", ""),
+		RedisURL:                     getEnv("REDIS_URL", ""),
+		CacheTTL:                     getEnvInt("CACHE_TTL", 60), // 60 second default
+		DBPoolMaxConns:               DefaultDBPoolMaxConns,
+		DBPoolMinConns:               DefaultDBPoolMinConns,
+		DBPoolMaxConnLifetime:        DefaultDBPoolMaxConnLifetime,
+		DBPoolMaxConnIdleTime:        DefaultDBPoolMaxConnIdleTime,
+		DBPoolConnectTimeout:         DefaultDBPoolConnectTimeout,
+		DBPoolHealthCheckPeriod:      DefaultDBPoolHealthCheckPeriod,
+		DBPoolMetricsInterval:        DefaultDBPoolMetricsInterval,
+		DBBreakerMaxFailures:         DefaultDBBreakerMaxFailures,
+		DBBreakerTimeoutSeconds:      DefaultDBBreakerTimeoutSeconds,
+		DBBreakerHalfOpenMaxRequests: DefaultDBBreakerHalfOpenMaxRequests,
 		// PgBouncer sidecar defaults.
 		PgBouncerEnabled:         false,
 		PgBouncerHost:            DefaultPgBouncerHost,
@@ -711,8 +716,9 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		}
 	}
 
-	// Validate DB pool configuration
+	// Validate DB pool and circuit-breaker configuration
 	validateDBPool(c, result)
+	validateDBBreaker(c, result)
 
 	// Validate PgBouncer sidecar configuration
 	validatePgBouncer(c, result)
@@ -925,6 +931,27 @@ func validateDBPool(c *Config, result *ValidationResult) {
 				"idle connections will be evicted before lifetime recycle fires — consider reducing idle time",
 				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
 	}
+}
+
+func validateDBBreaker(c *Config, result *ValidationResult) {
+	setUint32FromEnv := func(envKey string, target *uint32, defVal uint32, min uint32, max uint32) {
+		raw := os.Getenv(envKey)
+		if raw == "" {
+			return
+		}
+		v, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || uint32(v) < min || uint32(v) > max {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("%s invalid (value=%q, allowed %d–%d), using default %d",
+					envKey, raw, min, max, defVal))
+			return
+		}
+		*target = uint32(v)
+	}
+
+	setUint32FromEnv("DB_BREAKER_MAX_FAILURES", &c.DBBreakerMaxFailures, DefaultDBBreakerMaxFailures, 1, 100)
+	setUint32FromEnv("DB_BREAKER_TIMEOUT_SECONDS", &c.DBBreakerTimeoutSeconds, DefaultDBBreakerTimeoutSeconds, 1, 300)
+	setUint32FromEnv("DB_BREAKER_HALF_OPEN_MAX_REQUESTS", &c.DBBreakerHalfOpenMaxRequests, DefaultDBBreakerHalfOpenMaxRequests, 1, 20)
 }
 
 // validatePgBouncer reads PGBOUNCER_* and DB_STATEMENT_CACHE_MODE env vars,

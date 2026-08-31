@@ -7,7 +7,7 @@ import (
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/featureflags"
 
-	"github.com/gin-ginic/gin"))
+	"github.com/gin-gonic/gin"))
 
 // FeatureFlagsHandler encapsulates feature flag management endpoints.
 type FeatureFlagsHandler struct {

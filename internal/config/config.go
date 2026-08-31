@@ -58,6 +58,10 @@ type Config struct {
 	RateLimitRPS       int      `json:"rate_limit_rps"`
 	RateLimitBurst     int      `json:"rate_limit_burst"`
 	RateLimitWhitelist []string `json:"rate_limit_whitelist"`
+	// Per-tenant rate limiting — layered after the global limiter on
+	// authenticated routes. Zero values (the default) leave it disabled.
+	RateLimitTenantRPS   int `json:"rate_limit_tenant_rps"`
+	RateLimitTenantBurst int `json:"rate_limit_tenant_burst"`
 	// Tracing configuration
 	TracingExporter        string
 	TracingServiceName     string
@@ -77,6 +81,10 @@ type Config struct {
 	MaxRequestSize         int64
 	MaxGzipUncompressed    int64
 	MaxGzipRatio           float64
+	// MaxGzipCompressed caps the compressed payload size before decompression
+	// starts (env: MAX_GZIP_COMPRESSED, default: same as MaxRequestSize).
+	// Set to 0 to fall back to MaxGzipUncompressed (legacy behaviour).
+	MaxGzipCompressed int64
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
 	RedisURL string `json:"redis_url" secret:"true"`
@@ -139,6 +147,19 @@ type Config struct {
 
 	// OTelLogsEnabled toggles OpenTelemetry log export (env: OTEL_LOGS_ENABLED).
 	OTelLogsEnabled bool
+
+	// OutboxPublisherURL is the endpoint outbox dispatcher uses to publish
+	// events. Env: OUTBOX_PUBLISHER_URL (default: "").
+	OutboxPublisherURL string `json:"outbox_publisher_url"`
+
+	// OutboxPublisherTimeout is the HTTP client timeout for outbox publishes in
+	// seconds. Env: OUTBOX_PUBLISHER_TIMEOUT (default: 10).
+	OutboxPublisherTimeout int `json:"outbox_publisher_timeout"`
+
+	// OutboxPublisherCAFile is an optional path to a PEM CA bundle. When set,
+	// the outbox publisher pins the server certificate to this root. Env:
+	// OUTBOX_PUBLISHER_CA_FILE (default: "").
+	OutboxPublisherCAFile string `json:"outbox_publisher_ca_file"`
 }
 
 // ValidationResult holds the result of configuration validation
@@ -189,6 +210,9 @@ const (
 	DefaultGracefulShutdownTimeout = 30   // 30 s to drain in-flight requests and pool
 
 
+	// Outbox publisher defaults.
+	DefaultOutboxPublisherTimeout = 10 // seconds
+
 	// Validation bounds
 	MinDBPoolMaxConns = 1
 	MaxDBPoolMaxConns = 500
@@ -216,6 +240,10 @@ const (
 	MaxRateLimitRPS       = 1000
 	MinRateLimitBurst     = 1
 	MaxRateLimitBurst     = 2000
+	MinRateLimitTenantRPS   = 1
+	MaxRateLimitTenantRPS   = 1000
+	MinRateLimitTenantBurst = 1
+	MaxRateLimitTenantBurst = 2000
 )
 
 // Option configures the Load function.
@@ -271,6 +299,7 @@ func Load(opts ...Option) (Config, error) {
 		MaxRequestSize:         getEnvInt64("MAX_REQUEST_SIZE", 1024*1024*10),      // 10MB
 		MaxGzipUncompressed:    getEnvInt64("MAX_GZIP_UNCOMPRESSED", 1024*1024*50), // 50MB
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
+		MaxGzipCompressed:      getEnvInt64("MAX_GZIP_COMPRESSED", 1024*1024*10),  // 10MB default (= MaxRequestSize)
 		// DB pool — safe production defaults
 		//
 		// DATABASE_REPLICA_URL is the canonical env var for the hot-standby
@@ -293,6 +322,9 @@ func Load(opts ...Option) (Config, error) {
 		PgBouncerIdleInTxTimeout: DefaultPgBouncerIdleInTxTimeout,
 		GracefulShutdownTimeout:  DefaultGracefulShutdownTimeout,
 		ConcurrencyCapsPath:      getEnv("CONCURRENCY_CAPS_PATH", ""),
+		OutboxPublisherURL:       getEnv("OUTBOX_PUBLISHER_URL", ""),
+		OutboxPublisherTimeout:   getEnvInt("OUTBOX_PUBLISHER_TIMEOUT", DefaultOutboxPublisherTimeout),
+		OutboxPublisherCAFile:    getEnv("OUTBOX_PUBLISHER_CA_FILE", ""),
 	}
 
 	// Resolve secrets through the provider
@@ -545,6 +577,48 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		})
 	}
 
+	// Per-tenant rate limiting (layered after the global limiter). Unset by
+	// default — both RPS and Burst must be 0 to stay disabled.
+	if val := os.Getenv("RATE_LIMIT_TENANT_RPS"); val != "" {
+		if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitTenantRPS && rps <= MaxRateLimitTenantRPS {
+			c.RateLimitTenantRPS = rps
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_RPS",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitTenantRPS, MaxRateLimitTenantRPS),
+				Value:   val,
+			})
+		}
+	}
+
+	if val := os.Getenv("RATE_LIMIT_TENANT_BURST"); val != "" {
+		if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitTenantBurst && burst <= MaxRateLimitTenantBurst {
+			c.RateLimitTenantBurst = burst
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitTenantBurst, MaxRateLimitTenantBurst),
+				Value:   val,
+			})
+		}
+	}
+
+	if c.RateLimitTenantRPS > 0 {
+		if c.RateLimitTenantBurst == 0 {
+			c.RateLimitTenantBurst = c.RateLimitTenantRPS * 2 // Conservative default: 2x RPS
+		}
+		if c.RateLimitTenantBurst < c.RateLimitTenantRPS {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: "must be greater than or equal to RATE_LIMIT_TENANT_RPS",
+				Value:   strconv.Itoa(c.RateLimitTenantBurst),
+			})
+		}
+	}
+
 	if whitelist := os.Getenv("RATE_LIMIT_WHITELIST"); whitelist != "" {
 		paths := strings.Split(whitelist, ",")
 		for i, path := range paths {
@@ -592,6 +666,46 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 				Type:    ErrInvalidValue,
 				Key:     "GRACEFUL_SHUTDOWN_TIMEOUT",
 				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
+		}
+	}
+	// Validate OUTBOX_PUBLISHER_TIMEOUT
+	if val := os.Getenv("OUTBOX_PUBLISHER_TIMEOUT"); val != "" {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
+			c.OutboxPublisherTimeout = timeout
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "OUTBOX_PUBLISHER_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
+		}
+	}
+
+	// Validate OUTBOX_PUBLISHER_URL
+	if val := os.Getenv("OUTBOX_PUBLISHER_URL"); val != "" {
+		c.OutboxPublisherURL = val
+		u, err := url.Parse(val)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "OUTBOX_PUBLISHER_URL",
+				Message: "must be a valid http(s) URL",
+				Value:   val,
+			})
+		}
+	}
+
+	// Validate OUTBOX_PUBLISHER_CA_FILE
+	if val := os.Getenv("OUTBOX_PUBLISHER_CA_FILE"); val != "" {
+		c.OutboxPublisherCAFile = val
+		if info, err := os.Stat(val); err != nil || info.IsDir() {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "OUTBOX_PUBLISHER_CA_FILE",
+				Message: "must reference an existing CA bundle file",
 				Value:   val,
 			})
 		}

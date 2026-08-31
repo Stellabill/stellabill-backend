@@ -58,6 +58,10 @@ type Config struct {
 	RateLimitRPS       int      `json:"rate_limit_rps"`
 	RateLimitBurst     int      `json:"rate_limit_burst"`
 	RateLimitWhitelist []string `json:"rate_limit_whitelist"`
+	// Per-tenant rate limiting — layered after the global limiter on
+	// authenticated routes. Zero values (the default) leave it disabled.
+	RateLimitTenantRPS   int `json:"rate_limit_tenant_rps"`
+	RateLimitTenantBurst int `json:"rate_limit_tenant_burst"`
 	// Tracing configuration
 	TracingExporter        string
 	TracingServiceName     string
@@ -236,6 +240,10 @@ const (
 	MaxRateLimitRPS       = 1000
 	MinRateLimitBurst     = 1
 	MaxRateLimitBurst     = 2000
+	MinRateLimitTenantRPS   = 1
+	MaxRateLimitTenantRPS   = 1000
+	MinRateLimitTenantBurst = 1
+	MaxRateLimitTenantBurst = 2000
 )
 
 // Option configures the Load function.
@@ -567,6 +575,48 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			Message: "must be greater than or equal to RATE_LIMIT_RPS",
 			Value:   strconv.Itoa(c.RateLimitBurst),
 		})
+	}
+
+	// Per-tenant rate limiting (layered after the global limiter). Unset by
+	// default — both RPS and Burst must be 0 to stay disabled.
+	if val := os.Getenv("RATE_LIMIT_TENANT_RPS"); val != "" {
+		if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitTenantRPS && rps <= MaxRateLimitTenantRPS {
+			c.RateLimitTenantRPS = rps
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_RPS",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitTenantRPS, MaxRateLimitTenantRPS),
+				Value:   val,
+			})
+		}
+	}
+
+	if val := os.Getenv("RATE_LIMIT_TENANT_BURST"); val != "" {
+		if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitTenantBurst && burst <= MaxRateLimitTenantBurst {
+			c.RateLimitTenantBurst = burst
+		} else {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitTenantBurst, MaxRateLimitTenantBurst),
+				Value:   val,
+			})
+		}
+	}
+
+	if c.RateLimitTenantRPS > 0 {
+		if c.RateLimitTenantBurst == 0 {
+			c.RateLimitTenantBurst = c.RateLimitTenantRPS * 2 // Conservative default: 2x RPS
+		}
+		if c.RateLimitTenantBurst < c.RateLimitTenantRPS {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_TENANT_BURST",
+				Message: "must be greater than or equal to RATE_LIMIT_TENANT_RPS",
+				Value:   strconv.Itoa(c.RateLimitTenantBurst),
+			})
+		}
 	}
 
 	if whitelist := os.Getenv("RATE_LIMIT_WHITELIST"); whitelist != "" {

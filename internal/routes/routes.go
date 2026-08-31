@@ -114,6 +114,14 @@ func Register(r *gin.Engine) {
 	jwtSecret := cfg.JWTSecret
 	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
 
+	// Per-tenant rate limiting — layered after the global rate limiter on all
+	// authenticated routes. Enabled only when RATE_LIMIT_TENANT_RPS is set.
+	tenantRateLimiter := middleware.TenantRateLimitMiddleware(middleware.TenantRateLimitConfig{
+		Enabled: cfg.RateLimitTenantRPS > 0,
+		RPS:     cfg.RateLimitTenantRPS,
+		Burst:   cfg.RateLimitTenantBurst,
+	})
+
 	// API Groups
 	api := r.Group("/api")
 	v1 := api.Group("/v1")
@@ -132,6 +140,7 @@ func Register(r *gin.Engine) {
 
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
+	v1.Use(tenantRateLimiter)
 	{
 		v1.GET("/subscriptions", h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
@@ -157,6 +166,7 @@ func Register(r *gin.Engine) {
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
 	apiProtected.Use(authMiddleware)
+	apiProtected.Use(tenantRateLimiter)
 	{
 		apiProtected.GET("/plans",
 			dep,

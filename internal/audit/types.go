@@ -14,7 +14,7 @@ const (
 
 // Sink defines where audit events are persisted.
 type Sink interface {
-	WriteEvent(e AuditEvent) error
+	WriteEvent(e *AuditEvent) error
 }
 
 // AuditEvent represents the canonical structure for all security logs.

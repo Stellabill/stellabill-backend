@@ -6,6 +6,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/alicebob/miniredis/v2 v2.34.0
+	github.com/andybalholm/brotli v1.2.3
 	github.com/bytedance/sonic v1.15.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
@@ -17,6 +18,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/graphql-go/graphql v0.8.1
 	github.com/jackc/pgx/v5 v5.9.1
+	github.com/klauspost/compress v1.18.5
 	github.com/lestrrat-go/jwx/v2 v2.1.6
 	github.com/lib/pq v1.12.0
 	github.com/open-policy-agent/opa v1.18.2
@@ -40,6 +42,7 @@ require (
 	go.uber.org/zap v1.27.1
 	golang.org/x/text v0.41.0
 	golang.org/x/time v0.15.0
+	google.golang.org/grpc v1.83.1
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.1.0
 )

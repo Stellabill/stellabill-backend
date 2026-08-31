@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/baggage"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 const (
@@ -112,21 +113,46 @@ func extractTier(params sdktrace.SamplingParameters) string {
 // as the global tracer provider along with W3C TraceContext + Baggage
 // propagators. Ratios are read from environment variables:
 //
-//	TRACING_ENTERPRISE_RATIO (default 1.0  = 100%)
-//	TRACING_FREE_RATIO       (default 0.01 =   1%)
-//	TRACING_DEFAULT_RATIO    (default 0.05 =   5%)
+//	TRACING_ENTERPRISE_RATIO  (default 1.0  = 100%)
+//	TRACING_FREE_RATIO        (default 0.01 =   1%)
+//	TRACING_DEFAULT_RATIO     (default 0.05 =   5%)
+//	TRACING_TAIL_ENABLED      (default false; enables tail-based sampling)
+//	TRACING_TAIL_LATENCY_MS   (default 500; ms threshold for slow-request keep)
+//	TRACING_TAIL_ERROR_RATE   (default 0;   baseline fraction for dropped traces)
+//
+// When TRACING_TAIL_ENABLED=true the provider is wrapped with a tail sampler
+// that promotes spans with 5xx status codes, latency above the threshold, or
+// an error attribute/event to RecordAndSample regardless of the head decision.
+// The head (TenantAwareSampler) decision is always preserved for the baseline.
 //
 // The returned shutdown function drains and shuts down the provider.
-func InitTracer(serviceName string) (func(), error) {
+func InitTracer(serviceName string) (func() error, error) {
 	enterpriseRatio := getEnvFloat("TRACING_ENTERPRISE_RATIO", DefaultEnterpriseRatio)
 	freeRatio := getEnvFloat("TRACING_FREE_RATIO", DefaultFreeRatio)
 	defaultRatio := getEnvFloat("TRACING_DEFAULT_RATIO", DefaultGlobalRatio)
 
-	sampler := NewTenantAwareSampler(enterpriseRatio, freeRatio, defaultRatio)
+	headSampler := NewTenantAwareSampler(enterpriseRatio, freeRatio, defaultRatio)
 
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sampler),
-	)
+	tailCfg, err := tailConfigFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("tracing: invalid tail-sampling config: %w", err)
+	}
+
+	var opts []sdktrace.TracerProviderOption
+	opts = append(opts, sdktrace.WithSpanProcessor(BaggageSpanProcessor{}))
+
+	if tailCfg.enabled {
+		// Wrap the head sampler so every span is recorded temporarily while
+		// we wait for the root span to arrive with the full latency/error signal.
+		opts = append(opts, sdktrace.WithSampler(newTailSampler(headSampler)))
+		batchProcessor := sdktrace.NewSimpleSpanProcessor(tracetest.NewNoopExporter())
+		tailProcessor := newTailSpanProcessor(batchProcessor, tailCfg)
+		opts = append(opts, sdktrace.WithSpanProcessor(tailProcessor))
+	} else {
+		opts = append(opts, sdktrace.WithSampler(headSampler))
+	}
+
+	provider := sdktrace.NewTracerProvider(opts...)
 
 	otel.SetTracerProvider(provider)
 	otel.SetTextMapPropagator(InitPropagators())

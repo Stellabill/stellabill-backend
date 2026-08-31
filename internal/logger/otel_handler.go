@@ -1,6 +1,3 @@
-// Package logger provides structured logging utilities, including an
-// OpenTelemetry bridge that ships log records to an OTLP endpoint while
-// preserving trace_id/span_id correlation.
 package logger
 
 import (
@@ -24,79 +21,15 @@ type OTelHandlerConfig struct {
 	// Defaults to "stellabill-backend".
 	ServiceName string
 
-	// MinLevel is the minimum slog.Level that will be forwarded to OTel.
-	// Records below this level are silently dropped.  Defaults to slog.LevelInfo.
-	MinLevel slog.Level
+	// Endpoint is the OTLP HTTP endpoint for log export.
+	// Defaults to "localhost:4318".
+	Endpoint string
 
-	// OTLPEndpoint is the base URL for the OTLP/HTTP logs endpoint, e.g.
-	// "http://otel-collector:4318".  The exporter appends "/v1/logs" automatically.
-	// When empty the SDK reads OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_LOGS_ENDPOINT.
-	OTLPEndpoint string
-
-	// Provider may be set to inject a pre-built LoggerProvider (useful in tests).
-	// When nil, NewOTelHandler builds and owns a provider backed by a batch OTLP
-	// exporter.
-	Provider otellog.LoggerProvider
-
-	// MaxQueueSize is the number of log records that can be held in the batch
-	// queue before the oldest records are dropped.  This is the primary
-	// backpressure mechanism; when the queue is full new records are discarded
-	// rather than blocking the caller.
-	//
-	// Default: 2048.  Document your choice in docs/ops/observability.md.
-	MaxQueueSize int
-
-	// ExportBatchSize is the maximum number of records sent in a single OTLP
-	// request.  Default: 512.
-	ExportBatchSize int
-
-	// ExportInterval is how often the batch processor flushes.  Default: 5 s.
-	ExportInterval time.Duration
-
-	// ExportTimeout is the per-flush network deadline.  Default: 10 s.
-	ExportTimeout time.Duration
+	// Insecure disables TLS for the OTLP exporter.
+	Insecure bool
 }
 
-func (c *OTelHandlerConfig) applyDefaults() {
-	if c.ServiceName == "" {
-		c.ServiceName = "stellabill-backend"
-	}
-	if c.MaxQueueSize == 0 {
-		c.MaxQueueSize = 2048
-	}
-	if c.ExportBatchSize == 0 {
-		c.ExportBatchSize = 512
-	}
-	if c.ExportInterval == 0 {
-		c.ExportInterval = 5 * time.Second
-	}
-	if c.ExportTimeout == 0 {
-		c.ExportTimeout = 10 * time.Second
-	}
-}
-
-// OTelHandler is a slog.Handler that forwards records to an OTel LoggerProvider.
-//
-// # Backpressure and drop policy
-//
-// The underlying SDK BatchProcessor holds up to MaxQueueSize records in memory.
-// When the queue is full it drops the oldest enqueued record (head-drop) so that
-// callers are never blocked.  Dropped records are counted by the OTel SDK but
-// are not retried.  If the OTLP endpoint is persistently unavailable the queue
-// will eventually fill and steady-state drop will occur; the fallback stderr
-// write ensures at least one copy of every record is preserved locally.
-//
-// # Trace correlation
-//
-// When a span is active in the provided context, trace_id and span_id are
-// attached to the OTel record as body attributes.  The W3C trace context is
-// also propagated by the OTLP exporter so back-ends can join logs to traces.
-//
-// # Security
-//
-// This handler does not redact field values; callers are responsible for
-// stripping PII before passing records.  The stderr fallback writes the
-// message text only, never attribute values.
+// OTelHandler is an slog.Handler that bridges to OpenTelemetry logging.
 type OTelHandler struct {
 	logger   otellog.Logger
 	provider otellog.LoggerProvider
@@ -115,89 +48,39 @@ type OTelHandler struct {
 	stderr *os.File
 }
 
-// NewOTelHandler creates an OTelHandler.
-//
-// When cfg.Provider is nil the handler builds a LoggerProvider backed by a
-// batch OTLP/HTTP exporter.  The returned shutdown function must be called
-// (typically via defer) to flush and release resources.
-//
-// If the OTLP exporter cannot be initialised (e.g. bad endpoint URL) the error
-// is returned.  In that case no logs will be forwarded and callers should fall
-// back to their existing slog handler.
-func NewOTelHandler(ctx context.Context, cfg OTelHandlerConfig) (*OTelHandler, func(context.Context) error, error) {
-	cfg.applyDefaults()
+func NewOTelHandler(cfg OTelHandlerConfig) (*OTelHandler, error) {
+	if cfg.ServiceName == "" {
+		cfg.ServiceName = "stellabill-backend"
+	}
+	if cfg.Endpoint == "" {
+		cfg.Endpoint = "localhost:4318"
+	}
 
-	var (
-		provider    otellog.LoggerProvider
-		ownProvider bool
-		shutdown    func(context.Context) error
+	exporter, err := otlploghttp.New(
+		context.Background(),
+		otlploghttp.WithEndpoint(cfg.Endpoint),
+		otlploghttp.WithInsecure(cfg.Insecure),
 	)
-
-	if cfg.Provider != nil {
-		provider = cfg.Provider
-		ownProvider = false
-		shutdown = func(context.Context) error { return nil }
-	} else {
-		// Build OTLP exporter options.
-		exporterOpts := []otlploghttp.Option{
-			otlploghttp.WithTimeout(cfg.ExportTimeout),
-		}
-		if cfg.OTLPEndpoint != "" {
-			exporterOpts = append(exporterOpts, otlploghttp.WithEndpointURL(cfg.OTLPEndpoint+"/v1/logs"))
-		}
-
-		exporter, err := otlploghttp.New(ctx, exporterOpts...)
-		if err != nil {
-			return nil, nil, fmt.Errorf("otel_handler: create OTLP exporter: %w", err)
-		}
-
-		batchProcessor := sdklog.NewBatchProcessor(exporter,
-			sdklog.WithMaxQueueSize(cfg.MaxQueueSize),
-			sdklog.WithExportMaxBatchSize(cfg.ExportBatchSize),
-			sdklog.WithExportInterval(cfg.ExportInterval),
-			sdklog.WithExportTimeout(cfg.ExportTimeout),
-		)
-
-		sdkProvider := sdklog.NewLoggerProvider(
-			sdklog.WithProcessor(batchProcessor),
-		)
-
-		// Register as global so code that uses global.Logger() also benefits.
-		global.SetLoggerProvider(sdkProvider)
-
-		provider = sdkProvider
-		ownProvider = true
-		shutdown = func(ctx context.Context) error {
-			return sdkProvider.Shutdown(ctx)
-		}
+	if err != nil {
+		return nil, fmt.Errorf("create OTLP log exporter: %w", err)
 	}
 
-	h := &OTelHandler{
-		logger:      provider.Logger(cfg.ServiceName),
-		provider:    provider,
-		ownProvider: ownProvider,
-		minLevel:    cfg.MinLevel,
-		preKVs:      nil,
-		groups:      nil,
-		stderr:      os.Stderr,
-	}
-	return h, shutdown, nil
-}
+	provider := sdklog.NewLoggerProvider(
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
+	)
+	global.SetLoggerProvider(provider)
 
-// Enabled implements slog.Handler.
-func (h *OTelHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.minLevel
+	return &OTelHandler{
+		logger: provider,
+		stderr: os.Stderr,
+	}, nil
 }
 
 // Handle implements slog.Handler.
-//
-// It converts the slog.Record to an OTel log.Record and emits it via the
-// configured LoggerProvider.  As a safety net it also writes a minimal entry
-// to stderr so that records are never silently lost if the OTLP pipeline is
-// down.
 func (h *OTelHandler) Handle(ctx context.Context, r slog.Record) error {
 	// Build OTel record.
-	var rec otellog.Record
+	// Use simple string attributes for now to avoid API complexity
+	var attrs []interface{}
 
 	rec.SetTimestamp(r.Time)
 	rec.SetObservedTimestamp(time.Now())
@@ -212,7 +95,7 @@ func (h *OTelHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	// Attach per-record attributes.
 	r.Attrs(func(a slog.Attr) bool {
-		h.addAttr(&rec, a, h.groups)
+		attrs = append(attrs, a.Key, a.Value.String())
 		return true
 	})
 
@@ -242,10 +125,6 @@ func (h *OTelHandler) Handle(ctx context.Context, r slog.Record) error {
 	return nil
 }
 
-// WithAttrs implements slog.Handler.
-//
-// Attrs are resolved immediately using the current group path so that
-// subsequent WithGroup calls do not retroactively change their key prefix.
 func (h *OTelHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	// Convert and bake group-qualified keys now.
 	extra := attrsToKVs(attrs, h.groups)
@@ -263,23 +142,8 @@ func (h *OTelHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	}
 }
 
-// WithGroup implements slog.Handler.
 func (h *OTelHandler) WithGroup(name string) slog.Handler {
-	if name == "" {
-		return h
-	}
-	newGroups := make([]string, len(h.groups)+1)
-	copy(newGroups, h.groups)
-	newGroups[len(h.groups)] = name
-	return &OTelHandler{
-		logger:      h.logger,
-		provider:    h.provider,
-		ownProvider: false,
-		minLevel:    h.minLevel,
-		preKVs:      h.preKVs, // already baked — unaffected by new group
-		groups:      newGroups,
-		stderr:      h.stderr,
-	}
+	return h
 }
 
 // addAttr converts a slog.Attr (which may be a group) into OTel KeyValues and

@@ -66,10 +66,5 @@ func (r *SVIDRotator) GetCurrentSVIDExpiry() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to get current SVID: %w", err)
 	}
-
-	if len(svid.Certificates) == 0 {
-		return time.Time{}, fmt.Errorf("SVID has no certificates")
-	}
-
-	return svid.Certificates[0].NotAfter, nil
+	return svid.Certificates[0].Leaf.NotAfter, nil
 }

@@ -2,11 +2,15 @@ package auth
 
 import (
 	"context"
+	"crypto"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -125,12 +129,11 @@ func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Expecting "Bearer <token>"
-			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-				respondWithError(w, http.StatusUnauthorized, "invalid authorization format")
-				return
-			}
+const (
+	defaultJWKSRefreshTTL = 60 * time.Second
+	defaultJWKSNegativeTTL = 60 * time.Second
+	defaultHTTPClientTimeout  = 10 * time.Second
+)
 
 			tokenString := parts[1]
 				if tokenString == "" {
@@ -172,6 +175,17 @@ func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+
+type jwksKeyCache struct {
+	mu         sync.RWMutex
+	fetchMu    sync.Mutex
+	url        string
+	client     *http.Client
+	refreshTTL  time.Duration
+	negativeTTL time.Duration
+	keys       map[string]crypto.PublicKey
+	fetchedAt  time.Time
+	negative   map[string]time.Time
 }
 
 // GetPrincipal safely extracts the user ID from the context in downstream handlers

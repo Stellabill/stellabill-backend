@@ -1,13 +1,13 @@
 package featureflags
 
 import (
- "encoding/json"
- "fmt"
- "os"
- "strconv"
- "strings"
- "sync"
- "time"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 const FaultInjectionEnabledFlag = "fault_injection_enabled"
@@ -28,10 +28,10 @@ type Manager struct {
 
 // NewManager returns a fresh, isolated feature flag manager instance.
 func NewManager() *Manager {
- return &Manager{
- flags: make(map[string]*Flag),
- db:    make(map[string]bool),
- }
+	return &Manager{
+		flags: make(map[string]*Flag),
+		db:    make(map[string]bool),
+	}
 }
 
 var (
@@ -261,43 +261,41 @@ func (m *Manager) SetFlagWithVersion(flagName string, enabled bool, description 
 func (m *Manager) UpdateFlag(flagName string, enabled bool, description string) (*Flag, *Flag, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
-	flag, exists := m.flags[flagName]
-	if !exists {
-		return nil, nil, fmt.Errorf("feature flag %q not found", flagName)
+	m.flags[name] = &Flag{
+		Name:        name,
+		Enabled:     enabled,
+		Description: description,
+		UpdatedAt:   time.Now(),
+		Version:     1,
 	}
-
-	old := *flag
-
-	flag.Enabled = enabled
-	flag.UpdatedAt = time.Now()
-	flag.Version = time.Now().UnixNano()
-	if description != "" {
-		flag.Description = description
-	}
-
-	// Persist in the runtime override layer so the change remains effective.
-	m.db[flagName] = enabled
-
-	updated := *flag
-	return &old, &updated, nil
 }
 
-func (m *Manager) GetAllFlags() map[string]*Flag {
- m.mutex.RLock()
- defer m.mutex.RUnlock()
-
- result := make(map[string]*Flag)
- for name, flag := range m.flags {
-  copy := *flag
-  result[name] = &copy
- }
- return result
+// Get returns a flag value.
+func (m *Manager) Get(name string) (bool, bool) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	f, ok := m.flags[name]
+	if !ok {
+		return false, false
+	}
+	return f.Enabled, true
 }
 
-// ReloadFromEnvironment reloads configuration from environment variables.
-func (m *Manager) ReloadFromEnvironment() {
- m.LoadFromEnvironment()
+// IsEnabled returns true if the flag is enabled.
+func (m *Manager) IsEnabled(name string) bool {
+	enabled, ok := m.Get(name)
+	return ok && enabled
+}
+
+// List returns all flags.
+func (m *Manager) List() []Flag {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	flags := make([]Flag, 0, len(m.flags))
+	for _, f := range m.flags {
+		flags = append(flags, *f)
+	}
+	return flags
 }
 
 // NEW: sampled logging
@@ -307,19 +305,24 @@ func (m *Manager) sampleLog(name string, value bool, source string) {
  }
 }
 
-// Global helpers
-func IsFaultInjectionEnabled() bool {
-	return IsEnabled(FaultInjectionEnabledFlag)
+// UnmarshalJSON implements json.Unmarshaler.
+func (m *Manager) UnmarshalJSON(data []byte) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return json.Unmarshal(data, &m.flags)
 }
 
-func IsEnabled(flagName string) bool {
- return GetInstance().IsEnabled(flagName)
+// SetDB sets a flag in the DB layer.
+func (m *Manager) SetDB(name string, enabled bool) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.db[name] = enabled
 }
 
-func IsEnabledWithDefault(flagName string, defaultValue bool) bool {
- return GetInstance().IsEnabledWithDefault(flagName, defaultValue)
-}
-
-func SetFlag(flagName string, enabled bool, description string) {
- GetInstance().SetFlag(flagName, enabled, description)
+// GetDB gets a flag from the DB layer.
+func (m *Manager) GetDB(name string) (bool, bool) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	enabled, ok := m.db[name]
+	return enabled, ok
 }

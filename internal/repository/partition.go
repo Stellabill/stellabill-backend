@@ -1,134 +1,144 @@
 package repository
 
 import (
-    "context"
-    "database/sql"
-    "fmt"
-    "os"
-    "strconv"
-    "time"
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+
+	_ "github.com/lib/pq"
 )
 
-const (
-    statementsPartitionEnv = "FF_STATEMENTS_PARTITIONING_ENABLED"
-    oldStatementsTable     = "statements_old"
-)
+const statementsPartitionEnv = "FF_STATEMENTS_PARTITIONING_ENABLED"
 
-// MigrateStatementsPartition converts the legacy statements table into a
-// range-partitioned table by period_start. It is a no-op unless the
-// FF_STATEMENTS_PARTITIONING_ENABLED variable is truely set.
+// MigrateStatementsPartition creates the partitioned statements table and migrates data.
+// This is a one-time migration that should be run with a maintenance window.
 func MigrateStatementsPartition(ctx context.Context, db *sql.DB) error {
-    if !statementsPartitioningEnabled() {
-        return nil
-    }
+	if !statementsPartitioningEnabled() {
+		return nil // feature flag off; no-op
+	}
 
-    partitioned, err := isTablePartitioned(ctx, db, "statements")
-    if err != nil {
-        return err
-    }
-    if partitioned {
-        return nil // already migrated
-    }
+	// Check if the target partitioned table already exists.
+	exists, err := tableExists(ctx, db, "statements_partitioned")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil // already migrated
+	}
 
-    exists, err := tableExists(ctx, db, "statements_partitioned")
-    if err != nil {
-        return err
-    }
-    if !exists {
-        return fmt.Errorf("statements_partitioned table does not exist; run migrations first")
-    }
+	exists, err = tableExists(ctx, db, "statements_partitioned")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("statements_partitioned table does not exist; run migrations first")
+	}
 
-    tx, err := db.BeginTx(ctx, nil)
-    if err != nil {
-        return fmt.Errorf("begin migration transaction: %w", err)
-    }
-    defer tx.Rollback()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin migration transaction: %w", err)
+	}
+	defer tx.Rollback()
 
-    // Block writes to the old table while we copy and rename.
-    if _, err := tx.ExecContext(ctx, "LOCK TABLE statements IN ACCESS EXCLUSIVE MODE"); err != nil {
-        return fmt.Errorf("lock statements: %w", err)
-    }
+	// Block writes to the old table while we copy and rename.
+	if _, err := tx.ExecContext(ctx, "LOCK TABLE statements IN ACCESS EXCLUSIVE MODE"); err != nil {
+		return fmt.Errorf("lock statements: %w", err)
+	}
 
-    insertQuery := `INSERT INTO statements_partitioned
-        (id, subscription_id, customer_id, period_start, period_end, issued_at, total_amount, currency, kind, status, deleted_at)
-        SELECT id, subscription_id, customer_id, period_start, period_end, issued_at, total_amount, currency, kind, status, deleted_at
-        FROM statements`
-    if _, err := tx.ExecContext(ctx, insertQuery); err != nil {
-        return fmt.Errorf("copy statements to partitioned table: %w", err)
-    }
+	// Copy data from old table to new partitioned table.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO statements_partitioned (
+			id, tenant_id, content, created_at, updated_at
+		)
+		SELECT id, tenant_id, content, created_at, updated_at
+		FROM statements
+	`); err != nil {
+		return fmt.Errorf("copy data to partitioned table: %w", err)
+	}
 
-    if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE statements RENAME TO %s", oldStatementsTable)); err != nil {
-        return fmt.Errorf("rename statements to %s: %w", oldStatementsTable, err)
-    }
-    if _, err := tx.ExecContext(ctx, "ALTER TABLE statements_partitioned RENAME TO statements"); err != nil {
-        return fmt.Errorf("rename statements_partitioned to statements: %w", err)
-    }
+	// Swap table names.
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE statements RENAME TO statements_old"); err != nil {
+		return fmt.Errorf("rename statements to statements_old: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE statements_partitioned RENAME TO statements"); err != nil {
+		return fmt.Errorf("rename statements_partitioned to statements: %w", err)
+	}
 
-    if err := tx.Commit(); err != nil {
-        return fmt.Errorf("commit migration transaction: %w", err)
-    }
-    return nil
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration transaction: %w", err)
+	}
+	return nil
 }
 
-// RollbackStatementsPartition reverses the migration if it was performed.
+// RollbackStatementsPartition reverts the migration by renaming tables back.
 func RollbackStatementsPartition(ctx context.Context, db *sql.DB) error {
-    oldExists, err := tableExists(ctx, db, oldStatementsTable)
-    if err != nil {
-        return err
-    }
-    if !oldExists {
-        return nil
-    }
+	if !statementsPartitioningEnabled() {
+		return nil
+	}
 
-    tx, err := db.BeginTx(ctx, nil)
-    if err != nil {
-        return fmt.Errorf("begin rollback transaction: %w", err)
-    }
-    defer tx.Rollback()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin rollback transaction: %w", err)
+	}
+	defer tx.Rollback()
 
-    if _, err := tx.ExecContext(ctx, "LOCK TABLE statements IN ACCESS EXCLUSIVE MODE"); err != nil {
-        return fmt.Errorf("lock statements for rollback: %w", err)
-    }
+	// Block writes.
+	if _, err := tx.ExecContext(ctx, "LOCK TABLE statements IN ACCESS EXCLUSIVE MODE"); err != nil {
+		return fmt.Errorf("lock statements for rollback: %w", err)
+	}
 
-    if _, err := tx.ExecContext(ctx, "ALTER TABLE statements RENAME TO statements_partitioned"); err != nil {
-        return fmt.Errorf("rename statements to statements_partitioned: %w", err)
-    }
-    if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s RENAME TO statements", oldStatementsTable)); err != nil {
-        return fmt.Errorf("rename %s to statements: %w", oldStatementsTable, err)
-    }
+	// Check if old table exists.
+	exists, err := tableExists(ctx, db, "statements_old")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("statements_old table does not exist; cannot rollback")
+	}
 
-    if err := tx.Commit(); err != nil {
-        return fmt.Errorf("commit rollback transaction: %w", err)
-    }
-    return nil
+	// Swap back.
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE statements RENAME TO statements_partitioned"); err != nil {
+		return fmt.Errorf("rename statements to statements_partitioned: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE statements_old RENAME TO statements"); err != nil {
+		return fmt.Errorf("rename statements_old to statements: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit rollback transaction: %w", err)
+	}
+	return nil
 }
 
 // EnsureMonthPartition ensures a monthly partition exists for the period_start
 // if the active statements table is partitioned.
 func EnsureMonthPartition(ctx context.Context, db *sql.DB, periodStart string) error {
-    partitioned, err := isTablePartitioned(ctx, db, "statements")
-    if err != nil {
-        return err
-    }
-    if !partitioned {
-        return nil
-    }
+	partitioned, err := isTablePartitioned(ctx, db, "statements")
+	if err != nil {
+		return err
+	}
+	if !partitioned {
+		return nil
+	}
 
-    t, err := time.Parse(time.RFC3339, periodStart)
-    if err != nil {
-        return fmt.Errorf("invalid period_start %q: %w", periodStart, err)
-    }
-    monthStart := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
-    nextMonth := monthStart.AddDate(0, 1, 0)
-    partitionName := fmt.Sprintf("statements_p%d_%02", t.Year(), t.Month())
+	t, err := time.Parse(time.RFC3339, periodStart)
+	if err != nil {
+		return fmt.Errorf("invalid period_start %q: %w", periodStart, err)
+	}
+	monthStart := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+	nextMonth := monthStart.AddDate(0, 1, 0)
+	partitionName := fmt.Sprintf("statements_p%d_%02d", t.Year(), t.Month())
 
-    exists, err := partitionExists(ctx, db, partitionName)
-    if err != nil {
-        return err
-    }
-    if exists {
-        return nil
-    }
+	exists, err := partitionExists(ctx, db, partitionName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
 
     createQuery := fmt.Sprintf(
         "CREATE TABLE %s PARTITION OF statements FOR VALUES FROM ($1) TO ($2)",
@@ -141,12 +151,12 @@ func EnsureMonthPartition(ctx context.Context, db *sql.DB, periodStart string) e
 }
 
 func statementsPartitioningEnabled() bool {
-    val, ok := os.LookupEnv(statementsPartitionEnv)
-    if !ok {
-        return false
-    }
-    enabled, err := strconv.ParseBool(val)
-    return err == nil && enabled
+	val, ok := os.LookupEnv(statementsPartitionEnv)
+	if !ok {
+		return false
+	}
+	enabled, err := strconv.ParseBool(val)
+	return err == nil && enabled
 }
 
 func isTablePartitioned(ctx context.Context, db *sql.DB, tableName string) (bool, error) {
@@ -163,16 +173,13 @@ func isTablePartitioned(ctx context.Context, db *sql.DB, tableName string) (bool
 }
 
 func tableExists(ctx context.Context, db *sql.DB, tableName string) (bool, error) {
-    var exists bool
-    query := `SELECT EXISTS (
-        SELECT 1 FROM information_schema.tables
-        WHERE table_schema = current_schema() AND table_name = $1
-    )`
-    err := db.QueryRowContext(ctx, query, tableName).Scan(&exists)
-    if err != nil {
-        return false, fmt.Errorf("check table %s existence: %w", tableName, err)
-    }
-    return exists, nil
+	var exists bool
+	query := `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1)`
+	err := db.QueryRowContext(ctx, query, tableName).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check table %s existence: %w", tableName, err)
+	}
+	return exists, nil
 }
 
 func partitionExists(ctx context.Context, db *sql.DB, partitionName string) (bool, error) {

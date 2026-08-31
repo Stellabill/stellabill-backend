@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -67,7 +68,7 @@ func TestWORMExporter_RotationBySize(t *testing.T) {
 	err = exporter.WriteEvent(e2)
 	require.NoError(t, err)
 	assert.True(t, uploaded)
-	
+
 	// Buffer should be empty now
 	exporter.mu.Lock()
 	assert.Equal(t, 0, len(exporter.buffer))
@@ -159,7 +160,7 @@ func TestWORMExporter_ConcurrentWritesAndRotations(t *testing.T) {
 	// 5 concurrent routines writing 20 events each = 100 events total. Should trigger 2 rotations.
 	// But wait! Hash chaining requires strictly sequential hashing. We can't generate sequential events concurrently easily.
 	// We will serialize event generation, but test that `Rotate` doesn't block `WriteEvent`.
-	
+
 	events := make([]AuditEvent, 100)
 	var prev string
 	for i := 0; i < 100; i++ {
@@ -174,7 +175,7 @@ func TestWORMExporter_ConcurrentWritesAndRotations(t *testing.T) {
 			_ = exporter.WriteEvent(ev) // Order doesn't actually matter for WriteEvent thread safety, but the verifier requires sequential order!
 		}(events[i])
 	}
-	
+
 	// Wait, if they are written out of order, the chain verification will FAIL and panic!
 	// So we can't test concurrent writes this way.
 }
@@ -208,7 +209,7 @@ func TestWORMExporter_ConcurrentWritesAndRotations_Fixed(t *testing.T) {
 	for i := 0; i < 49; i++ {
 		_ = exporter.WriteEvent(events[i])
 	}
-	
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

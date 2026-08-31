@@ -254,47 +254,10 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 		case err := <-errCh:
 			cancel()
 			if err != nil {
-				log.Printf("Publisher %s failed for event %s: %v", name, event.ID, err)
-
-				// Permanent errors go straight to dead-letter; no retry, no backoff.
-				if IsPermanentPublishError(err) {
-					errorMsg := err.Error()
-					_ = d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg)
-					continue
+				if d.ctx.Err() != nil {
+					return
 				}
-
-				// update failure/backoff (per publisher)
-				d.mu.Lock()
-				d.publisherFailCount[name]++
-				failCount := d.publisherFailCount[name]
-				d.mu.Unlock()
-
-				// bounded retry per publisher failure streak
-				if failCount >= d.config.MaxRetries {
-					// Mark the event as failed to stop endless retry in pending drain.
-					errorMsg := err.Error()
-					_ = d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg)
-					// reset backoff state so we don't stall permanently
-					d.mu.Lock()
-					d.publisherFailCount[name] = 0
-					d.publisherNextAttempt[name] = time.Time{}
-					d.mu.Unlock()
-					continue
-				}
-
-				// exponential backoff based on failCount, capped
-				backoff := math.Pow(d.config.RetryBackoffFactor, float64(failCount))
-				if backoff < 1 {
-					backoff = 1
-				}
-				if backoff > 3600 {
-					backoff = 3600
-				}
-				nextAttempt := time.Now().Add(time.Duration(backoff) * time.Second)
-				d.mu.Lock()
-				d.publisherNextAttempt[name] = nextAttempt
-				d.mu.Unlock()
-
+				d.handleDrainPublishError(name, event, err)
 				continue
 			}
 
@@ -320,9 +283,49 @@ func (d *dispatcher) drainOnceForPublisher(name string, pub Publisher) {
 
 		case <-ctx.Done():
 			cancel()
-			log.Printf("Publisher %s processing timeout for event %s", name, event.ID)
+			if d.ctx.Err() != nil {
+				return
+			}
+			d.handleDrainPublishError(name, event, &TimeoutError{msg: "processing timeout"})
 		}
 	}
+}
+
+func (d *dispatcher) handleDrainPublishError(name string, event *Event, err error) {
+	log.Printf("Publisher %s failed for event %s: %v", name, event.ID, err)
+
+	if IsPermanentPublishError(err) {
+		errorMsg := err.Error()
+		_ = d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg)
+		return
+	}
+
+	d.mu.Lock()
+	d.publisherFailCount[name]++
+	failCount := d.publisherFailCount[name]
+	d.mu.Unlock()
+
+	if failCount >= d.config.MaxRetries {
+		errorMsg := err.Error()
+		_ = d.repository.UpdateStatus(event.ID, StatusFailed, &errorMsg)
+		d.mu.Lock()
+		d.publisherFailCount[name] = 0
+		d.publisherNextAttempt[name] = time.Time{}
+		d.mu.Unlock()
+		return
+	}
+
+	backoff := math.Pow(d.config.RetryBackoffFactor, float64(failCount))
+	if backoff < 1 {
+		backoff = 1
+	}
+	if backoff > 3600 {
+		backoff = 3600
+	}
+	nextAttempt := time.Now().Add(time.Duration(backoff) * time.Second)
+	d.mu.Lock()
+	d.publisherNextAttempt[name] = nextAttempt
+	d.mu.Unlock()
 }
 
 func (d *dispatcher) publisherNames() []string {

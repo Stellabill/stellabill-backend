@@ -10,6 +10,54 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const loggerContextKey = "_audit_logger"
+
+// Middleware attaches the audit logger to the request context and records auth failures.
+func Middleware(logger *Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if logger != nil {
+			c.Set(loggerContextKey, logger)
+		}
+		c.Next()
+
+		status := c.Writer.Status()
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			logAuthFailure(c, logger, status)
+		}
+	}
+}
+
+// LogAction is a helper for handlers to record admin/sensitive activity.
+func LogAction(c *gin.Context, action, target, outcome string, metadata map[string]string) {
+	raw, ok := c.Get(loggerContextKey)
+	if !ok {
+		return
+	}
+	logger, ok := raw.(*Logger)
+	if !ok || logger == nil {
+		return
+	}
+	meta := ensureMetadata(metadata)
+	meta["path"] = c.FullPath()
+	meta["method"] = c.Request.Method
+	meta["client_ip"] = c.ClientIP()
+	actor := ResolveActor(c)
+
+	// Convert map[string]string to map[string]interface{}
+	auditMeta := make(map[string]interface{})
+	for k, v := range meta {
+		auditMeta[k] = v
+	}
+
+	_, _ = logger.Log(c.Request.Context(), AuditEvent{
+		Actor:    actor,
+		Action:   action,
+		Resource: target,
+		Outcome:  outcome,
+		Metadata: auditMeta,
+	})
+}
+
 // ResolveActor attempts to infer the actor from headers or previously-set values.
 func ResolveActor(c *gin.Context) string {
 	if c == nil {

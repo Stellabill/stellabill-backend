@@ -18,20 +18,87 @@ import (
 
 // tailConfig holds configuration for the tail sampling processor.
 type tailConfig struct {
-	maxTraces      int
-	maxSpans       int
+	// enabled gates the entire tail-sampling feature. When false the pipeline
+	// falls back to the head (TenantAwareSampler) decision only.
+	enabled bool
+	// latency is the minimum root-span duration that triggers keep.
+	// Defaults to 500 ms; validated range: (0, 600_000] ms when enabled.
+	latency time.Duration
+	// baselineRate is the fraction of otherwise-dropped traces to keep for
+	// baseline visibility. Range [0, 1]; 0 means keep nothing extra.
+	baselineRate float64
+	// maxTraces is the maximum number of in-flight trace buffers held in
+	// memory simultaneously. Oldest is evicted when the cap is reached.
+	maxTraces int
+	// maxSpans is the per-trace span buffer cap.
+	maxSpans int
+	// decisionWindow is how long the processor waits for a root span before
+	// falling back to the head-sampling decision.
 	decisionWindow time.Duration
-	latency        time.Duration
 }
 
-// tailConfigFromEnv reads tail sampling configuration from environment variables.
+const (
+	maxAllowedLatencyMS = 600_000 // 10 minutes, hard upper bound
+)
+
+// tailConfigFromEnv reads tail-sampling configuration from environment
+// variables and returns a validated tailConfig.
+//
+//	TRACING_TAIL_ENABLED      "true"|"false"  (default: false; empty string → false)
+//	TRACING_TAIL_LATENCY_MS   integer ms      (default: 500; range 1–600000)
+//	TRACING_TAIL_ERROR_RATE   float64         (default: 0;   range [0, 1])
+//	TAIL_MAX_TRACES            integer         (default: 10000)
+//	TAIL_MAX_SPANS             integer         (default: 500)
+//	TAIL_DECISION_WINDOW       duration string (default: 10s)
+//
+// Validation errors are only returned when TRACING_TAIL_ENABLED is "true" (or
+// unambiguously set). An unset or empty TRACING_TAIL_ENABLED is treated as
+// disabled and no further validation is performed.
 func tailConfigFromEnv() (tailConfig, error) {
 	cfg := tailConfig{
+		enabled:        false,
+		latency:        500 * time.Millisecond,
+		baselineRate:   0,
 		maxTraces:      10000,
 		maxSpans:       500,
 		decisionWindow: 10 * time.Second,
-		latency:        500 * time.Millisecond,
 	}
+
+	// --- TRACING_TAIL_ENABLED ---
+	enabledRaw := os.Getenv("TRACING_TAIL_ENABLED")
+	switch strings.ToLower(strings.TrimSpace(enabledRaw)) {
+	case "", "false", "0", "no":
+		// Feature is off; skip all further validation of tail knobs.
+		return cfg, nil
+	case "true", "1", "yes":
+		cfg.enabled = true
+	default:
+		return tailConfig{}, fmt.Errorf(
+			"TRACING_TAIL_ENABLED: invalid value %q; use \"true\" or \"false\"", enabledRaw)
+	}
+
+	// --- TRACING_TAIL_LATENCY_MS (required when enabled) ---
+	if v := os.Getenv("TRACING_TAIL_LATENCY_MS"); v != "" {
+		ms, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || ms <= 0 || ms > maxAllowedLatencyMS {
+			return tailConfig{}, fmt.Errorf(
+				"TRACING_TAIL_LATENCY_MS: invalid value %q; must be an integer in range [1, %d]",
+				v, maxAllowedLatencyMS)
+		}
+		cfg.latency = time.Duration(ms) * time.Millisecond
+	}
+
+	// --- TRACING_TAIL_ERROR_RATE ---
+	if v := os.Getenv("TRACING_TAIL_ERROR_RATE"); v != "" {
+		rate, err := strconv.ParseFloat(v, 64)
+		if err != nil || rate < 0 || rate > 1 {
+			return tailConfig{}, fmt.Errorf(
+				"TRACING_TAIL_ERROR_RATE: invalid value %q; must be a float in range [0, 1]", v)
+		}
+		cfg.baselineRate = rate
+	}
+
+	// --- Legacy / operational knobs (best-effort; malformed values are silently ignored) ---
 	if v := os.Getenv("TAIL_MAX_TRACES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.maxTraces = n
@@ -47,11 +114,16 @@ func tailConfigFromEnv() (tailConfig, error) {
 			cfg.decisionWindow = d
 		}
 	}
-	if v := os.Getenv("TAIL_LATENCY_THRESHOLD"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			cfg.latency = d
+	// TAIL_LATENCY_THRESHOLD is superseded by TRACING_TAIL_LATENCY_MS; kept
+	// for backward compatibility when the new env var is absent.
+	if os.Getenv("TRACING_TAIL_LATENCY_MS") == "" {
+		if v := os.Getenv("TAIL_LATENCY_THRESHOLD"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				cfg.latency = d
+			}
 		}
 	}
+
 	return cfg, nil
 }
 

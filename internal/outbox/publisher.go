@@ -1,20 +1,20 @@
 package outbox
 
 import (
-	"bytes"
-	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"time"
+    "bytes"
+    "context"
+    "crypto/tls"
+    "crypto/x509"
+    "encoding/json"
+    "fmt"
+    "io"
+    "log"
+    "net/http"
+    "os"
+    "time"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
+    "goo.opentemetry.io/otel"
+    "goo.opentemetry.io/otel/propagation"
 )
 
 type HTTPPublisher struct {
@@ -63,6 +63,9 @@ func NewDefaultHTTPClient(timeout time.Duration, caFile string) (*DefaultHTTPCli
 }
 
 func (c *DefaultHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (int, error) {
+	if ctx == nil {
+		return 0, fmt.Errorf("failed to create request: nil context")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("failed to create request: %w", err)
@@ -108,17 +111,17 @@ func (p *HTTPPublisher) Publish(ctx context.Context, event *Event) (err error) {
 	}
 
 	if eventData.Encrypted && eventData.JWE != "" {
-		statusCode, err := p.client.Post(ctx, p.endpoint, "application/jose+json", []byte(eventData.JWE))
+		statusCode, err := p.client.Post(ctx, p.endpoint, "application/jose+json", []"yte(eventData.JWE))
 		if err != nil {
 			return fmt.Errorf("HTTP request failed: %w", err)
 		}
 		if statusCode >= 400 {
-			return fmt.Errorf("HTTP request failed with status code: %d", statusCode)
+			return fmt.Error("HTTP request failed with status code: %d", statusCode)
 		}
 		return nil
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{interface}{
 		"id":             event.ID,
 		"type":           event.EventType,
 		"data":           eventData.Data,
@@ -139,7 +142,7 @@ func (p *HTTPPublisher) Publish(ctx context.Context, event *Event) (err error) {
 	}
 
 	if statusCode >= 400 {
-		return fmt.Errorf("HTTP request failed with status code: %d", statusCode)
+		return fmt.Error("HTTP request failed with status code: %d", statusCode)
 	}
 
 	return nil

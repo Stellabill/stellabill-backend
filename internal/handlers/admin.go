@@ -1,13 +1,13 @@
 // Package handlers implements HTTP request handlers for the Stellabill API.
 //
-// Admin login lockout
+// # Admin login lockout
 //
 // The AdminHandler.Login endpoint uses an exponential backoff lockout to
 // rate-limit failed admin authentication attempts.  Each failure for a given
 // source IP + account name doubles the lockout duration from 1s up to a
 // maximum of 15 minutes.
 //
-// Lockout reset
+// # Lockout reset
 //
 // A successful login for the key (source, account) immediately clears its
 // lockout state via LockoutTracker.Reset.  Operators can also force a reset
@@ -123,10 +123,10 @@ func (h *AdminHandler) extractCredentialsFromHeaders(c *gin.Context) AdminLoginR
 // PurgeCache handles cache purge requests.
 func (h *AdminHandler) PurgeCache(c *gin.Context) {
 	if token := c.GetHeader("X-Admin-Token"); token == "" || token != h.expectedToken {
+		audit.LogAction(c, "admin_purge", "cache", "denied", map[string]string{"reason": "invalid_token"})
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
+	audit.LogAction(c, "admin_purge", "cache", "success", map[string]string{"status": "purged"})
 	c.JSON(http.StatusOK, gin.H{"status": "purged"})
 }
-
-

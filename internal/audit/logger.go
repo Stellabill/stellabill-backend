@@ -2,11 +2,9 @@ package audit
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,10 +28,9 @@ func FromContext(ctx context.Context) (string, bool) {
 }
 
 type Logger struct {
-	mu       sync.Mutex
-	secret   []byte
-	sink     Sink
-	lastHash string
+	mu     sync.Mutex
+	secret []byte
+	sink   Sink
 }
 
 func NewLogger(secret string, sink Sink) *Logger {
@@ -48,6 +45,15 @@ func NewLogger(secret string, sink Sink) *Logger {
 		secret: []byte(s),
 		sink:   sink,
 	}
+}
+
+// NewSinkFromEnv creates a sink from AUDIT_LOG_PATH, falling back to stderr.
+func NewSinkFromEnv() Sink {
+	path := strings.TrimSpace(os.Getenv("AUDIT_LOG_PATH"))
+	if path == "" {
+		return NewStderrSink()
+	}
+	return NewFileSink(path)
 }
 
 func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) {
@@ -68,30 +74,12 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) (AuditEvent, error) 
 	// 2. Redaction (PII Protection)
 	event.Metadata = l.redact(event.Metadata)
 
-	// 3. Cryptographic Chaining
-	event.PrevHash = l.lastHash
-	event.Hash = l.computeHash(event)
-	l.lastHash = event.Hash
-
-	// 4. Persistence
-	if err := l.sink.WriteEvent(event); err != nil {
+	// 3. Persistence (Hashing is delegated to the Sink)
+	if err := l.sink.WriteEvent(&event); err != nil {
 		return AuditEvent{}, fmt.Errorf("failed to write to sink: %w", err)
 	}
 
 	return event, nil
-}
-
-func computeEventHash(e AuditEvent, secret []byte) string {
-	raw := fmt.Sprintf("%d|%s|%s|%s|%s|%s|%v",
-		e.Timestamp.Unix(), e.Actor, e.Action, e.Resource, e.Outcome, e.PrevHash, e.Metadata)
-
-	h := hmac.New(sha256.New, secret)
-	h.Write([]byte(raw))
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-func (l *Logger) computeHash(e AuditEvent) string {
-	return computeEventHash(e, l.secret)
 }
 
 const redactedValue = "[REDACTED]"
@@ -122,10 +110,4 @@ func (l *Logger) redact(meta map[string]interface{}) map[string]interface{} {
 		}
 	}
 	return newMeta
-}
-
-func (l *Logger) LastHash() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.lastHash
 }

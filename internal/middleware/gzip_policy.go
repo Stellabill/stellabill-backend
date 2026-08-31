@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/gzip"
@@ -30,7 +31,19 @@ var skipCompressPrefixes = []string{
 }
 
 type GzipPolicyConfig struct {
+	// MaxUncompressedBytes caps the total number of bytes that may be produced
+	// by decompression. Requests whose decoded body would exceed this limit are
+	// rejected with 413 "decompression_bomb". Zero means no limit.
 	MaxUncompressedBytes int64
+	// MaxCompressedBytes caps the compressed body size before decompression
+	// begins. Requests whose compressed payload exceeds this limit are
+	// rejected with 413 "request_too_large". Zero means no limit.
+	// When both MaxCompressedBytes and MaxUncompressedBytes are zero and
+	// MaxRatio is zero the middleware imposes no size restrictions.
+	MaxCompressedBytes int64
+	// MaxRatio caps the decompressed/compressed size ratio. When the decoded
+	// output would exceed MaxRatio × compressed_size the request is rejected
+	// with 413 "decompression_bomb". Zero or negative means no ratio limit.
 	MaxRatio             float64
 	ResponseCompression  bool
 	MinCompressBytes     int
@@ -63,11 +76,19 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 
 		compressedLen := int64(len(body))
 
-		if cfg.MaxUncompressedBytes > 0 && compressedLen > cfg.MaxUncompressedBytes {
+		// Reject if the compressed body itself exceeds the configured compressed-size cap.
+		// This check uses MaxCompressedBytes when set; for backward compatibility it also
+		// falls back to MaxUncompressedBytes if MaxCompressedBytes is not configured
+		// (preserving the pre-existing behaviour of the middleware).
+		maxCompressed := cfg.MaxCompressedBytes
+		if maxCompressed == 0 {
+			maxCompressed = cfg.MaxUncompressedBytes
+		}
+		if maxCompressed > 0 && compressedLen > maxCompressed {
 			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
 				"error":           "request_too_large",
 				"compressed_size": compressedLen,
-				"max_compressed":  cfg.MaxUncompressedBytes,
+				"max_compressed":  maxCompressed,
 			})
 			return
 		}

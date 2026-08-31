@@ -15,6 +15,15 @@ import (
 // ErrRequestMismatch is returned when an idempotency key is reused with a different request.
 var ErrRequestMismatch = errors.New("idempotency key reused with a different request")
 
+// IdempotencyRecord is a read-only snapshot of a stored idempotency key exposed
+// by Lookup for inspection endpoints.
+type IdempotencyRecord struct {
+	UsedAt      time.Time
+	ExpiresAt   time.Time
+	StatusCode  int
+	PayloadHash string
+}
+
 func init() {
 	errcode.Register(func(err error) bool { return errors.Is(err, ErrRequestMismatch) }, errcode.CodeIdempotencyRequestMismatch)
 }
@@ -26,6 +35,7 @@ type IdempotencyStore interface {
 	Delete(ctx context.Context, scope, key string) error
 	DeleteExpiredBatch(ctx context.Context, batchSize int) (int64, error)
 	CountExpiredPending(ctx context.Context) (int64, error)
+	Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error)
 }
 
 // PostgresIdempotencyStore implements IdempotencyStore backed by PostgreSQL.
@@ -138,6 +148,29 @@ func (s *PostgresIdempotencyStore) UpdateResponse(ctx context.Context, scope, ke
 	return err
 }
 
+// Lookup returns a snapshot of a stored idempotency key, or nil when the key
+// does not exist. Expired keys are still reported so callers can decide how to
+// surface them.
+func (s *PostgresIdempotencyStore) Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error) {
+	if s.pool == nil {
+		return nil, errors.New("postgres connection pool is nil")
+	}
+
+	var rec IdempotencyRecord
+	err := s.pool.QueryRow(ctx, `
+		SELECT created_at, expires_at, status_code, payload_hash
+		FROM idempotency_keys
+		WHERE scope = $1 AND key = $2`, scope, key).
+		Scan(&rec.UsedAt, &rec.ExpiresAt, &rec.StatusCode, &rec.PayloadHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rec, nil
+}
+
 // Delete removes an idempotency key, e.g., when a request fails with a non-2xx status code.
 func (s *PostgresIdempotencyStore) Delete(ctx context.Context, scope, key string) error {
 	if s.pool == nil {
@@ -196,6 +229,7 @@ type InMemoryIdempotencyEntry struct {
 	payloadHash  string
 	statusCode   int
 	responseBody []byte
+	createdAt    time.Time
 	expiresAt    time.Time
 }
 
@@ -232,6 +266,7 @@ func (s *InMemoryIdempotencyStore) GetOrInsert(ctx context.Context, scope, key, 
 			path:        path,
 			payloadHash: payloadHash,
 			statusCode:  0,
+			createdAt:   now,
 			expiresAt:   now.Add(ttl),
 		}
 		return 0, nil, false, false, nil
@@ -259,6 +294,25 @@ func (s *InMemoryIdempotencyStore) UpdateResponse(ctx context.Context, scope, ke
 		entry.responseBody = responseBody
 	}
 	return nil
+}
+
+// Lookup returns a snapshot of a stored idempotency key, or nil when the key
+// does not exist. Expired keys are still reported so callers can decide how to
+// surface them.
+func (s *InMemoryIdempotencyStore) Lookup(ctx context.Context, scope, key string) (*IdempotencyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entry, exists := s.keys[scope+"/"+key]
+	if !exists {
+		return nil, nil
+	}
+	return &IdempotencyRecord{
+		UsedAt:      entry.createdAt,
+		ExpiresAt:   entry.expiresAt,
+		StatusCode:  entry.statusCode,
+		PayloadHash: entry.payloadHash,
+	}, nil
 }
 
 // Delete deletes the entry from memory.

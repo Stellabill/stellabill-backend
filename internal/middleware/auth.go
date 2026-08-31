@@ -25,7 +25,10 @@ var jwksCache interface{}
 func InitJWKSCache(url string, ttlSeconds int) {
 	// Minimal stub: mark the cache as initialized so tests can assert it is
 	// non-nil.  A real implementation would fetch and parse the JWKS document.
-	jwksCache = struct{ URL string; TTL int }{URL: url, TTL: ttlSeconds}
+	jwksCache = struct {
+		URL string
+		TTL int
+	}{URL: url, TTL: ttlSeconds}
 }
 
 // extractRolesFromClaims extracts a slice of role strings from a JWT

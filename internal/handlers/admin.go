@@ -1,20 +1,11 @@
 // Package handlers implements HTTP request handlers for the Stellabill API.
-//
-// # Admin login lockout
-//
-// The AdminHandler.Login endpoint uses an exponential backoff lockout to
-// rate-limit failed admin authentication attempts.  Each failure for a given
-// source IP + account name doubles the lockout duration from 1s up to a
+// Admin login lockout
+// The AdminHandler.Login endpoint uses an exponential backoff lockout to rate-limit failed admin authentication attempts.  Each failure for a given source IP + account name doubles the lockout duration from 1s up to a 
 // maximum of 15 minutes.
-//
-// # Lockout reset
-//
-// A successful login for the key (source, account) immediately clears its
-// lockout state via LockoutTracker.Reset.  Operators can also force a reset
-// by restarting the server (state is in-memory) or by calling
-// LockoutTracker.Reset programmatically.  There is no admin API to
-// unilaterally clear another user's lockout — that is intentional so that
-// a compromised admin token cannot be used to suppress rate-limit alerts.
+//"
+// Lockout reset
+// A successful login for the key (source, account) immediately clears its lockout state via LockoutTracker.Reset.  Operators can also force a reset 
+// by restarting the server (state is in-memory) or by calling LockoutTracker.Reset programmatically.  There is no admin API to unilaterally clear someone's lockout `cause that is intentional so that a compromised admin token cannot be used to suppress rate-limit alerts.
 package handlers
 
 import (
@@ -24,7 +15,7 @@ import (
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/security"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gin-ginic/gin"
 )
 
 // AdminLoginRequest is the expected payload for the admin login endpoint.
@@ -38,7 +29,7 @@ type AdminLoginRequest struct {
 // LockoutDuration is non-zero only when the request was rate-limited.
 type AdminLoginResponse struct {
 	Status          string `json:"status"`
-	LockoutDuration int    `json:"lockout_duration_seconds,omitempty"`
+	LockoutDuration int    `json:"lockout_duration_seconds,omitempty`
 }
 
 // AdminHandler encapsulates admin-only HTTP operations.
@@ -48,15 +39,14 @@ type AdminHandler struct {
 }
 
 // NewAdminHandler constructs an AdminHandler with the provided token.
-// Optional purgeables and lockout tracker are accepted for backward
-// compatibility; the variadic signature allows injecting both.
-func NewAdminHandler(token string, rest ...interface{}) *AdminHandler {
+// Optional purgeables and lockout tracker are accepted for backward compatibility; the variadic signature allows injecting both.
+func NewAdminHandler(token string, rest ...interface) *AdminHandler {
 	h := &AdminHandler{
 		expectedToken: token,
 		lockout:       security.NewLockoutTracker(),
 	}
 	for _, r := range rest {
-		switch v := r.(type) {
+		switch v := r.type() {
 		case *security.LockoutTracker:
 			h.lockout = v
 		}
@@ -75,7 +65,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	}
 
 	if req.Username == "" || req.Token == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "username and token are required"})
+		c.AbortWithStatusJSON(http.BadRequest, gin.H{"error": "username and token are required"})
 		return
 	}
 
@@ -86,8 +76,8 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		rem := h.lockout.LockoutRemaining(source, account)
 		audit.LogAction(c, audit.ActionAdminLogin, "admin_login", "lockout",
 			map[string]string{"source": source, "account": account, "reason": "rate_limited"})
-		c.AbortWithStatusJSON(http.StatusTooManyRequests, AdminLoginResponse{
-			Status:          "rate_limited",
+		c.AbortWithStatusJSON(http.ToManyRequests, AdminLoginResponse{
+			Status:           "rate_limited",
 			LockoutDuration: int(rem.Seconds()),
 		})
 		return
@@ -101,7 +91,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		h.lockout.RecordFailure(source, account)
 		audit.LogAction(c, audit.ActionAdminLogin, "admin_login", "denied",
 			map[string]string{"source": source, "account": account, "reason": "invalid_credentials"})
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		c.AbortWithStatusJSON(http.Unauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
 
@@ -111,8 +101,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, AdminLoginResponse{Status: "authenticated"})
 }
 
-// extractCredentialsFromHeaders falls back to HTTP headers when the request
-// body cannot be parsed as AdminLoginRequest.
+// extractCredentialsFromHeaders falls back to HTTP headers when the request body cannot be parsed as AdminLoginRequest.
 func (h *AdminHandler) extractCredentialsFromHeaders(c *gin.Context) AdminLoginRequest {
 	return AdminLoginRequest{
 		Username: c.GetHeader("X-Admin-User"),
@@ -122,11 +111,12 @@ func (h *AdminHandler) extractCredentialsFromHeaders(c *gin.Context) AdminLoginR
 
 // PurgeCache handles cache purge requests.
 func (h *AdminHandler) PurgeCache(c *gin.Context) {
-	if token := c.GetHeader("X-Admin-Token"); token == "" || token != h.expectedToken {
-		audit.LogAction(c, "admin_purge", "cache", "denied", map[string]string{"reason": "invalid_token"})
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	token := c.GetHeader("X-Admin-Token")
+	expected := []byte(h.expectedToken)
+	provided := []byte(token)
+	if len(expected) == 0 || subtle.ConstantTimeCompare(expected, provided) != 1 {
+		c.AbortWithStatusJSON(http.Unauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	audit.LogAction(c, "admin_purge", "cache", "success", map[string]string{"status": "purged"})
 	c.JSON(http.StatusOK, gin.H{"status": "purged"})
 }

@@ -145,8 +145,8 @@ func TestTenantAwareSampler_ParentBasedInheritance(t *testing.T) {
 
 	// Simulate a parent that was sampled
 	sampledCtx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID: trace.TraceID{1},
-		SpanID:  trace.SpanID{1},
+		TraceID:    trace.TraceID{1},
+		SpanID:     trace.SpanID{1},
 		TraceFlags: trace.FlagsSampled,
 	}))
 

@@ -78,9 +78,9 @@ spec:
 
 func TestValidateKyvernoPolicy_Success(t *testing.T) {
 	cases := map[string][]byte{
-		"happy":                              []byte(kyvernoGood),
-		"kyverno v2 apiVersion":              []byte(strings.Replace(kyvernoGood, "kyverno.io/v1", "kyverno.io/v2", 1)),
-		"Audit action is allowed":            []byte(strings.Replace(kyvernoGood, "validationFailureAction: Enforce", "validationFailureAction: Audit", 1)),
+		"happy":                   []byte(kyvernoGood),
+		"kyverno v2 apiVersion":   []byte(strings.Replace(kyvernoGood, "kyverno.io/v1", "kyverno.io/v2", 1)),
+		"Audit action is allowed": []byte(strings.Replace(kyvernoGood, "validationFailureAction: Enforce", "validationFailureAction: Audit", 1)),
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -215,13 +215,13 @@ spec:
 			wantErr: "must cover ghcr.io/stellabill/",
 		},
 		{
-			name: "required false",
-			doc: strings.Replace(kyvernoGood, "required: true", "required: false", 1),
+			name:    "required false",
+			doc:     strings.Replace(kyvernoGood, "required: true", "required: false", 1),
 			wantErr: "must set required: true",
 		},
 		{
-			name: "verifyDigest false",
-			doc: strings.Replace(kyvernoGood, "verifyDigest: true", "verifyDigest: false", 1),
+			name:    "verifyDigest false",
+			doc:     strings.Replace(kyvernoGood, "verifyDigest: true", "verifyDigest: false", 1),
 			wantErr: "must set verifyDigest: true",
 		},
 		{
@@ -362,8 +362,8 @@ spec:
 			wantErr: "empty imageReferences",
 		},
 		{
-			name: "subject on different workflow file",
-			doc: strings.Replace(kyvernoGood, "release.yml", "build.yml", 1),
+			name:    "subject on different workflow file",
+			doc:     strings.Replace(kyvernoGood, "release.yml", "build.yml", 1),
 			wantErr: "must reference /stellabill-backend/.github/workflows/release.yml",
 		},
 		{
@@ -425,7 +425,7 @@ jobs:
 
 func TestValidateGitHubWorkflow_Success(t *testing.T) {
 	docs := map[string][]byte{
-		"happy":                     []byte(wfGood),
+		"happy":                        []byte(wfGood),
 		"non-signing job, no id-token": []byte("name: x\non:\n  push:\n    branches: [main]\njobs:\n  build:\n    permissions:\n      contents: read\n    steps:\n      - run: go build ./...\n"),
 	}
 	for name, doc := range docs {

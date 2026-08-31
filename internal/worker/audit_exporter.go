@@ -103,7 +103,7 @@ func (j *AuditExporterJob) Run(ctx context.Context) error {
 				security.ProductionLogger().Warn("Failed to marshal export record", zap.Error(err))
 				continue
 			}
-			
+
 			if _, err := outFile.Write(append(outBytes, '\n')); err != nil {
 				return fmt.Errorf("failed to write to export file: %w", err)
 			}
@@ -138,4 +138,3 @@ func (j *AuditExporterJob) Start(ctx context.Context, interval time.Duration) {
 		}
 	}
 }
-

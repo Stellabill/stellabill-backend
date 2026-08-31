@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -74,4 +75,25 @@ func TestCoverage_ExtractRoles_Variants(t *testing.T) {
 	if len(roles) != 2 {
 		t.Fatalf("expected 2 deduped roles, got %v", roles)
 	}
+}
+
+func TestCoverage_JWKSCache(t *testing.T) {
+	c := &JWKSCache{}
+	// empty kid
+	c.Set("", "key", time.Second)
+	c.Get("")
+	// normal set/get
+	c.Set("kid", "key", time.Second)
+	c.Get("kid")
+	// duplicate kid update
+	c.Set("kid", "key2", time.Second)
+	c.Get("kid")
+	// expired entry
+	c.Set("expired", "key", -time.Second)
+	c.Get("expired")
+	// invalid key (nil)
+	c.Set("nil", nil, time.Second)
+	c.Get("nil")
+	// unknown kid
+	c.Get("unknown")
 }

@@ -34,8 +34,231 @@ func NewManager() *Manager {
 	}
 }
 
-// Set sets a flag value.
-func (m *Manager) Set(name string, enabled bool, description string) {
+var (
+	instance *Manager
+	once     sync.Once
+)
+
+func GetInstance() *Manager {
+	once.Do(func() {
+		instance = &Manager{
+			flags: make(map[string]*Flag),
+			db:    make(map[string]bool),
+		}
+		instance.LoadDefaultFlags()
+		instance.LoadFromEnvironment()
+	})
+	return instance
+}
+
+func (m *Manager) LoadDefaultFlags() {
+	defaultFlags := map[string]*Flag{
+		"subscriptions_enabled": {
+			Name:        "subscriptions_enabled",
+			Enabled:     true,
+			Description: "Enable subscription management endpoints",
+			UpdatedAt:   time.Now(),
+		},
+		"plans_enabled": {
+			Name:        "plans_enabled",
+			Enabled:     true,
+			Description: "Enable billing plans endpoints",
+			UpdatedAt:   time.Now(),
+		},
+		"new_billing_flow": {
+			Name:        "new_billing_flow",
+			Enabled:     false,
+			Description: "Enable new billing flow feature",
+			UpdatedAt:   time.Now(),
+		},
+		"advanced_analytics": {
+			Name:        "advanced_analytics",
+			Enabled:     false,
+			Description: "Enable advanced analytics endpoints",
+			UpdatedAt:   time.Now(),
+		},
+		"fault_injection_enabled": {
+			Name:        "fault_injection_enabled",
+			Enabled:     false,
+			Description: "Enable fault injection middleware for resilience testing",
+			UpdatedAt:   time.Now(),
+			Version:     time.Now().UnixNano(),
+		},
+		"statements_partitioning_enabled": {
+			Name:        "statements_partitioning_enabled",
+			Enabled:     false,
+			Description: "Enable partitioning of statements table by month for scale",
+			UpdatedAt:   time.Now(),
+		},
+	}
+
+	for name, flag := range defaultFlags {
+		m.flags[name] = flag
+	}
+}
+
+func (m *Manager) LoadFromEnvironment() {
+	// JSON-based env
+	if flagsJSON := os.Getenv("FEATURE_FLAGS"); flagsJSON != "" {
+		var envFlags map[string]bool
+		if err := json.Unmarshal([]byte(flagsJSON), &envFlags); err == nil {
+			for name, enabled := range envFlags {
+				m.mutex.Lock()
+				if flag, exists := m.flags[name]; exists {
+					flag.Enabled = enabled
+					flag.UpdatedAt = time.Now()
+				} else {
+					m.flags[name] = &Flag{
+						Name:        name,
+						Enabled:     enabled,
+						Description: "Environment-defined flag",
+						UpdatedAt:   time.Now(),
+						Version:     time.Now().UnixNano(),
+					}
+				}
+				m.mutex.Unlock()
+			}
+		}
+	}
+
+	// FF_ prefix env
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "FF_") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) == 2 {
+				flagName := strings.ToLower(strings.TrimPrefix(parts[0], "FF_"))
+				flagValue := parts[1]
+
+				enabled, err := strconv.ParseBool(flagValue)
+				if err != nil {
+					continue
+				}
+
+				m.mutex.Lock()
+				if flag, exists := m.flags[flagName]; exists {
+					flag.Enabled = enabled
+					flag.UpdatedAt = time.Now()
+				} else {
+					m.flags[flagName] = &Flag{
+						Name:        flagName,
+						Enabled:     enabled,
+						Description: "Environment flag",
+						UpdatedAt:   time.Now(),
+						Version:     time.Now().UnixNano(),
+					}
+				}
+				m.mutex.Unlock()
+			}
+		}
+	}
+}
+
+// NEW: DB setter
+func (m *Manager) SetDBFlag(flagName string, enabled bool) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.db[flagName] = enabled
+}
+
+// CORE: evaluation with precedence
+func (m *Manager) IsEnabled(flagName string) bool {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	value := false
+	source := "default"
+
+	// 1. ENV
+	if val, ok := os.LookupEnv("FF_" + strings.ToUpper(flagName)); ok {
+		if parsed, err := strconv.ParseBool(val); err == nil {
+			value = parsed
+			source = "env"
+		}
+	}
+
+	// 2. DB
+	if source == "default" {
+		if val, ok := m.db[flagName]; ok {
+			value = val
+			source = "db"
+		}
+	}
+
+	// 3. CONFIG
+	if source == "default" {
+		if flag, exists := m.flags[flagName]; exists {
+			value = flag.Enabled
+			source = "config"
+
+			// SECURITY: protect critical flags
+			if strings.Contains(flag.Name, "subscriptions") && !value {
+				value = true
+				source = "forced-safe"
+			}
+		}
+	}
+
+	// 4. DEFAULT = false
+
+	m.sampleLog(flagName, value, source)
+	return value
+}
+
+func (m *Manager) IsEnabledWithDefault(flagName string, defaultValue bool) bool {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if flag, exists := m.flags[flagName]; exists {
+		return flag.Enabled
+	}
+
+	return defaultValue
+}
+
+func (m *Manager) GetFlag(flagName string) (*Flag, bool) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	flag, exists := m.flags[flagName]
+	return flag, exists
+}
+
+func (m *Manager) SetFlag(flagName string, enabled bool, description string) {
+	m.SetFlagWithVersion(flagName, enabled, description, time.Now().UnixNano())
+}
+
+func (m *Manager) SetFlagWithVersion(flagName string, enabled bool, description string, version int64) bool {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if flag, exists := m.flags[flagName]; exists {
+		if version <= flag.Version {
+			// Monotonic version check: last writer wins. If version is older, reject.
+			return false
+		}
+		flag.Enabled = enabled
+		flag.UpdatedAt = time.Now()
+		flag.Version = version
+		if description != "" {
+			flag.Description = description
+		}
+		return true
+	} else {
+		m.flags[flagName] = &Flag{
+			Name:        flagName,
+			Enabled:     enabled,
+			Description: description,
+			UpdatedAt:   time.Now(),
+			Version:     version,
+		}
+		return true
+	}
+}
+
+// UpdateFlag atomically updates an existing flag's enabled state and returns the before and after values.
+// It updates both the in-memory flag configuration and the runtime override layer (db).
+// The returned before and after copies can be used for audit logging.
+func (m *Manager) UpdateFlag(flagName string, enabled bool, description string) (*Flag, *Flag, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.flags[name] = &Flag{
@@ -47,39 +270,28 @@ func (m *Manager) Set(name string, enabled bool, description string) {
 	}
 }
 
-// Get returns a flag value.
-func (m *Manager) Get(name string) (bool, bool) {
+func (m *Manager) GetAllFlags() map[string]*Flag {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	f, ok := m.flags[name]
-	if !ok {
-		return false, false
+
+	result := make(map[string]*Flag)
+	for name, flag := range m.flags {
+		copy := *flag
+		result[name] = &copy
 	}
-	return f.Enabled, true
+	return result
 }
 
-// IsEnabled returns true if the flag is enabled.
-func (m *Manager) IsEnabled(name string) bool {
-	enabled, ok := m.Get(name)
-	return ok && enabled
+// ReloadFromEnvironment reloads configuration from environment variables.
+func (m *Manager) ReloadFromEnvironment() {
+	m.LoadFromEnvironment()
 }
 
-// List returns all flags.
-func (m *Manager) List() []Flag {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	flags := make([]Flag, 0, len(m.flags))
-	for _, f := range m.flags {
-		flags = append(flags, *f)
+// NEW: sampled logging
+func (m *Manager) sampleLog(name string, value bool, source string) {
+	if time.Now().UnixNano()%10 == 0 {
+		fmt.Printf("[feature_flag] %s=%v (%s)\n", name, value, source)
 	}
-	return flags
-}
-
-// MarshalJSON implements json.Marshaler.
-func (m *Manager) MarshalJSON() ([]byte, error) {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	return json.Marshal(m.flags)
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -89,17 +301,14 @@ func (m *Manager) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &m.flags)
 }
 
-// SetDB sets a flag in the DB layer.
-func (m *Manager) SetDB(name string, enabled bool) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.db[name] = enabled
+func IsEnabled(flagName string) bool {
+	return GetInstance().IsEnabled(flagName)
 }
 
-// GetDB gets a flag from the DB layer.
-func (m *Manager) GetDB(name string) (bool, bool) {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	enabled, ok := m.db[name]
-	return enabled, ok
+func IsEnabledWithDefault(flagName string, defaultValue bool) bool {
+	return GetInstance().IsEnabledWithDefault(flagName, defaultValue)
+}
+
+func SetFlag(flagName string, enabled bool, description string) {
+	GetInstance().SetFlag(flagName, enabled, description)
 }

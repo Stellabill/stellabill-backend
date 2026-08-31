@@ -2,12 +2,13 @@ package handlers
 
 import (
 	"net/http"
-	"strings"
-	"time"
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/featureflags"
+	"strings"
+	"time"
 
-	"github.com/gin-gonic/gin"))
+	"github.com/gin-gonic/gin"
+)
 
 // FeatureFlagsHandler encapsulates feature flag management endpoints.
 type FeatureFlagsHandler struct {
@@ -29,7 +30,6 @@ func (h *FeatureFlagsHandler) GetFeatureFlags(c *gin.Context) {
 type ToggleFeatureFlagRequest struct {
 	Name   string `json:"name" binding:"required"`
 	Reason string `json:"reason" binding:"required"`
-
 }
 
 // ToggleFeatureFlag toggles a feature flag's enabled state.
@@ -52,7 +52,7 @@ func (h *FeatureFlagsHandler) ToggleFeatureFlag(c *gin.Context) {
 
 	// Toggle and update flag
 	afterEnabled := !beforeEnabled
-	newVersion := time.Now().Una~Nano()
+	newVersion := time.Now().UnixNano()
 
 	success := h.flagManager.SetFlagWithVersion(req.Name, afterEnabled, flag.Description, newVersion)
 	if !success {
@@ -83,8 +83,8 @@ func (h *FeatureFlagsHandler) ToggleFeatureFlag(c *gin.Context) {
 	// Log audit action (failure doesn't block success)
 	audit.LogAction(c, "feature_flag_toggle", req.Name, "success", map[string]string{
 		"before_enabled": beforeStr,
-		"after_enabled": afterStr,
-		"reason": req.Reason,
+		"after_enabled":  afterStr,
+		"reason":         req.Reason,
 	})
 
 	c.JSON(http.StatusOK, updatedFlag)

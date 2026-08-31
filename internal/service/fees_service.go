@@ -85,10 +85,10 @@ func ProrateFee(amount decimal.Decimal, currency string, parts int) ([]decimal.D
 	// Each part in minor units avoids floating-point drift.
 	//   base    = floor(rounded / parts)
 	//   remainder is distributed to the first r parts (standard "largest-remainder")
-	minor := rounded.Shift(scale)                            // e.g. 10.00 USD → 1000
+	minor := rounded.Shift(scale) // e.g. 10.00 USD → 1000
 	partsD := decimal.NewFromInt(int64(parts))
-	base := minor.Div(partsD).Floor()                        // integer quotient
-	remainder := minor.Sub(base.Mul(partsD))                 // 0 ≤ remainder < parts
+	base := minor.Div(partsD).Floor()        // integer quotient
+	remainder := minor.Sub(base.Mul(partsD)) // 0 ≤ remainder < parts
 	remainderInt := remainder.IntPart()
 
 	result := make([]decimal.Decimal, parts)

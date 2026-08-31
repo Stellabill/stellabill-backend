@@ -261,7 +261,7 @@ func PublicJWKFromSigningKey(privateJWK jwk.Key) (jwk.Key, error) {
 	}
 
 	// Copy the kid from the private key.
-	if kid, ok := privateJWK.KeyID(); ok && kid != "" {
+	if kid := privateJWK.KeyID(); kid != "" {
 		if err := pubJWK.Set(jwk.KeyIDKey, kid); err != nil {
 			return nil, fmt.Errorf("set kid on public JWK: %w", err)
 		}

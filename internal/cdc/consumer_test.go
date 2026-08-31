@@ -165,10 +165,10 @@ func TestConsumerStop_DoubleStop(t *testing.T) {
 // returns immediately when the context is already cancelled.
 func TestReplicationLoop_ContextCancelled(t *testing.T) {
 	c, _ := NewConsumer(ConsumerConfig{
-		ConnString:          "postgres://test",
-		SlotName:            "test_slot",
+		ConnString:           "postgres://test",
+		SlotName:             "test_slot",
 		MaxReconnectAttempts: 1,
-		ReconnectBackoff:    10 * time.Millisecond,
+		ReconnectBackoff:     10 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -185,10 +185,10 @@ func TestReplicationLoop_ContextCancelled(t *testing.T) {
 // and we test that after MaxReconnectAttempts it returns an error.
 func TestReplicationLoop_MaxReconnects(t *testing.T) {
 	c, _ := NewConsumer(ConsumerConfig{
-		ConnString:          "postgres://invalid:5432/test",
-		SlotName:            "test_slot",
+		ConnString:           "postgres://invalid:5432/test",
+		SlotName:             "test_slot",
 		MaxReconnectAttempts: 2,
-		ReconnectBackoff:    1 * time.Millisecond,
+		ReconnectBackoff:     1 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -211,10 +211,10 @@ func TestReplicationLoop_MaxReconnects(t *testing.T) {
 // TestReplicationLoop_UnlimitedReconnects tests with MaxReconnectAttempts=0.
 func TestReplicationLoop_UnlimitedReconnects(t *testing.T) {
 	c, _ := NewConsumer(ConsumerConfig{
-		ConnString:          "postgres://invalid:5432/test",
-		SlotName:            "test_slot",
+		ConnString:           "postgres://invalid:5432/test",
+		SlotName:             "test_slot",
 		MaxReconnectAttempts: 0, // unlimited
-		ReconnectBackoff:    1 * time.Millisecond,
+		ReconnectBackoff:     1 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -235,11 +235,11 @@ func TestReplicationLoop_UnlimitedReconnects(t *testing.T) {
 // are correctly propagated.
 func TestRunReplication_ConnectFailure(t *testing.T) {
 	c, _ := NewConsumer(ConsumerConfig{
-		ConnString:          "postgres://nonexistent:5432/test",
-		SlotName:            "test_slot",
-		StandbyTimeout:      10 * time.Second,
+		ConnString:           "postgres://nonexistent:5432/test",
+		SlotName:             "test_slot",
+		StandbyTimeout:       10 * time.Second,
 		MaxReconnectAttempts: 1,
-		ReconnectBackoff:    1 * time.Millisecond,
+		ReconnectBackoff:     1 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -273,9 +273,9 @@ func TestStart_AlreadyRunning(t *testing.T) {
 // cancelled before the replication connection is established.
 func TestStart_ContextCancellation(t *testing.T) {
 	c, _ := NewConsumer(ConsumerConfig{
-		ConnString:          "postgres://nonexistent:5432/test",
+		ConnString:           "postgres://nonexistent:5432/test",
 		MaxReconnectAttempts: 1,
-		ReconnectBackoff:    1 * time.Millisecond,
+		ReconnectBackoff:     1 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -293,13 +293,13 @@ func TestStart_ContextCancellation(t *testing.T) {
 
 func TestNewConsumer_CustomConfig(t *testing.T) {
 	cfg := ConsumerConfig{
-		ConnString:          "postgres://test",
-		SlotName:            "custom_slot",
-		PublicationName:     "custom_pub",
-		StandbyTimeout:      30 * time.Second,
-		ReconnectBackoff:    5 * time.Second,
+		ConnString:           "postgres://test",
+		SlotName:             "custom_slot",
+		PublicationName:      "custom_pub",
+		StandbyTimeout:       30 * time.Second,
+		ReconnectBackoff:     5 * time.Second,
 		MaxReconnectAttempts: 5,
-		Sinks:               []Sink{NewMemorySink()},
+		Sinks:                []Sink{NewMemorySink()},
 	}
 	c, err := NewConsumer(cfg)
 	if err != nil {
@@ -385,10 +385,10 @@ func TestStart_DeferClosesSinks(t *testing.T) {
 	sink := NewMemorySink()
 
 	c, _ := NewConsumer(ConsumerConfig{
-		ConnString:          "postgres://nonexistent:5432/test",
-		Sinks:               []Sink{sink},
+		ConnString:           "postgres://nonexistent:5432/test",
+		Sinks:                []Sink{sink},
 		MaxReconnectAttempts: 1,
-		ReconnectBackoff:    1 * time.Millisecond,
+		ReconnectBackoff:     1 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

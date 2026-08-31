@@ -27,7 +27,7 @@ type WebhookEvent struct {
 type WebhookWorker struct {
 	DB         *pgxpool.Pool
 	OutboxRepo outbox.Repository
-	// Additional internal services (e.g., SubscriptionService, StatementService) 
+	// Additional internal services (e.g., SubscriptionService, StatementService)
 	// can be injected here for direct synchronous database updates if needed.
 }
 

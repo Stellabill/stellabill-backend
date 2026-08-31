@@ -339,9 +339,9 @@ func TestAnalyzeDue_SkipsTablesWithinInterval(t *testing.T) {
 
 	// Set last run times so only outbox_events is past its interval.
 	j.mu.Lock()
-	j.lastRunTime["outbox_events"] = now.Add(-10 * time.Minute)  // overdue
-	j.lastRunTime["statements"] = now.Add(-1 * time.Minute)       // within interval
-	j.lastRunTime["subscriptions"] = now.Add(-5 * time.Minute)    // within interval
+	j.lastRunTime["outbox_events"] = now.Add(-10 * time.Minute) // overdue
+	j.lastRunTime["statements"] = now.Add(-1 * time.Minute)     // within interval
+	j.lastRunTime["subscriptions"] = now.Add(-5 * time.Minute)  // within interval
 	j.mu.Unlock()
 
 	j.analyzeDue()

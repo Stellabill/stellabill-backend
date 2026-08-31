@@ -182,12 +182,12 @@ type cspReportPayload struct {
 // CSPReportHandler returns a Gin handler that receives Content-Security-Policy
 // violation reports from browsers.
 //
-// - Accepts POST requests with Content-Type application/csp-report or
-//   application/json.
-// - Reads up to maxCSPReportBodyBytes (8 KB) and silently truncates the rest.
-// - Increments the csp_reports_total{directive} Prometheus counter.
-// - Always returns 204 No Content regardless of body validity, to prevent
-//   timing-based enumeration of parsing errors.
+//   - Accepts POST requests with Content-Type application/csp-report or
+//     application/json.
+//   - Reads up to maxCSPReportBodyBytes (8 KB) and silently truncates the rest.
+//   - Increments the csp_reports_total{directive} Prometheus counter.
+//   - Always returns 204 No Content regardless of body validity, to prevent
+//     timing-based enumeration of parsing errors.
 //
 // Per-tenant rate limiting must be applied at the route level via
 // TenantRateLimitMiddleware before this handler is reached.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/secrets"
 	"stellarbill-backend/internal/service"
 	"stellarbill-backend/internal/startup"
 	"stellarbill-backend/internal/storage/s3"
@@ -24,6 +26,7 @@ import (
 	"stellarbill-backend/internal/worker"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
@@ -99,6 +102,14 @@ func Register(r *gin.Engine) {
 		r.Use(audit.Middleware(auditLogger))
 	}
 
+	var dbPinger handlers.DBPinger
+	if pool, err := db.NewPool(context.Background(), cfg); err == nil && pool != nil {
+		breakerPool := db.NewBreakerPoolFromConfig(pool, cfg)
+		dbPinger = breakerPool
+	} else if err != nil {
+		log.Printf("db health: database pool unavailable: %v", err)
+	}
+
 	r.Use(middleware.DataLoaderMiddleware(planRepo, subRepo))
 
 	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
@@ -106,6 +117,9 @@ func Register(r *gin.Engine) {
 
 	// Create handlers
 	h := handlers.NewHandler(nil, nil)
+	if breakerPool, ok := dbPinger.(*db.BreakerPool); ok {
+		h.Database = breakerPool
+	}
 	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
 	exportSvc := service.NewTenantExportService(planRepo, subRepo, stmtRepo)
 	exportJobManager := service.NewExportJobManager(exportSvc, noopS3Uploader{}, nil)
@@ -190,10 +204,45 @@ func Register(r *gin.Engine) {
 		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 	}
 
-	// Webhook receiver — signature verified by WebhookVerification middleware
-	webhookSecret := os.Getenv("WEBHOOK_SECRET")
-	webhookHandler := handlers.NewWebhookHandler()
-	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
+	// Webhook routes — provider-specific endpoints with HMAC verification.
+	// Signing secrets are resolved per-provider from the secrets chain
+	// (e.g. Vault), falling back to WEBHOOK_SECRET_<PROVIDER> env vars.
+	secretProvider := secrets.NewDefaultProvider()
+
+	// Outbox store persists verified webhook events for asynchronous
+	// processing. It stays nil when no database is configured (dev mode);
+	// the handler responds 503 in that case rather than panicking.
+	var outboxStore outbox.Repository
+	if cfg.DBConn != "" {
+		if dbPool, err := db.NewPool(context.Background(), cfg); err == nil && dbPool != nil {
+			outboxStore = outbox.NewPostgresRepository(stdlib.OpenDBFromPool(dbPool))
+		}
+	}
+
+	webhookHandler := handlers.NewWebhookHandler(outboxStore)
+
+	webhookGroup := r.Group("/api/webhooks")
+	{
+		stripeMiddleware, err := webhookVerificationFor(secretProvider, middleware.ProviderStripe, "WEBHOOK_SECRET_STRIPE")
+		if err != nil {
+			fmt.Printf("WARNING: failed to register stripe webhook route: %v\n", err)
+		} else {
+			webhookGroup.POST("/stripe", stripeMiddleware, webhookHandler.Receive)
+		}
+
+		genericMiddleware, err := webhookVerificationFor(secretProvider, middleware.ProviderGeneric, "WEBHOOK_SECRET_GENERIC")
+		if err != nil {
+			fmt.Printf("WARNING: failed to register generic webhook route: %v\n", err)
+		} else {
+			webhookGroup.POST("/generic", genericMiddleware, webhookHandler.Receive)
+		}
+	}
+
+	// Legacy webhook endpoint (backward compatibility) — plain HMAC-SHA256
+	// signed with the legacy shared WEBHOOK_SECRET.
+	legacySecret := os.Getenv("WEBHOOK_SECRET")
+	r.POST("/webhooks", middleware.WebhookVerification(legacySecret), webhookHandler.Receive)
+
 	// Admin login (no JWT required — uses admin token directly)
 	r.POST("/api/admin/login", adminHandler.Login)
 
@@ -206,7 +255,7 @@ func Register(r *gin.Engine) {
 	{
 		admin.POST("/purge", adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
-		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
+		diagHandler := startup.NewDiagnosticsHandler(cfg, dbPinger, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
 
 		// Redacted config dump under admin group with RBAC
@@ -238,6 +287,29 @@ func Register(r *gin.Engine) {
 			middleware.Idempotency(nil),
 			outboxAdmin.RequeueOutboxEvent)
 	}
+}
+
+// webhookVerificationFor builds signature-verification middleware for a
+// provider, resolving the per-provider secret exclusively from the secrets
+// chain (Vault first, env provider as a fallback inside the abstraction).
+// Secrets are never read from a raw environment variable in this package.
+// When no secret is configured the endpoint is registered with middleware
+// that rejects every request with 403 so it can never be accepted using a
+// placeholder secret.
+func webhookVerificationFor(provider secrets.Provider, webhookProvider middleware.WebhookProvider, secretKey string) (gin.HandlerFunc, error) {
+	secret, err := provider.GetSecret(context.Background(), secretKey)
+	if err != nil || secret == "" {
+		return func(c *gin.Context) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error":   "webhook_secret_not_configured",
+				"message": "webhook secret is not configured for this endpoint",
+			})
+		}, nil
+	}
+
+	cfg := middleware.ProviderConfig(webhookProvider)
+	cfg.SecretKey = secret
+	return middleware.WebhookVerificationMiddleware(cfg)
 }
 
 type noopS3Uploader struct{}
@@ -295,17 +367,4 @@ func (analyzeLogger) Error(msg string, keysAndValues ...any) {
 func (noopS3Uploader) PutObject(context.Context, string, []byte, string) error { return nil }
 func (noopS3Uploader) PresignURL(context.Context, string, time.Duration) (s3.PresignedURL, error) {
 	return s3.PresignedURL{URL: "", ExpiresAt: time.Time{}}, nil
-}
-
-func (m *mockHandlerPlanSvc) PatchPlan(c *gin.Context, id string, plan *handlers.Plan, expectedVersion int64) error {
-	repoPlan := &repository.PlanRow{
-		ID:          id,
-		Name:        plan.Name,
-		Description: plan.Description,
-	}
-	return m.repo.Update(c.Request.Context(), repoPlan, expectedVersion)
-}
-
-func (m *mockHandlerPlanSvc) DeletePlan(c *gin.Context, id string, expectedVersion int64) error {
-	return m.repo.Delete(c.Request.Context(), id, expectedVersion)
 }

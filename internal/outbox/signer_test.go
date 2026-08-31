@@ -276,14 +276,14 @@ func TestEd25519Signer_JWSRoundTrip(t *testing.T) {
 	signer := NewEd25519Signer(inner, provider)
 
 	originalData := map[string]interface{}{
-		"plan": "enterprise",
+		"plan":  "enterprise",
 		"seats": 50,
 	}
 	eventData, _ := json.Marshal(map[string]interface{}{
 		"type":      "plan.changed",
-		"data":     originalData,
+		"data":      originalData,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"id":       "evt-roundtrip",
+		"id":        "evt-roundtrip",
 	})
 
 	event := &Event{

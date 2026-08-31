@@ -26,12 +26,12 @@ const (
 	webhookBodyKey = "webhook_raw_body"
 
 	// Webhook signature verification default settings
-	DefaultSignatureHeader  = "X-Webhook-Signature"
-	DefaultTimestampHeader  = "X-Webhook-Timestamp"
-	DefaultEventIDHeader    = "X-Webhook-Event-Id"
-	DefaultSignatureVersion = "v2"
-	DefaultMaxSignatureAge  = 5 * time.Minute
-	DefaultTimestampSkew    = 300 // 5 minutes in seconds
+	DefaultSignatureHeader         = "X-Webhook-Signature"
+	DefaultTimestampHeader         = "X-Webhook-Timestamp"
+	DefaultEventIDHeader           = "X-Webhook-Event-Id"
+	DefaultSignatureVersion        = "v2"
+	DefaultMaxSignatureAge         = 5 * time.Minute
+	DefaultTimestampSkew           = 300             // 5 minutes in seconds
 	DefaultMaxBodySize      uint64 = 1024 * 1024 * 5 // 5MB
 
 	// Provider-specific defaults
@@ -126,12 +126,12 @@ const (
 type WebhookProvider string
 
 const (
-	ProviderGeneric    WebhookProvider = "generic"
-	ProviderStripe     WebhookProvider = "stripe"
-	ProviderPayPal     WebhookProvider = "paypal"
-	ProviderSquare     WebhookProvider = "square"
-	ProviderGitHub     WebhookProvider = "github"
-	ProviderCustom     WebhookProvider = "custom"
+	ProviderGeneric WebhookProvider = "generic"
+	ProviderStripe  WebhookProvider = "stripe"
+	ProviderPayPal  WebhookProvider = "paypal"
+	ProviderSquare  WebhookProvider = "square"
+	ProviderGitHub  WebhookProvider = "github"
+	ProviderCustom  WebhookProvider = "custom"
 )
 
 func (p WebhookProvider) String() string {
@@ -191,16 +191,16 @@ type WebhookConfig struct {
 // DefaultWebhookConfig returns a secure default configuration for generic webhooks.
 func DefaultWebhookConfig() *WebhookConfig {
 	return &WebhookConfig{
-		Provider:              ProviderGeneric,
-		SignatureHeader:       DefaultSignatureHeader,
-		TimestampHeader:       DefaultTimestampHeader,
-		EventIDHeader:         DefaultEventIDHeader,
-		SignatureVersion:      DefaultSignatureVersion,
-		Algorithm:             HMACSHA256,
-		Tolerance:             int64(DefaultTimestampSkew),
-		MaxBodySize:           DefaultMaxBodySize,
-		RequireTimestamp:      true,
-		RequireEventID:        true,
+		Provider:               ProviderGeneric,
+		SignatureHeader:        DefaultSignatureHeader,
+		TimestampHeader:        DefaultTimestampHeader,
+		EventIDHeader:          DefaultEventIDHeader,
+		SignatureVersion:       DefaultSignatureVersion,
+		Algorithm:              HMACSHA256,
+		Tolerance:              int64(DefaultTimestampSkew),
+		MaxBodySize:            DefaultMaxBodySize,
+		RequireTimestamp:       true,
+		RequireEventID:         true,
 		EnableReplayProtection: true,
 	}
 }
@@ -258,6 +258,12 @@ func ProviderConfig(provider WebhookProvider) *WebhookConfig {
 }
 
 // Validate validates the webhook configuration.
+// WithSecret sets the secret key and returns the config for chaining.
+func (c *WebhookConfig) WithSecret(secret string) *WebhookConfig {
+	c.SecretKey = secret
+	return c
+}
+
 func (c *WebhookConfig) Validate() error {
 	if c.SecretKey == "" {
 		return fmt.Errorf("%w: secret key is required", ErrInvalidConfig)
@@ -560,4 +566,166 @@ func (r *readSeekCloser) Seek(offset int64, whence int) (int64, error) {
 
 func (r *readSeekCloser) Close() error {
 	return nil
+}
+
+const (
+	// AdminSignatureHeader is the header carrying the HMAC-SHA256 signature
+	// for admin mutating requests.
+	AdminSignatureHeader = "X-Stellabill-Signature"
+
+	// AdminDateHeader is the request timestamp header for admin signed requests.
+	AdminDateHeader = "X-Stellabill-Date"
+
+	// AdminMaxBodySize bounds the request body size accepted for signed admin requests.
+	AdminMaxBodySize uint64 = DefaultMaxBodySize
+
+	// AdminTimestampSkew is the maximum acceptable clock skew for admin request dates.
+	AdminTimestampSkew = 60 // seconds
+
+	adminReplayCacheTTL = 5 * time.Minute
+)
+
+var (
+	ErrAdminSigningNotConfigured = errors.New("admin signing secret is not configured")
+	ErrMissingAdminDate          = errors.New("missing admin request date")
+	ErrInvalidAdminDate          = errors.New("invalid admin request date")
+	ErrMissingAdminSignature     = errors.New("missing admin request signature")
+	ErrInvalidAdminSignature     = errors.New("invalid admin request signature")
+	ErrAdminReplayDetected       = errors.New("admin request replay detected")
+	ErrAdminBodyTooLarge         = errors.New("admin request body too large")
+)
+
+// RequestSigning returns a middleware that verifies an HMAC-SHA256 request
+// signature over the canonical admin request. It protects /api/admin mutating
+// endpoints from replay and body tampering when a bearer token is leaked.
+func RequestSigning(secret string) gin.HandlerFunc {
+	replayCache := NewEventIDCache(adminReplayCacheTTL)
+
+	return func(c *gin.Context) {
+		if secret == "" {
+			abortAdminSigning(c, http.StatusServiceUnavailable, ErrAdminSigningNotConfigured)
+			return
+		}
+
+		date := strings.TrimSpace(c.GetHeader(AdminDateHeader))
+		if date == "" {
+			abortAdminSigning(c, http.StatusUnauthorized, ErrMissingAdminDate)
+			return
+		}
+		if err := verifyTimestamp(date, AdminTimestampSkew); err != nil {
+			abortAdminSigning(c, http.StatusUnauthorized, ErrInvalidAdminDate)
+			return
+		}
+
+		sig := strings.TrimSpace(c.GetHeader(AdminSignatureHeader))
+		if sig == "" {
+			abortAdminSigning(c, http.StatusUnauthorized, ErrMissingAdminSignature)
+			return
+		}
+
+		if c.Request.ContentLength > int64(AdminMaxBodySize) {
+			abortAdminSigning(c, http.StatusRequestEntityTooLarge, ErrAdminBodyTooLarge)
+			return
+		}
+
+		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, int64(AdminMaxBodySize)))
+		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				abortAdminSigning(c, http.StatusRequestEntityTooLarge, ErrAdminBodyTooLarge)
+				return
+			}
+			abortAdminSigning(c, http.StatusBadRequest, fmt.Errorf("failed to read admin request body: %w", err))
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+		canonical, err := canonicalAdminRequest(c.Request, body)
+		if err != nil {
+			abortAdminSigning(c, http.StatusBadRequest, err)
+			return
+		}
+
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(canonical))
+		expected := hex.EncodeToString(mac.Sum(nil))
+
+		if !hmac.Equal([]byte(sig), []byte(expected)) {
+			abortAdminSigning(c, http.StatusUnauthorized, ErrInvalidAdminSignature)
+			return
+		}
+
+		ctx := c.Request.Context()
+		if err := replayCache.CheckAndStore(ctx, "admin:"+expected); err != nil {
+			abortAdminSigning(c, http.StatusUnauthorized, ErrAdminReplayDetected)
+			return
+		}
+
+		c.Set("admin_signing_verified", true)
+		c.Next()
+	}
+}
+
+// canonicalAdminRequest builds the AWS SigV4-style canonical request used by
+// RequestSigning. It covers method, path, query, selected headers, and body.
+func canonicalAdminRequest(r *http.Request, body []byte) (string, error) {
+	if r.Host == "" {
+		return "", errors.New("request host is required")
+	}
+
+	method := strings.ToUpper(r.Method)
+	if method == "" {
+		method = http.MethodGet
+	}
+
+	path := r.URL.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+
+	query := r.URL.Query().Encode()
+
+	date := strings.TrimSpace(r.Header.Get(AdminDateHeader))
+	if date == "" {
+		return "", ErrMissingAdminDate
+	}
+
+	headers := "host:" + strings.Join(strings.Fields(r.Host), " ") + "\n"
+	signedHeaders := "host"
+
+	headers += "x-stellabill-date:" + strings.Join(strings.Fields(date), " ") + "\n"
+	signedHeaders += ";x-stellabill-date"
+
+	if ct := strings.TrimSpace(r.Header.Get("Content-Type")); ct != "" {
+		headers += "content-type:" + strings.Join(strings.Fields(ct), " ") + "\n"
+		signedHeaders += ";content-type"
+	}
+
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+		headers += "authorization:" + strings.Join(strings.Fields(auth), " ") + "\n"
+		signedHeaders += ";authorization"
+	}
+
+	if token := strings.TrimSpace(r.Header.Get("X-Admin-Token")); token != "" {
+		headers += "x-admin-token:" + strings.Join(strings.Fields(token), " ") + "\n"
+		signedHeaders += ";x-admin-token"
+	}
+
+	bodyHash := sha256.Sum256(body)
+
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
+		method,
+		path,
+		query,
+		headers,
+		signedHeaders,
+		hex.EncodeToString(bodyHash[:]),
+	), nil
+}
+
+func abortAdminSigning(c *gin.Context, statusCode int, err error) {
+	c.AbortWithStatusJSON(statusCode, gin.H{
+		"error":   err.Error(),
+		"message": err.Error(),
+	})
 }

@@ -8,10 +8,12 @@ import (
 	"os"
 	"time"
 
+	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/db"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
@@ -57,6 +59,13 @@ func Register(r *gin.Engine) {
 	r.Use(middleware.TailSamplingSignals())
 	r.Use(middleware.TraceIDMiddleware())
 
+	// Prometheus HTTP metrics — observes per-request latency and counts by
+	// route, method, and status for every request entering the router, using
+	// c.FullPath() so label cardinality stays bounded by the route table.
+	// Exposed via the dedicated /metrics handler below (no auth; IP-restricted
+	// by network policy).
+	r.Use(metrics.MetricsMiddleware())
+
 	// Per-endpoint concurrency shedding — shed excess load before rate limiting
 	if cfg.ConcurrencyCapsPath != "" {
 		concCfg, err := middleware.LoadConcurrencyConfig(cfg.ConcurrencyCapsPath)
@@ -88,6 +97,10 @@ func Register(r *gin.Engine) {
 	subRepo := repository.NewMockSubscriptionRepo()
 	planRepo := repository.NewMockPlanRepo()
 	stmtRepo := repository.NewMockStatementRepo()
+	auditLogger := audit.NewLogger(cfg.JWTSecret, audit.NewSinkFromEnv())
+	if auditLogger != nil {
+		r.Use(audit.Middleware(auditLogger))
+	}
 
 	r.Use(middleware.DataLoaderMiddleware(planRepo, subRepo))
 
@@ -103,6 +116,14 @@ func Register(r *gin.Engine) {
 	// Auth configuration
 	jwtSecret := cfg.JWTSecret
 	authMiddleware := middleware.AuthMiddleware(nil, jwtSecret)
+
+	// Per-tenant rate limiting — layered after the global rate limiter on all
+	// authenticated routes. Enabled only when RATE_LIMIT_TENANT_RPS is set.
+	tenantRateLimiter := middleware.TenantRateLimitMiddleware(middleware.TenantRateLimitConfig{
+		Enabled: cfg.RateLimitTenantRPS > 0,
+		RPS:     cfg.RateLimitTenantRPS,
+		Burst:   cfg.RateLimitTenantBurst,
+	})
 
 	// API Groups
 	api := r.Group("/api")
@@ -122,6 +143,7 @@ func Register(r *gin.Engine) {
 
 	// V1 routes are all protected
 	v1.Use(authMiddleware)
+	v1.Use(tenantRateLimiter)
 	{
 		v1.GET("/subscriptions", h.ListSubscriptions)
 		v1.GET("/subscriptions/:id", handlers.NewGetSubscriptionHandler(svc))
@@ -147,6 +169,7 @@ func Register(r *gin.Engine) {
 	// Legacy /api routes - also protected
 	apiProtected := api.Group("")
 	apiProtected.Use(authMiddleware)
+	apiProtected.Use(tenantRateLimiter)
 	{
 		apiProtected.GET("/plans",
 			dep,
@@ -239,6 +262,19 @@ func Register(r *gin.Engine) {
 			}
 			c.JSON(200, gin.H{"reports": reports})
 		})
+
+		// Outbox dead-letter inspection and manual recovery. Both endpoints are
+		// gated behind manage:reconciliation (admin-only role) and the requeue
+		// endpoint is idempotency-keyed so a retried POST cannot reset an
+		// already-requeued event a second time.
+		outboxAdmin := handlers.NewOutboxAdminHandler(newOutboxRepository(cfg))
+		admin.GET("/outbox/dead-letter",
+			auth.RequirePermission(auth.PermManageReconciliation),
+			outboxAdmin.ListDeadLetteredEvents)
+		admin.POST("/outbox/:id/requeue",
+			auth.RequirePermission(auth.PermManageReconciliation),
+			middleware.Idempotency(nil),
+			outboxAdmin.RequeueOutboxEvent)
 	}
 }
 
@@ -266,6 +302,23 @@ func webhookVerificationFor(provider secrets.Provider, webhookProvider middlewar
 }
 
 type noopS3Uploader struct{}
+
+// newOutboxRepository builds an outbox.Repository backed by a dedicated
+// pgx pool. It mirrors the defensive pattern used by startAnalyzeJob: when the
+// database is not configured (empty DBConn) or unreachable it returns a nil
+// repository, and the admin outbox handlers respond 503 rather than failing
+// server boot.
+func newOutboxRepository(cfg config.Config) outbox.Repository {
+	pool, err := db.NewPool(context.Background(), cfg)
+	if err != nil {
+		log.Printf("outbox admin: db pool creation failed: %v", err)
+		return nil
+	}
+	if pool == nil {
+		return nil
+	}
+	return outbox.NewPostgresPgxRepository(pool)
+}
 
 // startAnalyzeJob initializes the database pool and starts the periodic ANALYZE
 // background job. If the pool cannot be created (e.g. no DATABASE_URL in

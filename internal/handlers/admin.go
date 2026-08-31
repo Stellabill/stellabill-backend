@@ -123,8 +123,10 @@ func (h *AdminHandler) extractCredentialsFromHeaders(c *gin.Context) AdminLoginR
 // PurgeCache handles cache purge requests.
 func (h *AdminHandler) PurgeCache(c *gin.Context) {
 	if token := c.GetHeader("X-Admin-Token"); token == "" || token != h.expectedToken {
+		audit.LogAction(c, "admin_purge", "cache", "denied", map[string]string{"reason": "invalid_token"})
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
+	audit.LogAction(c, "admin_purge", "cache", "success", map[string]string{"status": "purged"})
 	c.JSON(http.StatusOK, gin.H{"status": "purged"})
 }

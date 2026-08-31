@@ -15,6 +15,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	github.com/google/wire v0.7.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/graphql-go/graphql v0.8.1
 	github.com/jackc/pgx/v5 v5.9.1
@@ -24,6 +25,7 @@ require (
 	github.com/open-policy-agent/opa v1.18.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.7.1
+	github.com/segmentio/kafka-go v0.4.47
 	github.com/shopspring/decimal v1.4.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/sony/gobreaker v1.0.0
@@ -144,7 +146,6 @@ require (
 	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/segmentio/kafka-go v0.4.47
 	github.com/shirou/gopsutil/v4 v4.26.2 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/tchap/go-patricia/v2 v2.3.3 // indirect

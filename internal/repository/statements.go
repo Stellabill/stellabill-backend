@@ -4,62 +4,73 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 )
 
+// StatementsRepo handles CRUD operations on the partitioned statements table.
+// The table is partitioned by tenant_id and month (created_at), so every query
+// must include tenant_id to leverage partition pruning and enforce isolation.
+type StatementsRepo struct {
+	db *sql.DB
+}
+
+// NewStatementsRepo creates a new StatementsRepo.
+func NewStatementsRepo(db *sql.DB) *StatementsRepo {
+	return &StatementsRepo{db: db}
+}
+
+// Statement represents a row in the statements table.
 type Statement struct {
-    ID        int64     `db:"id"`
-    TenantID  string    `db:"tenant_id"`
-    Content   string    `db:"content"`
-    CreatedAt time.Time `db:"created_at"`
-    UpdatedAt time.Time `db:"updated_at"`
+	ID        int64     `db:"id"`
+	TenantID  string    `db:"tenant_id"`
+	Content   string    `db:"content"`
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
 }
 
 // ErrInvalidInput is returned when input parameters are invalid.
 var ErrInvalidInput = errors.New("invalid input")
 
 func (r *StatementsRepo) Create(ctx context.Context, s *Statement) (int64, error) {
-	if s.TenantID == "" || s.Content == "" {
+	if s == nil || s.TenantID == "" {
 		return 0, ErrInvalidInput
 	}
 
-	s.CreatedAt = time.Now().UTC()
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = time.Now().UTC()
+	}
 	s.UpdatedAt = s.CreatedAt
 
 	query := `
-		INSERT INTO statements (tenant_id, content, created_at, updated_at)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id`
-
+        INSERT INTO statements (tenant_id, content, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        RETURNING id`
 	var id int64
 	err := r.db.QueryRowContext(ctx, query, s.TenantID, s.Content, s.CreatedAt, s.UpdatedAt).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("create statement: %w", err)
+		return 0, err
 	}
-	s.ID = id
 	return id, nil
 }
 
 func (r *StatementsRepo) Get(ctx context.Context, tenantID string, id int64) (*Statement, error) {
-	if tenantID == "" {
+	if tenantID == "" || id <= 0 {
 		return nil, ErrInvalidInput
 	}
 
 	query := `
-		SELECT id, tenant_id, content, created_at, updated_at
-		FROM statements
-		WHERE id = $1 AND tenant_id = $2`
-
-	var s Statement
-	err := r.db.QueryRowContext(ctx, query, id, tenantID).Scan(&s.ID, &s.TenantID, &s.Content, &s.CreatedAt, &s.UpdatedAt)
-	if err == sql.ErrNoRows {
+        SELECT id, tenant_id, content, created_at, updated_at
+        FROM statements
+        WHERE tenant_id = ? AND id = ?`
+	var st Statement
+	err := r.db.QueryRowContext(ctx, query, tenantID, id).Scan(&st.ID, &st.TenantID, &st.Content, &st.CreatedAt, &st.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get statement: %w", err)
+		return nil, err
 	}
-	return &s, nil
+	return &st, nil
 }
 
 func (r *StatementsRepo) List(ctx context.Context, tenantID string, from, to *time.Time) ([]Statement, error) {
@@ -67,85 +78,85 @@ func (r *StatementsRepo) List(ctx context.Context, tenantID string, from, to *ti
 		return nil, ErrInvalidInput
 	}
 
-    query := `
+	query := `
         SELECT id, tenant_id, content, created_at, updated_at
         FROM statements
         WHERE tenant_id = ?`
-    args := []interface{}{tenantID}
+	args := []interface{}{tenantID}
 
 	if from != nil {
-		query += fmt.Sprintf(" AND created_at >= $%d", argIdx)
+		query += " AND created_at >= ?"
 		args = append(args, *from)
-		argIdx++
 	}
 	if to != nil {
-		query += fmt.Sprintf(" AND created_at <= $%d", argIdx)
+		query += " AND created_at <= ?"
 		args = append(args, *to)
-		argIdx++
 	}
 
+	// Order by created_at for consistent pagination.
 	query += " ORDER BY created_at"
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list statements: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
-    var statements []Statement
-    for rows.Next() {
-        var st Statement
-        if err := rows.Scan(&st.ID, &st.TenantID, &st.Content, &st.CreatedAt, &st.UpdatedAt); err != nil {
-            return nil, err
-        }
-        statements = append(statements, st)
-    }
-    if err := rows.Err(); err != nil {
-        return nil, err
-    }
-    return statements, nil
+	var statements []Statement
+	for rows.Next() {
+		var st Statement
+		if err := rows.Scan(&st.ID, &st.TenantID, &st.Content, &st.CreatedAt, &st.UpdatedAt); err != nil {
+			return nil, err
+		}
+		statements = append(statements, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return statements, nil
 }
 
-func (r *StatementsRepo) Update(ctx context.Context, s *Statement) error {
-	if s.ID == 0 || s.TenantID == "" {
+// Update modifies an existing statement. It validates tenant ownership.
+func (r *StatementsRepo) Update(ctx context.Context, tenantID string, id int64, content string) error {
+	if tenantID == "" || id <= 0 {
 		return ErrInvalidInput
 	}
 
 	query := `
-		UPDATE statements
-		SET content = $1, updated_at = $2
-		WHERE id = $3 AND tenant_id = $3`
-
-	s.UpdatedAt = time.Now().UTC()
-	result, err := r.db.ExecContext(ctx, query, s.Content, s.UpdatedAt, s.ID, s.TenantID)
+        UPDATE statements
+        SET content = ?, updated_at = ?
+        WHERE tenant_id = ? AND id = ?`
+	res, err := r.db.ExecContext(ctx, query, content, time.Now().UTC(), tenantID, id)
 	if err != nil {
-		return fmt.Errorf("update statement: %w", err)
+		return err
 	}
-	rows, err := result.RowsAffected()
+	affected, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
+		return err
 	}
-	if rows == 0 {
-		return ErrConcurrentEdit
+	if affected == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
 
 func (r *StatementsRepo) Delete(ctx context.Context, tenantID string, id int64) error {
-	if tenantID == "" || id == 0 {
+	if tenantID == "" || id <= 0 {
 		return ErrInvalidInput
 	}
 
-	query := `DELETE FROM statements WHERE id = $1 AND tenant_id = $2`
-	result, err := r.db.ExecContext(ctx, query, id, tenantID)
+	query := `
+        DELETE FROM statements
+        WHERE tenant_id = ? AND id = ?`
+	res, err := r.db.ExecContext(ctx, query, tenantID, id)
 	if err != nil {
-		return fmt.Errorf("delete statement: %w", err)
+		return err
 	}
-	rows, err := result.RowsAffected()
+	affected, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
+		return err
 	}
-	if rows == 0 {
+	if affected == 0 {
 		return ErrNotFound
 	}
 	return nil

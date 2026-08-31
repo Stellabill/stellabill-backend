@@ -31,13 +31,6 @@ const (
 
 type StepFn func(ctx context.Context, sagaCtx SagaContext) error
 
-type RetryPolicy struct {
-	MaxAttempts int
-	BaseDelay   time.Duration
-	MaxDelay    time.Duration
-	Jitter      float64
-}
-
 type Step struct {
 	Key         string
 	Execute     StepFn

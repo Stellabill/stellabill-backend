@@ -54,28 +54,24 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 		encoding := c.GetHeader("Content-Encoding")
 		encoding = strings.TrimSpace(strings.ToLower(encoding))
 
-		if encoding == "" || encoding == "identity" {
-			applyResponseCompression(c, cfg)
-			return
-		}
+		if encoding != "" && encoding != "identity" {
+			if encoding != "gzip" {
+				c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{
+					"error":    "unsupported_encoding",
+					"encoding": encoding,
+				})
+				return
+			}
 
-		if encoding != "gzip" {
-			c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{
-				"error":    "unsupported_encoding",
-				"encoding": encoding,
-			})
-			return
-		}
+			body, err := io.ReadAll(c.Request.Body)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+					"error": "bad_request",
+				})
+				return
+			}
 
-		body, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"error": "bad_request",
-			})
-			return
-		}
-
-		compressedLen := int64(len(body))
+			compressedLen := int64(len(body))
 
 		// Reject if the compressed body itself exceeds the configured compressed-size cap.
 		// This check uses MaxCompressedBytes when set; for backward compatibility it also
@@ -94,53 +90,71 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 			return
 		}
 
-		zr, err := gzip.NewReader(bytes.NewReader(body))
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"error": "invalid_gzip",
-			})
-			return
+			zr, err := gzip.NewReader(bytes.NewReader(body))
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+					"error": "invalid_gzip",
+				})
+				return
+			}
+
+			var decompressed bytes.Buffer
+			maxDestSize := cfg.MaxUncompressedBytes
+
+			if cfg.MaxRatio > 0 && compressedLen > 0 {
+				ratioLimit := int64(float64(compressedLen) * cfg.MaxRatio)
+				if maxDestSize == 0 || ratioLimit < maxDestSize {
+					maxDestSize = ratioLimit
+				}
+			}
+
+			if maxDestSize > 0 {
+				limitedReader := io.LimitReader(zr, maxDestSize+1)
+				_, err = io.Copy(&decompressed, limitedReader)
+				if err != nil && err != io.EOF {
+				}
+			} else {
+				_, err = io.Copy(&decompressed, zr)
+				if err != nil && err != io.EOF {
+				}
+			}
+
+			if zr.Close() != nil {
+			}
+
+			if maxDestSize > 0 && int64(decompressed.Len()) > maxDestSize {
+				c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
+					"error":             "decompression_bomb",
+					"decompressed_size": decompressed.Len(),
+					"max_uncompressed":  maxDestSize,
+					"compressed_size":   compressedLen,
+					"compression_ratio": float64(decompressed.Len()) / float64(max(1, int(compressedLen))),
+				})
+				return
+			}
+
+			c.Request.Body = io.NopCloser(&decompressed)
+			c.Request.Header.Del("Content-Encoding")
 		}
 
-		var decompressed bytes.Buffer
-		maxDestSize := cfg.MaxUncompressedBytes
-
-		if cfg.MaxRatio > 0 && compressedLen > 0 {
-			ratioLimit := int64(float64(compressedLen) * cfg.MaxRatio)
-			if maxDestSize == 0 || ratioLimit < maxDestSize {
-				maxDestSize = ratioLimit
+		if cfg.ResponseCompression && !c.IsAborted() {
+			enc := negotiateEncoding(c)
+			if enc != "" {
+				minB := cfg.MinCompressBytes
+				if minB <= 0 {
+					minB = MinCompressBytes
+				}
+				cw := &compressingWriter{
+					ResponseWriter: c.Writer,
+					encoding:       enc,
+					minCompress:    minB,
+					statusCode:     http.StatusOK,
+				}
+				c.Writer = cw
+				defer cw.finalize()
 			}
 		}
 
-		if maxDestSize > 0 {
-			limitedReader := io.LimitReader(zr, maxDestSize+1)
-			_, err = io.Copy(&decompressed, limitedReader)
-			if err != nil && err != io.EOF {
-			}
-		} else {
-			_, err = io.Copy(&decompressed, zr)
-			if err != nil && err != io.EOF {
-			}
-		}
-
-		if zr.Close() != nil {
-		}
-
-		if maxDestSize > 0 && int64(decompressed.Len()) > maxDestSize {
-			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
-				"error":             "decompression_bomb",
-				"decompressed_size": decompressed.Len(),
-				"max_uncompressed":  maxDestSize,
-				"compressed_size":   compressedLen,
-				"compression_ratio": float64(decompressed.Len()) / float64(max(1, int(compressedLen))),
-			})
-			return
-		}
-
-		c.Request.Body = io.NopCloser(&decompressed)
-		c.Request.Header.Del("Content-Encoding")
-
-		applyResponseCompression(c, cfg)
 		c.Next()
 	}
 }

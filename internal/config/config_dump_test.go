@@ -8,10 +8,10 @@ import (
 
 func TestDumpRedactsSecretFields(t *testing.T) {
 	cfg := &Config{
-		Env:       "production",
-		Port:      8443,
-		DBConn:    "postgres://user:supersecret@localhost:5432/db",
-		JWTSecret: "my-jwt-secret-value-123!",
+		Env:        "production",
+		Port:       8443,
+		DBConn:     "postgres://user:supersecret@localhost:5432/db",
+		JWTSecret:  "my-jwt-secret-value-123!",
 		AdminToken: "my-admin-token-456!",
 	}
 
@@ -39,11 +39,11 @@ func TestDumpRedactsSecretFields(t *testing.T) {
 
 func TestDumpNoRawSecretsInJSON(t *testing.T) {
 	cfg := &Config{
-		Env:       "staging",
-		DBConn:    "postgres://user:supersecret@localhost/db",
-		JWTSecret: "my-jwt-secret-789!",
+		Env:        "staging",
+		DBConn:     "postgres://user:supersecret@localhost/db",
+		JWTSecret:  "my-jwt-secret-789!",
 		AdminToken: "my-admin-token-000!",
-		RedisURL:  "redis://:super-redis-pass@localhost:6379",
+		RedisURL:   "redis://:super-redis-pass@localhost:6379",
 	}
 
 	dump := Dump(cfg)
@@ -73,21 +73,21 @@ func TestDumpNoRawSecretsInJSON(t *testing.T) {
 
 func TestDumpNonSecretFieldsVisible(t *testing.T) {
 	cfg := &Config{
-		Env:                    "development",
-		Port:                   8080,
-		MaxHeaderBytes:         1 << 20,
-		ReadTimeout:            30,
-		WriteTimeout:           30,
-		IdleTimeout:            120,
-		RateLimitEnabled:       true,
-		RateLimitMode:          "ip",
-		RateLimitRPS:           10,
-		RateLimitBurst:         20,
-		RateLimitWhitelist:     []string{"/health", "/metrics"},
-		OTelLogsEnabled:        false,
-		DBPoolMaxConns:         25,
-		DBPoolMinConns:         2,
-		PgBouncerEnabled:       false,
+		Env:                     "development",
+		Port:                    8080,
+		MaxHeaderBytes:          1 << 20,
+		ReadTimeout:             30,
+		WriteTimeout:            30,
+		IdleTimeout:             120,
+		RateLimitEnabled:        true,
+		RateLimitMode:           "ip",
+		RateLimitRPS:            10,
+		RateLimitBurst:          20,
+		RateLimitWhitelist:      []string{"/health", "/metrics"},
+		OTelLogsEnabled:         false,
+		DBPoolMaxConns:          25,
+		DBPoolMinConns:          2,
+		PgBouncerEnabled:        false,
 		GracefulShutdownTimeout: 30,
 	}
 

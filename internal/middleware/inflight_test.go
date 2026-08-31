@@ -228,7 +228,7 @@ func TestInflightMiddleware_PanicRelease(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
 	w := httptest.NewRecorder()
-	
+
 	// Execute panicking handler and catch panic
 	assert.Panics(t, func() {
 		r.ServeHTTP(w, req)

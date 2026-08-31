@@ -587,22 +587,25 @@ func TestEventIDCache(t *testing.T) {
 		err := cache.CheckAndStore(ctx, eventID)
 		assert.NoError(t, err)
 		assert.True(t, cache.Has(ctx, eventID))
+		assert.Equal(t, 1, cache.Len())
+	})
+
+	t.Run("CheckAndStore_empty_id", func(t *testing.T) {
+		err := cache.CheckAndStore(ctx, "")
+		assert.Error(t, err)
 	})
 
 	t.Run("CheckAndStore_duplicate_event", func(t *testing.T) {
 		err := cache.CheckAndStore(ctx, eventID)
 		assert.ErrorIs(t, err, ErrEventIDAlreadySeen)
+		// A rejected replay must not grow the cache.
+		assert.Equal(t, 1, cache.Len())
 	})
 
-	t.Run("Len", func(t *testing.T) {
+	t.Run("Len_after_add", func(t *testing.T) {
 		err := cache.CheckAndStore(ctx, uuid.New().String())
 		assert.NoError(t, err)
-		assert.Equal(t, 1, cache.Len())
-	})
-
-	t.Run("Len", func(t *testing.T) {
-		_ = cache.CheckAndStore(ctx, uuid.New().String())
-		assert.Equal(t, 1, cache.Len())
+		assert.Equal(t, 2, cache.Len())
 	})
 
 	t.Run("Remove_event", func(t *testing.T) {

@@ -57,11 +57,11 @@ func TestConfigDumpHandler_NoSecretsLeak(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{
-		Env:         "staging",
-		DBConn:      "postgres://user:supersecret@localhost/db",
-		JWTSecret:   "do-not-leak-this-123!",
-		AdminToken:  "admin-secret-456!",
-		RedisURL:    "redis://:redis-pass@localhost:6379",
+		Env:        "staging",
+		DBConn:     "postgres://user:supersecret@localhost/db",
+		JWTSecret:  "do-not-leak-this-123!",
+		AdminToken: "admin-secret-456!",
+		RedisURL:   "redis://:redis-pass@localhost:6379",
 	}
 
 	handler := ConfigDumpHandler(cfg)
@@ -122,15 +122,15 @@ func TestConfigDumpHandler_NonSecretFieldsPreserved(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{
-		Env:                    "development",
-		Port:                   8080,
-		RateLimitEnabled:       true,
-		RateLimitMode:          "ip",
-		RateLimitRPS:           10,
-		RateLimitBurst:         20,
-		RateLimitWhitelist:     []string{"/health", "/metrics"},
-		DBPoolMaxConns:         25,
-		PgBouncerEnabled:       false,
+		Env:                     "development",
+		Port:                    8080,
+		RateLimitEnabled:        true,
+		RateLimitMode:           "ip",
+		RateLimitRPS:            10,
+		RateLimitBurst:          20,
+		RateLimitWhitelist:      []string{"/health", "/metrics"},
+		DBPoolMaxConns:          25,
+		PgBouncerEnabled:        false,
 		GracefulShutdownTimeout: 30,
 	}
 

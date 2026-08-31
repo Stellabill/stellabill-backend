@@ -41,18 +41,17 @@ func (e *ConfigError) Error() string {
 
 // Config holds all application configuration
 type Config struct {
-	Env                    string   `json:"env"`
-	Port                   int      `json:"port"`
-	DBConn                 string   `json:"db_conn" secret:"true"`
-	JWTSecret              string   `json:"jwt_secret" secret:"true"`
-	JWKSURL                string   `json:"jwks_url"`
-	MaxHeaderBytes         int      `json:"max_header_bytes"`
-	ReadTimeout            int      `json:"read_timeout"`
-	WriteTimeout           int      `json:"write_timeout"`
-	IdleTimeout            int      `json:"idle_timeout"`
-	AllowedOrigins         string   `json:"allowed_origins"`
-	AdminToken             string   `json:"admin_token" secret:"true"`
-	DBReplicaConn          string   `json:"db_replica_conn" secret:"true"`
+	Env            string `json:"env"`
+	Port           int    `json:"port"`
+	DBConn         string `json:"db_conn" secret:"true"`
+	JWTSecret      string `json:"jwt_secret" secret:"true"`
+	MaxHeaderBytes int    `json:"max_header_bytes"`
+	ReadTimeout    int    `json:"read_timeout"`
+	WriteTimeout   int    `json:"write_timeout"`
+	IdleTimeout    int    `json:"idle_timeout"`
+	AllowedOrigins string `json:"allowed_origins"`
+	AdminToken     string `json:"admin_token" secret:"true"`
+	DBReplicaConn  string `json:"db_replica_conn" secret:"true"`
 	// Rate limiting configuration
 	RateLimitEnabled   bool     `json:"rate_limit_enabled"`
 	RateLimitMode      string   `json:"rate_limit_mode"`
@@ -308,19 +307,19 @@ func Load(opts ...Option) (Config, error) {
 		MaxGzipRatio:           getEnvFloat64("MAX_GZIP_RATIO", 10.0),
 		MaxGzipCompressed:      getEnvInt64("MAX_GZIP_COMPRESSED", 1024*1024*10),  // 10MB default (= MaxRequestSize)
 		// DB pool — safe production defaults
-		DBReplicaConn:                getEnv("DB_REPLICA_URL", ""),
-		RedisURL:                     getEnv("REDIS_URL", ""),
-		CacheTTL:                     getEnvInt("CACHE_TTL", 60), // 60 second default
-		DBPoolMaxConns:               DefaultDBPoolMaxConns,
-		DBPoolMinConns:               DefaultDBPoolMinConns,
-		DBPoolMaxConnLifetime:        DefaultDBPoolMaxConnLifetime,
-		DBPoolMaxConnIdleTime:        DefaultDBPoolMaxConnIdleTime,
-		DBPoolConnectTimeout:         DefaultDBPoolConnectTimeout,
-		DBPoolHealthCheckPeriod:      DefaultDBPoolHealthCheckPeriod,
-		DBPoolMetricsInterval:        DefaultDBPoolMetricsInterval,
-		DBBreakerMaxFailures:         DefaultDBBreakerMaxFailures,
-		DBBreakerTimeoutSeconds:      DefaultDBBreakerTimeoutSeconds,
-		DBBreakerHalfOpenMaxRequests: DefaultDBBreakerHalfOpenMaxRequests,
+		//
+		// DATABASE_REPLICA_URL is the canonical env var for the hot-standby
+		// read replica; DB_REPLICA_URL is kept as a backward-compatible alias.
+		DBReplicaConn:           getEnvFirst("", "DATABASE_REPLICA_URL", "DB_REPLICA_URL"),
+		RedisURL:                getEnv("REDIS_URL", ""),
+		CacheTTL:                getEnvInt("CACHE_TTL", 60), // 60 second default
+		DBPoolMaxConns:          DefaultDBPoolMaxConns,
+		DBPoolMinConns:          DefaultDBPoolMinConns,
+		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
+		DBPoolMaxConnIdleTime:   DefaultDBPoolMaxConnIdleTime,
+		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
+		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
+		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
 		// PgBouncer sidecar defaults.
 		PgBouncerEnabled:         false,
 		PgBouncerHost:            DefaultPgBouncerHost,

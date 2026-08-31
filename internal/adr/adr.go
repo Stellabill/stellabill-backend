@@ -41,11 +41,11 @@ var requiredSections = []string{"Status", "Context", "Decision", "Consequences"}
 
 // Record is a parsed ADR markdown file.
 type Record struct {
-	Path     string
-	Number   int
-	Slug     string
-	Title    string
-	Status   string
+	Path       string
+	Number     int
+	Slug       string
+	Title      string
+	Status     string
 	IsTemplate bool
 }
 

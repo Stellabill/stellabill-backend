@@ -261,26 +261,13 @@ func (m *Manager) SetFlagWithVersion(flagName string, enabled bool, description 
 func (m *Manager) UpdateFlag(flagName string, enabled bool, description string) (*Flag, *Flag, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
-	flag, exists := m.flags[flagName]
-	if !exists {
-		return nil, nil, fmt.Errorf("feature flag %q not found", flagName)
+	m.flags[name] = &Flag{
+		Name:        name,
+		Enabled:     enabled,
+		Description: description,
+		UpdatedAt:   time.Now(),
+		Version:     1,
 	}
-
-	old := *flag
-
-	flag.Enabled = enabled
-	flag.UpdatedAt = time.Now()
-	flag.Version = time.Now().UnixNano()
-	if description != "" {
-		flag.Description = description
-	}
-
-	// Persist in the runtime override layer so the change remains effective.
-	m.db[flagName] = enabled
-
-	updated := *flag
-	return &old, &updated, nil
 }
 
 func (m *Manager) GetAllFlags() map[string]*Flag {
@@ -307,9 +294,11 @@ func (m *Manager) sampleLog(name string, value bool, source string) {
 	}
 }
 
-// Global helpers
-func IsFaultInjectionEnabled() bool {
-	return IsEnabled(FaultInjectionEnabledFlag)
+// UnmarshalJSON implements json.Unmarshaler.
+func (m *Manager) UnmarshalJSON(data []byte) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return json.Unmarshal(data, &m.flags)
 }
 
 func IsEnabled(flagName string) bool {

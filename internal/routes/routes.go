@@ -102,6 +102,14 @@ func Register(r *gin.Engine) {
 		r.Use(audit.Middleware(auditLogger))
 	}
 
+	var dbPinger handlers.DBPinger
+	if pool, err := db.NewPool(context.Background(), cfg); err == nil && pool != nil {
+		breakerPool := db.NewBreakerPoolFromConfig(pool, cfg)
+		dbPinger = breakerPool
+	} else if err != nil {
+		log.Printf("db health: database pool unavailable: %v", err)
+	}
+
 	r.Use(middleware.DataLoaderMiddleware(planRepo, subRepo))
 
 	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
@@ -109,6 +117,9 @@ func Register(r *gin.Engine) {
 
 	// Create handlers
 	h := handlers.NewHandler(nil, nil)
+	if breakerPool, ok := dbPinger.(*db.BreakerPool); ok {
+		h.Database = breakerPool
+	}
 	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
 	exportSvc := service.NewTenantExportService(planRepo, subRepo, stmtRepo)
 	exportJobManager := service.NewExportJobManager(exportSvc, noopS3Uploader{}, nil)
@@ -244,7 +255,7 @@ func Register(r *gin.Engine) {
 	{
 		admin.POST("/purge", adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
-		diagHandler := startup.NewDiagnosticsHandler(cfg, nil, nil)
+		diagHandler := startup.NewDiagnosticsHandler(cfg, dbPinger, nil)
 		admin.GET("/diagnostics", auth.RequirePermission(auth.PermManageSubscriptions), diagHandler.Handle)
 
 		// Redacted config dump under admin group with RBAC

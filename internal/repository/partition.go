@@ -14,9 +14,8 @@ const (
 	oldStatementsTable     = "statements_old"
 )
 
-// MigrateStatementsPartition converts the legacy statements table into a
-// range-partitioned table by period_start. It is a no-op unless the
-// FF_STATEMENTS_PARTITIONING_ENABLED variable is truely set.
+// MigrateStatementsPartition creates the partitioned statements table and migrates data.
+// This is a one-time migration that should be run with a maintenance window.
 func MigrateStatementsPartition(ctx context.Context, db *sql.DB) error {
 	if !statementsPartitioningEnabled() {
 		return nil
@@ -70,7 +69,7 @@ func MigrateStatementsPartition(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// RollbackStatementsPartition reverses the migration if it was performed.
+// RollbackStatementsPartition reverts the migration by renaming tables back.
 func RollbackStatementsPartition(ctx context.Context, db *sql.DB) error {
 	oldExists, err := tableExists(ctx, db, oldStatementsTable)
 	if err != nil {

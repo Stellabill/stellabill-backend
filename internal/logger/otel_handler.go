@@ -1,6 +1,3 @@
-// Package logger provides structured logging utilities, including an
-// OpenTelemetry bridge that ships log records to an OTLP endpoint while
-// preserving trace_id/span_id correlation.
 package logger
 
 import (
@@ -19,9 +16,9 @@ type OTelHandlerConfig struct {
 	// Defaults to "stellabill-backend".
 	ServiceName string
 
-	// MinLevel is the minimum slog.Level that will be forwarded to OTel.
-	// Records below this level are silently dropped.  Defaults to slog.LevelInfo.
-	MinLevel slog.Level
+	// Endpoint is the OTLP HTTP endpoint for log export.
+	// Defaults to "localhost:4318".
+	Endpoint string
 
 	// OTLPEndpoint is the base URL for the OTLP/HTTP logs endpoint, e.g.
 	// "http://otel-collector:4318".  The exporter appends "/v1/logs" automatically.
@@ -96,9 +93,10 @@ func NewOTelHandler(ctx context.Context, cfg OTelHandlerConfig) (slog.Handler, f
 	}, func(context.Context) error { return nil }, nil
 }
 
-// Enabled implements slog.Handler.
-func (h *OTelHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.minLevel
+	return &OTelHandler{
+		logger: provider,
+		stderr: os.Stderr,
+	}, nil
 }
 
 // Handle implements slog.Handler.

@@ -31,9 +31,6 @@ type Statement struct {
 // ErrInvalidInput is returned when input parameters are invalid.
 var ErrInvalidInput = errors.New("invalid input")
 
-// Create inserts a new statement and returns its ID.
-// The tenant ID must be non-empty. The created_at field is set to the current time
-// if not provided, ensuring the correct monthly partition is selected.
 func (r *StatementsRepo) Create(ctx context.Context, s *Statement) (int64, error) {
 	if s == nil || s.TenantID == "" {
 		return 0, ErrInvalidInput
@@ -56,8 +53,6 @@ func (r *StatementsRepo) Create(ctx context.Context, s *Statement) (int64, error
 	return id, nil
 }
 
-// Get retrieves a statement by tenant ID and ID.
-// Both tenant_id and id are required to target the correct partition.
 func (r *StatementsRepo) Get(ctx context.Context, tenantID string, id int64) (*Statement, error) {
 	if tenantID == "" || id <= 0 {
 		return nil, ErrInvalidInput
@@ -78,8 +73,6 @@ func (r *StatementsRepo) Get(ctx context.Context, tenantID string, id int64) (*S
 	return &st, nil
 }
 
-// List returns statements for a tenant within an optional time range [from, to].
-// The tenant_id is always required. Time boundaries are inclusive.
 func (r *StatementsRepo) List(ctx context.Context, tenantID string, from, to *time.Time) ([]Statement, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidInput
@@ -147,7 +140,6 @@ func (r *StatementsRepo) Update(ctx context.Context, tenantID string, id int64, 
 	return nil
 }
 
-// Delete removes a statement. It returns ErrNotFound if no row was deleted.
 func (r *StatementsRepo) Delete(ctx context.Context, tenantID string, id int64) error {
 	if tenantID == "" || id <= 0 {
 		return ErrInvalidInput

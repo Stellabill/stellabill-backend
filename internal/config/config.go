@@ -75,16 +75,12 @@ type Config struct {
 	CSPReportRPS int
 	// CSPReportBurst is the per-tenant burst size for /api/v1/csp-reports.
 	// Default: 10.
-	CSPReportBurst int
-	SpiffeSocketPath   string
-	SpiffeTrustDomain  string
-	MaxRequestSize         int64
-	MaxGzipUncompressed    int64
-	MaxGzipRatio           float64
-	// MaxGzipCompressed caps the compressed payload size before decompression
-	// starts (env: MAX_GZIP_COMPRESSED, default: same as MaxRequestSize).
-	// Set to 0 to fall back to MaxGzipUncompressed (legacy behaviour).
-	MaxGzipCompressed int64
+	CSPReportBurst      int
+	SpiffeSocketPath    string
+	SpiffeTrustDomain   string
+	MaxRequestSize      int64
+	MaxGzipUncompressed int64
+	MaxGzipRatio        float64
 	// RedisURL configures the Redis cache backend. When empty, an in-memory
 	// cache is used instead.
 	RedisURL string `json:"redis_url" secret:"true"`
@@ -111,6 +107,13 @@ type Config struct {
 	DBPoolConnectTimeout    int `json:"db_pool_connect_timeout"`
 	DBPoolHealthCheckPeriod int `json:"db_pool_health_check_period"`
 	DBPoolMetricsInterval   int `json:"db_pool_metrics_interval"`
+
+	// DB circuit-breaker configuration for the long-lived pgx pool. These values
+	// are used by both the repository layer and the readiness probe to fail fast
+	// instead of amplifying outages with repeated Ping() calls.
+	DBBreakerMaxFailures         uint32 `json:"db_breaker_max_failures"`
+	DBBreakerTimeoutSeconds      uint32 `json:"db_breaker_timeout_seconds"`
+	DBBreakerHalfOpenMaxRequests uint32 `json:"db_breaker_half_open_max_requests"`
 
 	// PgBouncer sidecar configuration.
 	//
@@ -198,13 +201,16 @@ const (
 
 	// DB pool defaults — chosen to be safe for a typical single-instance
 	// Postgres with max_connections=100.  Tune upward for larger deployments.
-	DefaultDBPoolMaxConns          = 25   // leave headroom for other clients
-	DefaultDBPoolMinConns          = 2    // keep 2 warm to avoid cold-start latency
-	DefaultDBPoolMaxConnLifetime   = 3600 // 1 hour — recycle before firewalls drop
-	DefaultDBPoolMaxConnIdleTime   = 600  // 10 min — evict idle before firewall timeout
-	DefaultDBPoolConnectTimeout    = 5    // 5 s per dial attempt
-	DefaultDBPoolHealthCheckPeriod = 30   // 30 s proactive idle-conn check
-	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
+	DefaultDBPoolMaxConns               = 25   // leave headroom for other clients
+	DefaultDBPoolMinConns               = 2    // keep 2 warm to avoid cold-start latency
+	DefaultDBPoolMaxConnLifetime        = 3600 // 1 hour — recycle before firewalls drop
+	DefaultDBPoolMaxConnIdleTime        = 600  // 10 min — evict idle before firewall timeout
+	DefaultDBPoolConnectTimeout         = 5    // 5 s per dial attempt
+	DefaultDBPoolHealthCheckPeriod      = 30   // 30 s proactive idle-conn check
+	DefaultDBPoolMetricsInterval        = 15   // 15 s Prometheus scrape cadence
+	DefaultDBBreakerMaxFailures         = 5    // trip after this many consecutive failures
+	DefaultDBBreakerTimeoutSeconds      = 30   // cool-down period before half-open probes are allowed
+	DefaultDBBreakerHalfOpenMaxRequests = 1    // permit a single probe while half-open
 
 	// Graceful shutdown defaults — coordinate with k8s terminationGracePeriodSeconds.
 	DefaultGracefulShutdownTimeout = 30 // 30 s to drain in-flight requests and pool
@@ -284,6 +290,7 @@ func Load(opts ...Option) (Config, error) {
 		Port:                   DefaultPort,
 		DBConn:                 "",
 		JWTSecret:              "",
+		JWKSURL:                "",
 		MaxHeaderBytes:         MaxHeaderBytes,
 		ReadTimeout:            DefaultReadTimeout,
 		WriteTimeout:           DefaultWriteTimeout,
@@ -371,8 +378,12 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	}
 
 	// Validate required secrets are present via the provider
+	jwksURL := os.Getenv("JWKS_URL")
 	for _, key := range secretKeys {
 		if err, failed := secretErrs[key]; failed {
+			if key == "JWT_SECRET" && jwksURL != "" {
+				continue
+			}
 			if errors.Is(err, secrets.ErrSecretNotFound) {
 				result.Errors = append(result.Errors, ConfigError{
 					Type:    ErrMissingEnvVar,
@@ -428,7 +439,7 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	}
 
 	// Validate JWT_SECRET
-	if secret, ok := resolvedSecrets["JWT_SECRET"]; ok {
+	if secret, ok := resolvedSecrets["JWT_SECRET"]; ok && (jwksURL == "" || secret != "") {
 		if !isValidSecret(secret) {
 			result.Errors = append(result.Errors, ConfigError{
 				Type:    ErrWeakSecret,
@@ -438,6 +449,19 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.JWTSecret = secret
+		}
+	}
+
+	if jwksURL != "" {
+		if !isValidJWKSURL(jwksURL) {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "JWKS_URL",
+				Message: "must be a valid absolute URL with http or https scheme",
+				Value:   jwksURL,
+			})
+		} else {
+			c.JWKSURL = jwksURL
 		}
 	}
 
@@ -710,8 +734,9 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		}
 	}
 
-	// Validate DB pool configuration
+	// Validate DB pool and circuit-breaker configuration
 	validateDBPool(c, result)
+	validateDBBreaker(c, result)
 
 	// Validate PgBouncer sidecar configuration
 	validatePgBouncer(c, result)
@@ -756,6 +781,16 @@ func isValidDatabaseURL(dbURL string) bool {
 	default:
 		return parsed.Host != ""
 	}
+}
+
+// isValidJWKSURL validates that the JWKS URL is an absolute http(s) URL
+func isValidJWKSURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return (scheme == "https" || scheme == "http") && parsed.Host != ""
 }
 
 // isValidSecret validates that the secret meets security requirements
@@ -924,6 +959,27 @@ func validateDBPool(c *Config, result *ValidationResult) {
 				"idle connections will be evicted before lifetime recycle fires — consider reducing idle time",
 				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
 	}
+}
+
+func validateDBBreaker(c *Config, result *ValidationResult) {
+	setUint32FromEnv := func(envKey string, target *uint32, defVal uint32, min uint32, max uint32) {
+		raw := os.Getenv(envKey)
+		if raw == "" {
+			return
+		}
+		v, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || uint32(v) < min || uint32(v) > max {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("%s invalid (value=%q, allowed %d–%d), using default %d",
+					envKey, raw, min, max, defVal))
+			return
+		}
+		*target = uint32(v)
+	}
+
+	setUint32FromEnv("DB_BREAKER_MAX_FAILURES", &c.DBBreakerMaxFailures, DefaultDBBreakerMaxFailures, 1, 100)
+	setUint32FromEnv("DB_BREAKER_TIMEOUT_SECONDS", &c.DBBreakerTimeoutSeconds, DefaultDBBreakerTimeoutSeconds, 1, 300)
+	setUint32FromEnv("DB_BREAKER_HALF_OPEN_MAX_REQUESTS", &c.DBBreakerHalfOpenMaxRequests, DefaultDBBreakerHalfOpenMaxRequests, 1, 20)
 }
 
 // validatePgBouncer reads PGBOUNCER_* and DB_STATEMENT_CACHE_MODE env vars,

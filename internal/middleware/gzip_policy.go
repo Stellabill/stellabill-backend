@@ -8,6 +8,7 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
+	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zstd"
 )
@@ -155,6 +156,26 @@ func GzipPolicy(cfg GzipPolicyConfig) gin.HandlerFunc {
 		}
 
 		c.Next()
+	}
+}
+
+func applyResponseCompression(c *gin.Context, cfg GzipPolicyConfig) {
+	if cfg.ResponseCompression && !c.IsAborted() {
+		enc := negotiateEncoding(c)
+		if enc != "" {
+			minB := cfg.MinCompressBytes
+			if minB <= 0 {
+				minB = MinCompressBytes
+			}
+			cw := &compressingWriter{
+				ResponseWriter: c.Writer,
+				encoding:       enc,
+				minCompress:    minB,
+				statusCode:     http.StatusOK,
+			}
+			c.Writer = cw
+			defer cw.finalize()
+		}
 	}
 }
 

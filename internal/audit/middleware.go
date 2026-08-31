@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -32,7 +33,7 @@ func LogAction(c *gin.Context, action, target, outcome string, metadata map[stri
 	if !ok {
 		return
 	}
-	logger, ok := raw.*(*Logger)
+	logger, ok := raw.(*Logger)
 	if !ok || logger == nil {
 		return
 	}
@@ -84,7 +85,7 @@ func logAuthFailure(c *gin.Context, logger *Logger, status int) {
 	if len(c.Errors) > 0 {
 		reason = c.Errors[0].Error()
 	}
-	meta := map[string_interface]{}{
+	meta := map[string]interface{}{
 		"path":        c.FullPath(),
 		"method":      c.Request.Method,
 		"status":      strconv.Itoa(status),
@@ -99,14 +100,54 @@ func logAuthFailure(c *gin.Context, logger *Logger, status int) {
 		Actor:    actor,
 		Action:   "auth_failure",
 		Resource: c.FullPath(),
-		Outcome:  fmt.Sprintf("status_%d", status),
+		Outcome:  "failure",
 		Metadata: meta,
 	})
 }
 
-func ensureMetadata(meta map[string]string) map[string]string {
-	if meta == nil {
-		return map[string]string{}
+// Middleware returns a Gin middleware that logs HTTP requests as audit events.
+func Middleware(logger *Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		duration := time.Since(start)
+
+		actor := ResolveActor(c)
+		meta := map[string]interface{}{
+			"path":       c.FullPath(),
+			"method":     c.Request.Method,
+			"status":     strconv.Itoa(c.Writer.Status()),
+			"duration":   duration.String(),
+			"client_ip":  c.ClientIP(),
+			"user_agent": c.Request.UserAgent(),
+		}
+
+		outcome := "success"
+		if c.Writer.Status() >= 400 {
+			outcome = "failure"
+		}
+
+		_, _ = logger.Log(c.Request.Context(), AuditEvent{
+			Actor:    actor,
+			Action:   "http_request",
+			Resource: c.FullPath(),
+			Outcome:  outcome,
+			Metadata: meta,
+		})
 	}
-	return meta
+}
+
+// AuditEvent represents an audit log entry.
+type AuditEvent struct {
+	Actor    string                 `json:"actor"`
+	Action   string                 `json:"action"`
+	Resource string                 `json:"resource"`
+	Outcome  string                 `json:"outcome"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// Logger defines the interface for audit logging.
+type Logger interface {
+	Log(ctx context.Context, event AuditEvent) (string, error)
+	LastHash() string
 }

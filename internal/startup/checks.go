@@ -27,10 +27,11 @@ type CheckResult struct {
 
 // DiagnosticsResponse is the machine-readable diagnostics payload.
 type DiagnosticsResponse struct {
-	Status        string        `json:"status"`
-	Timestamp     string        `json:"timestamp"`
-	UptimeSeconds float64       `json:"uptime_seconds"`
-	Checks        []CheckResult `json:"checks"`
+	Status         string                 `json:"status"`
+	Timestamp      string                 `json:"timestamp"`
+	UptimeSeconds  float64                `json:"uptime_seconds"`
+	Checks         []CheckResult          `json:"checks"`
+	CircuitBreaker map[string]interface{} `json:"circuit_breaker,omitempty"`
 }
 
 // DBPinger abstracts database connectivity checks.

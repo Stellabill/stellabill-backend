@@ -117,82 +117,82 @@ func TestLoadissingRequiredSecrets(t *testing.T) {
 }
 
 func TestLoadFailsOnWeakSecrets(t *testing.T) {
-	withEnvVars(t, map[string]string{"ENV": "development"}, func() {
-		provider := &stubProvider{
-			values: map[string]string{
-				"DATABASE_URL": validDBURL,
-				"JWT_SECRET":   "NoSpecial123",
-				"ADMIN_TOKEN":  "NoSpecial456",
-			},
-			errs: map[string]error{},
-		}
-		_, err := Load(WithSecretsProvider(provider))
-		if err == nil {
-			t.Fatal("expected weak secret validation error")
-		}
-		msg := err.Error()
-		if !strings.Contains(msg, "WEAK_SECRET") {
-			t.Fatalf("expected WEAK_SECRET error, got: %s", msg)
-		}
-	})
+    withEnvVars(t, map[string]string{"ENV": "development"}, func() {
+        provider := &stubProvider{
+            values: map[string]string{
+                "DATABASE_URL": validDBURL,
+                "JWT_SECRET":   "NoSpecial123",
+                "ADMIN_TOKEN":  "NoSpecial456",
+            },
+            errs: map[string]error{},
+        }
+        _, err := Load(WithSecretsProvider(provider))
+        if err == nil {
+            t.Fatal("expected weak secret validation error")
+        }
+        msg := err.Error()
+        if !strings.Contains(msg, "WEAK_SECRET") {
+            t.Fatalf("expected WEAK_SECRET error, got: %s", msg)
+        }
+    })
 }
 
 func TestLoadRejectsInvalidRateLimitCombination(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"ENV":              "development",
-		"RATE_LIMIT_MODE":  "invalid",
-		"RATE_LIMIT_RPS":   "100",
-		"RATE_LIMIT_BURST": "10",
-	}, func() {
-		_, err := Load(WithSecretsProvider(newValidProvider()))
-		if err == nil {
-			t.Fatal("expected rate limit validation error")
-		}
-		msg := err.Error()
-		if !strings.Contains(msg, "RATE_LIMIT_MODE") || !strings.Contains(msg, "RATE_LIMIT_BURST") {
-			t.Fatalf("expected RATE_LIMIT_MODE and RATE_LIMIT_BURST errors, got: %s", msg)
-		}
-	})
+    withEnvVars(t, map[string]string{
+        "ENV":              "development",
+        "RATE_LIMIT_MODE":  "invalid",
+        "RATE_LIMIT_RPS":   "100",
+        "RATE_LIMIT_BURST": "10",
+    }, func() {
+        _, err := Load(WithSecretsProvider(newValidProvider()))
+        if err == nil {
+            t.Fatal("expected rate limit validation error")
+        }
+        msg := err.Error()
+        if !strings.Contains(msg, "RATE_LIMIT_MODE") || !strings.Contains(msg, "RATE_LIMIT_BURST") {
+            t.Fatalf("expected RATE_LIMIT_MODE and RATE_LIMIT_BURST errors, got: %s", msg)
+        }
+    })
 }
 
 func TestLoadRejectsTimeoutOutOfRange(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"ENV":          "development",
-		"READ_TIMEOUT": "0",
-	}, func() {
-		_, err := Load(WithSecretsProvider(newValidProvider()))
-		if err == nil {
-			t.Fatal("expected invalid timeout error")
-		}
-		if !strings.Contains(err.Error(), "READ_TIMEOUT") {
-			t.Fatalf("expected READ_TIMEOUT in error, got: %v", err)
-		}
-	})
+    withEnvVars(t, map[string]string{
+        "ENV":          "development",
+        "READ_TIMEOUT": "0",
+    }, func() {
+        _, err := Load(WithSecretsProvider(newValidProvider()))
+        if err == nil {
+            t.Fatal("expected invalid timeout error")
+        }
+        if !strings.Contains(err.Error(), "READ_TIMEOUT") {
+            t.Fatalf("expected READ_TIMEOUT in error, got: %v", err)
+        }
+    })
 }
 
 func TestLoadProviderErrorsAreClassified(t *testing.T) {
-	withEnvVars(t, map[string]string{"ENV": "development"}, func() {
-		provider := &stubProvider{
-			values: map[string]string{
-				"DATABASE_URL": validDBURL,
-			},
-			errs: map[string]error{
-				"JWT_SECRET":  errors.New("vault unavailable"),
-				"ADMIN_TOKEN": secrets.ErrSecretNotFound,
-			},
-		}
-		_, err := Load(WithSecretsProvider(provider))
-		if err == nil {
-			t.Fatal("expected provider errors")
-		}
-		msg := err.Error()
-		if !strings.Contains(msg, "VALIDATION_FAILED") {
-			t.Fatalf("expected VALIDATION_FAILED for provider issue, got: %s", msg)
-		}
-		if !strings.Contains(msg, "MISSING_ENV_VAR") {
-			t.Fatalf("expected MISSING_ENV_VAR for not found secret, got: %s", msg)
-		}
-	})
+    withEnvVars(t, map[string]string{"ENV": "development"}, func() {
+        provider := &stubProvider{
+            values: map[string]string{
+                "DATABASE_URL": validDBURL,
+            },
+            errs: map[string]error{
+                "JWT_SECRET":  errors.New("vault unavailable"),
+                "ADMIN_TOKEN": secrets.ErrSecretNotFound,
+            },
+        }
+        _, err := Load(WithSecretsProvider(provider))
+        if err == nil {
+            t.Fatal("expected provider errors")
+        }
+        msg := err.Error()
+        if !strings.Contains(msg, "VALIDATION_FAILED") {
+            t.Fatalf("expected VALIDATION_FAILED for provider issue, got: %s", msg)
+        }
+        if !strings.Contains(msg, "MISSING_ENV_VAR") {
+            t.Fatalf("expected MISSING_ENV_VAR for not found secret, got: %s", msg)
+        }
+    })
 }
 
 func TestLoadRejectsShutdownTimeoutOutOfRange(t *testing.T) {
@@ -211,18 +211,16 @@ func TestLoadRejectsShutdownTimeoutOutOfRange(t *testing.T) {
 }
 
 func TestLoadShutdownTimeoutDefault(t *testing.T) {
-	withEnvVars(t, map[string]string{
-		"ENV": "development",
-	}, func() {
-		cfg, err := Load(WithSecretsProvider(newValidProvider()))
-		if err != nil {
-			t.Fatalf("expected no error, got: %v", err)
-		}
-		if cfg.GracefulShutdownTimeout != DefaultGracefulShutdownTimeout {
-			t.Fatalf("expected default shutdown timeout %d, got %d",
-				DefaultGracefulShutdownTimeout, cfg.GracefulShutdownTimeout)
-		}
-	})
+    withEnvVars(t, map[string]string{"ENV": "development"}, func() {
+        cfg, err := Load(WithSecretsProvider(newValidProvider()))
+        if err != nil {
+            t.Fatalf("expected no error, got: %v", err)
+        }
+        if cfg.GracefulShutdownTimeout != DefaultGracefulShutdownTimeout {
+            t.Fatalf("expected default shutdown timeout %d, got %d",
+                DefaultGracefulShutdownTimeout, cfg.GracefulShutdownTimeout)
+        }
+    })
 }
 
 // TestLoadReplicaURLEnvVars verifies the read-replica DSN is read from the
@@ -308,10 +306,62 @@ func TestLoadJWKSURL0(t *testing.T) {
 }
 
 func TestIsValidSecretRequiresSpecialCharacter(t *testing.T) {
-	if isValidSecret("NoSpecialChars123") {
-		t.Fatal("expected secret without special char to fail")
-	}
-	if !isValidSecret(validJWTSecret) {
-		t.Fatal("expected strong secret to pass")
-	}
+    if isValidSecret("NoSpecialChars123") {
+        t.Fatal("expected secret without special char to fail")
+    }
+    if !isValidSecret(validJWTSecret) {
+        t.Fatal("expected strong secret to pass")
+    }
+}
+
+func TestLoadOutboxPublisherSettings(t *testing.T) {
+    t.Run("defaults", func(t *testing.T) {
+        withEnvVars(t, map[string]string{"ENV": "development"}, func() {
+            cfg, err := Load(WithSecretsProvider(newValidProvider()))
+            if err != nil {
+                t.Fatalf("expected no error, got: %v", err)
+            }
+            if cfg.OutboxPublisherTimeout != DefaultOutboxPublisherTimeout {
+                t.Fatalf("expected default outbox publisher timeout %v, got %v",
+                    DefaultOutboxPublisherTimeout, cfg.OutboxPublisherTimeout)
+            }
+            if cfg.OutboxPublisherCAFile != "" {
+                t.Fatalf("expected empty outbox publisher CA file, got %q", cfg.OutboxPublisherCAFile)
+            }
+        })
+    })
+
+    t.Run("explicit values", func(t *testing.T) {
+        withEnvVars(t, map[string]string{
+            "ENV":                     "development",
+            "OUTBOX_PUBLISHER_TIMEOUT":    "30s4",
+            "OUTBOX_PUBLISHER_CA_FILE": "/etc/ssl/certs/outbox-ca.pem",
+        }, func() {
+            cfg, err := Load(WithSecretsProvider(newValidProvider()))
+            if err != nil {
+                t.Fatalf("expected no error, got: %v", err)
+            }
+            if cfg.OutboxPublisherTimeout != 30* time.Second {
+                t.Fatalf("expected 30s timeout, got %v", cfg.OutboxPublisherTimeout)
+            }
+            if cfg.OutboxPublisherCAFile != "/etc/ssl/certs/outbox-ca.pem" {
+                t.Fatalf("expected CA file path, got %q", cfg.OutboxPublisherCAFile)
+            }
+        })
+    })
+
+    t.Run("invalid timeout", func(t *testing.T) {
+        withEnvVars(t, map[string]string{
+            "ENV":                    "development",
+            "OUTBOX_PUBLISHER_TIMEOUT": "invalid",
+        }, func() {
+            _, err := Load(WithSecretsProvider(newValidProvider()))
+            if err == nil {
+                t.Fatal("expected invalid duration error")
+            }
+            if !strings.Contains(err.Error(), "OUTBOX_PUBLISHER_TIMEOUT") {
+                t.Fatalf("expected OUTBOX_PUBLISHER_TIMEOUT in error, got: %v", err)
+            }
+        })
+    })
 }

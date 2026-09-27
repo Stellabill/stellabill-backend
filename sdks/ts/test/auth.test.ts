@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { sanitizeToken } from '../src/index.js';
+import { TokenHolder, sanitizeToken } from '../src/index.js';
+
+describe('TokenHolder', () => {
+  describe('hasToken', () => {
+    it('returns true for accepted token input', () => {
+      const holder = new TokenHolder('valid-token');
+      expect(holder.hasToken()).toBe(true);
+      expect(holder.get()).toBe('valid-token');
+
+      holder.set('another-token');
+      expect(holder.hasToken()).toBe(true);
+      expect(holder.get()).toBe('another-token');
+    });
+  });
+});
 
 describe('sanitizeToken', () => {
   it('returns undefined for undefined input', () => {

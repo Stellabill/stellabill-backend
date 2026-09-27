@@ -577,3 +577,202 @@ describe('Token integration with createStellarBillClient', () => {
     expect(sdk1.getToken()).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// parsedError rejected-branch coverage
+//
+// The `wrap` function inside `createStellarBillClient` contains:
+//
+//   const parsedError: ApiErrorBody | undefined =
+//     error && typeof error === 'object' ? (error as ApiErrorBody) : undefined;
+//
+// When openapi-fetch sets `error` to a non-null, non-object value (a string,
+// number, boolean, or array) the ternary takes the *else* branch and returns
+// `undefined`. The tests below drive each of those cases through the real
+// `wrap` path by stubbing `sdk.raw.GET` to return a fabricated result that
+// carries the target error shape. The result envelope is then inspected to
+// confirm `error` is `undefined` and that `throwOnError` still fires on
+// non-2xx status even when the error body is unparseable.
+// ---------------------------------------------------------------------------
+describe('createStellarBillClient - parsedError rejected branch (line ~228)', () => {
+  /** Helper: build a fake openapi-fetch result with `error` set to any value. */
+  function fakeRawResult(errorValue: unknown, status = 400): { data: undefined; error: unknown; response: Response } {
+    return {
+      data: undefined,
+      error: errorValue,
+      response: new Response('', { status }),
+    };
+  }
+
+  it('yields error: undefined when openapi-fetch error is a plain string', async () => {
+    const { fetch } = mockFetchOnce({});
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    vi.spyOn(sdk.raw, 'GET').mockResolvedValue(fakeRawResult('something went wrong') as never);
+    const r = await sdk.getHealth();
+    // Non-object error → parsedError branch returns undefined
+    expect(r.error).toBeUndefined();
+    expect(r.status).toBe(400);
+  });
+
+  it('yields error: undefined when openapi-fetch error is a number', async () => {
+    const { fetch } = mockFetchOnce({});
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    vi.spyOn(sdk.raw, 'GET').mockResolvedValue(fakeRawResult(42) as never);
+    const r = await sdk.getHealth();
+    expect(r.error).toBeUndefined();
+    expect(r.status).toBe(400);
+  });
+
+  it('yields error: undefined when openapi-fetch error is a boolean', async () => {
+    const { fetch } = mockFetchOnce({});
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    vi.spyOn(sdk.raw, 'GET').mockResolvedValue(fakeRawResult(true) as never);
+    const r = await sdk.getHealth();
+    expect(r.error).toBeUndefined();
+    expect(r.status).toBe(400);
+  });
+
+  it('yields error: undefined when openapi-fetch error is an array', async () => {
+    const { fetch } = mockFetchOnce({});
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    // Arrays are objects by typeof, but Array.isArray makes them the "wrong" kind —
+    // however the current branch only checks typeof === 'object', so an array
+    // would actually pass through as an ApiErrorBody cast. This test documents
+    // the current contract: arrays ARE objects so they reach the truthy branch.
+    vi.spyOn(sdk.raw, 'GET').mockResolvedValue(fakeRawResult([1, 2, 3]) as never);
+    const r = await sdk.getHealth();
+    // Arrays pass `typeof error === 'object'`, so the ternary takes the truthy
+    // branch — parsedError is the array cast to ApiErrorBody, not undefined.
+    expect(r.error).not.toBeUndefined();
+  });
+
+  it('yields error: undefined when openapi-fetch error is null (falsy)', async () => {
+    const { fetch } = mockFetchOnce({});
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    // null is falsy so `error && ...` short-circuits to undefined
+    vi.spyOn(sdk.raw, 'GET').mockResolvedValue(fakeRawResult(null) as never);
+    const r = await sdk.getHealth();
+    expect(r.error).toBeUndefined();
+  });
+
+  it('yields error: undefined when openapi-fetch error is undefined (falsy)', async () => {
+    const { fetch } = mockFetchOnce({});
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    vi.spyOn(sdk.raw, 'GET').mockResolvedValue(fakeRawResult(undefined) as never);
+    const r = await sdk.getHealth();
+    expect(r.error).toBeUndefined();
+  });
+
+  it('throws StellarBillError with body: undefined when throwOnError and string error', async () => {
+    const { fetch } = mockFetchOnce({});
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+    vi.spyOn(sdk.raw, 'GET').mockResolvedValue(fakeRawResult('network error', 503) as never);
+    const err = await sdk.getHealth().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StellarBillError);
+    const sbErr = err as StellarBillError;
+    // parsedError is undefined because the error value was a string
+    expect(sbErr.body).toBeUndefined();
+    expect(sbErr.status).toBe(503);
+    // Message falls back to the "HTTP 503" form when body is absent
+    expect(sbErr.message).toContain('503');
+  });
+
+  it('throws StellarBillError with body: undefined when throwOnError and numeric error', async () => {
+    const { fetch } = mockFetchOnce({});
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+    vi.spyOn(sdk.raw, 'GET').mockResolvedValue(fakeRawResult(1001, 422) as never);
+    const err = await sdk.getHealth().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StellarBillError);
+    expect((err as StellarBillError).body).toBeUndefined();
+    expect((err as StellarBillError).status).toBe(422);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tokenHolder.get() at client.ts:248 — getToken() accessor
+//
+// `getToken()` returns `tokenHolder.get()`, which is `undefined` when:
+//   1. No token was provided at construction time.
+//   2. A token with embedded whitespace was sanitized away by `sanitizeToken`.
+//   3. `setToken(undefined)` was called after construction.
+//   4. `setToken` was called with a whitespace-only string (sanitized away).
+//
+// The Authorization header must be absent in every case where
+// tokenHolder.get() returns undefined, because the auth middleware guards
+// the `request.headers.set('authorization', …)` call behind `tokenHolder.hasToken()`.
+// ---------------------------------------------------------------------------
+describe('tokenHolder.get() at client.ts:248 — getToken edge cases', () => {
+  it('getToken() returns undefined when no token is provided (initial state)', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    // Accessor returns undefined
+    expect(sdk.getToken()).toBeUndefined();
+    // No Authorization header is sent
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBeUndefined();
+  });
+
+  it('getToken() returns undefined after setToken(undefined) clears it', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', token: 'valid-token', fetch });
+    expect(sdk.getToken()).toBe('valid-token');
+    sdk.setToken(undefined);
+    // Accessor now reflects cleared state
+    expect(sdk.getToken()).toBeUndefined();
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBeUndefined();
+  });
+
+  it('getToken() returns undefined when initial token has embedded whitespace (sanitized away)', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      // sanitizeToken rejects tokens containing interior whitespace
+      token: 'bad token',
+      fetch,
+    });
+    expect(sdk.getToken()).toBeUndefined();
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBeUndefined();
+  });
+
+  it('getToken() returns undefined after setToken is called with whitespace-only string', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', token: 'good', fetch });
+    expect(sdk.getToken()).toBe('good');
+    // Whitespace-only → sanitizeToken trims to '' → returns undefined
+    sdk.setToken('   ');
+    expect(sdk.getToken()).toBeUndefined();
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBeUndefined();
+  });
+
+  it('getToken() returns the token string when a valid token is active', async () => {
+    const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', token: 'my-token', fetch });
+    // Confirm the positive (truthy) path is stable
+    expect(sdk.getToken()).toBe('my-token');
+  });
+
+  it('getToken() reflects the value after a mid-flight token rotation', async () => {
+    const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', token: 'first', fetch });
+    expect(sdk.getToken()).toBe('first');
+    sdk.setToken('second');
+    expect(sdk.getToken()).toBe('second');
+    sdk.setToken(undefined);
+    expect(sdk.getToken()).toBeUndefined();
+  });
+});

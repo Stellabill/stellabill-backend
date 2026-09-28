@@ -447,6 +447,18 @@ describe('createStellarBillClient - error paths (non-2xx)', () => {
       body: undefined,
     });
   });
+
+  it('non-2xx with JSON primitive content ignores the primitive and returns undefined error body', async () => {
+    const { fetch } = mockFetchOnce('"A string error"', { status: 400 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: false,
+      fetch,
+    });
+    const r = await sdk.getHealth();
+    expect(r.status).toBe(400);
+    expect(r.error).toBeUndefined();
+  });
 });
 
 describe('createStellarBillClient - warning path coverage', () => {

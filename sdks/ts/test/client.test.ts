@@ -6,6 +6,7 @@ import {
   safeParseErrorBody,
   StellarBillConfigError,
   StellarBillError,
+  type FetchLike,
 } from '../src/index.js';
 
 type FetchCall = {
@@ -156,6 +157,126 @@ describe('createStellarBillClient - configuration', () => {
     const sdk = createStellarBillClient({ baseUrl: 'http://127.0.0.1:8080/', fetch });
     await sdk.getHealth();
     expect(calls[0]!.url).toBe('http://127.0.0.1:8080/api/health');
+  });
+});
+
+describe('createStellarBillClient - providedFetch boundary (client.ts:155)', () => {
+  // client.ts resolves `providedFetch = options.fetch ?? globalThis.fetch` and
+  // guards it with `if (typeof providedFetch !== 'function')`. These tests pin
+  // the boundary of that branch: precedence (options.fetch wins), nullish
+  // fallback semantics, and a deterministic error for every non-function shape.
+
+  type GlobalWithFetch = { fetch?: unknown };
+
+  function replaceGlobalFetch(value: unknown): unknown {
+    const saved = (globalThis as GlobalWithFetch).fetch;
+    (globalThis as GlobalWithFetch).fetch = value;
+    return saved;
+  }
+
+  it('falls back to globalThis.fetch when options.fetch is omitted', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const saved = replaceGlobalFetch(fetch);
+    try {
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com' });
+      const r = await sdk.getHealth();
+      expect(r.status).toBe(200);
+      expect(r.data?.status).toBe('ok');
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(calls[0]!.url).toContain('/api/health');
+    } finally {
+      replaceGlobalFetch(saved);
+    }
+  });
+
+  it('treats options.fetch: null as absent and falls back to globalThis.fetch', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const saved = replaceGlobalFetch(fetch);
+    try {
+      const sdk = createStellarBillClient({
+        baseUrl: 'https://api.example.com',
+        fetch: null as unknown as FetchLike,
+      });
+      const r = await sdk.getHealth();
+      expect(r.status).toBe(200);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(calls[0]!.url).toContain('/api/health');
+    } finally {
+      replaceGlobalFetch(saved);
+    }
+  });
+
+  it('uses options.fetch when provided and never consults globalThis.fetch', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const globalFetch = vi.fn(async () => new Response('{}', { status: 200 }));
+    const saved = replaceGlobalFetch(globalFetch);
+    try {
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+      await sdk.getHealth();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(globalFetch).not.toHaveBeenCalled();
+      expect(calls[0]!.url).toContain('/api/health');
+    } finally {
+      replaceGlobalFetch(saved);
+    }
+  });
+
+  it('succeeds with only options.fetch when globalThis.fetch is missing', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const saved = replaceGlobalFetch(undefined);
+    try {
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+      const r = await sdk.getHealth();
+      expect(r.status).toBe(200);
+      expect(calls).toHaveLength(1);
+    } finally {
+      replaceGlobalFetch(saved);
+    }
+  });
+
+  it('treats explicit options.fetch: undefined exactly like an omitted option', () => {
+    const saved = replaceGlobalFetch(undefined);
+    try {
+      let thrown: unknown;
+      try {
+        createStellarBillClient({ baseUrl: 'https://api.example.com', fetch: undefined });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(StellarBillConfigError);
+      expect((thrown as Error).name).toBe('StellarBillConfigError');
+      expect((thrown as Error).message).toMatch(/No fetch implementation available/);
+    } finally {
+      replaceGlobalFetch(saved);
+    }
+  });
+
+  it.each([
+    ['truthy non-function number', 42],
+    ['falsy but non-nullish string (pins ?? semantics)', ''],
+    ['boolean', false],
+    ['fetch-shaped plain object', { call: (): Promise<Response> => Promise.resolve(new Response()) }],
+  ])('throws deterministically when options.fetch is a %s', (_label, badFetch) => {
+    const globalFetch = vi.fn(async () => new Response('{}', { status: 200 }));
+    const saved = replaceGlobalFetch(globalFetch);
+    try {
+      let thrown: unknown;
+      try {
+        createStellarBillClient({
+          baseUrl: 'https://api.example.com',
+          fetch: badFetch as unknown as FetchLike,
+        });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(StellarBillConfigError);
+      expect((thrown as Error).name).toBe('StellarBillConfigError');
+      expect((thrown as Error).message).toMatch(/No fetch implementation available/);
+      // Fails fast at construction: no request ever reaches any fetch.
+      expect(globalFetch).not.toHaveBeenCalled();
+    } finally {
+      replaceGlobalFetch(saved);
+    }
   });
 });
 

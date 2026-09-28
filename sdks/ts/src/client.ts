@@ -1,11 +1,18 @@
-import createClient, { type Middleware } from 'openapi-fetch';
+import createClient, { type Middleware } from "openapi-fetch";
 
-import type { paths } from './types/api.gen.js';
-import { TokenHolder, sanitizeToken } from './auth.js';
-import { StellarBillConfigError, StellarBillError, type ApiErrorBody } from './errors.js';
-import { SDK_VERSION, defaultUserAgent } from './version.js';
+import type { paths } from "./types/api.gen.js";
+import { TokenHolder, sanitizeToken } from "./auth.js";
+import {
+  StellarBillConfigError,
+  StellarBillError,
+  type ApiErrorBody,
+} from "./errors.js";
+import { SDK_VERSION, defaultUserAgent } from "./version.js";
 
-export type FetchLike = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (
+  input: RequestInfo,
+  init?: RequestInit,
+) => Promise<Response>;
 
 export interface StellarBillClientOptions {
   /** API base URL (e.g. `https://api.stellabill.com`). */
@@ -35,7 +42,9 @@ export interface StellarBillClient {
   // --- Typed operation wrappers (mirror openapi.yaml operations) ---
   getHealth(): Promise<HealthResult>;
   listPlans(params?: ListPlansParams): Promise<ListPlansResult>;
-  listSubscriptions(params?: ListSubscriptionsParams): Promise<ListSubscriptionsResult>;
+  listSubscriptions(
+    params?: ListSubscriptionsParams,
+  ): Promise<ListSubscriptionsResult>;
   getSubscription(id: string): Promise<GetSubscriptionResult>;
   inspectIdempotencyKey(key: string): Promise<InspectIdempotencyKeyResult>;
 }
@@ -56,16 +65,20 @@ export interface SdkResult<TData, TError = ApiErrorBody | undefined> {
   requestUrl: string;
 }
 
-export type HealthResult = SdkResult<import('./types/api.gen.js').components['schemas']['HealthResponse']>;
-export type ListPlansResult = SdkResult<import('./types/api.gen.js').components['schemas']['PlansResponse']>;
+export type HealthResult = SdkResult<
+  import("./types/api.gen.js").components["schemas"]["HealthResponse"]
+>;
+export type ListPlansResult = SdkResult<
+  import("./types/api.gen.js").components["schemas"]["PlansResponse"]
+>;
 export type ListSubscriptionsResult = SdkResult<
-  import('./types/api.gen.js').components['schemas']['SubscriptionsResponse']
+  import("./types/api.gen.js").components["schemas"]["SubscriptionsResponse"]
 >;
 export type GetSubscriptionResult = SdkResult<
-  import('./types/api.gen.js').components['schemas']['Subscription']
+  import("./types/api.gen.js").components["schemas"]["Subscription"]
 >;
 export type InspectIdempotencyKeyResult = SdkResult<
-  import('./types/api.gen.js').components['schemas']['IdempotencyKeyRecord']
+  import("./types/api.gen.js").components["schemas"]["IdempotencyKeyRecord"]
 >;
 
 export interface ListPlansParams {
@@ -81,10 +94,10 @@ export interface ListSubscriptionsParams {
 
 function validateBaseUrl(raw: unknown): string {
   if (raw === undefined || raw === null) {
-    throw new StellarBillConfigError('baseUrl is required');
+    throw new StellarBillConfigError("baseUrl is required");
   }
-  if (typeof raw !== 'string' || raw.trim().length === 0) {
-    throw new StellarBillConfigError('baseUrl must be a non-empty string');
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new StellarBillConfigError("baseUrl must be a non-empty string");
   }
   let parsed: URL;
   try {
@@ -93,26 +106,28 @@ function validateBaseUrl(raw: unknown): string {
     throw new StellarBillConfigError(`baseUrl "${raw}" is not a valid URL`);
   }
   // Strip trailing slashes for consistent URL composition.
-  return parsed.toString().replace(/\/+$/, '');
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 function isLocalhost(baseUrl: string): boolean {
   try {
     const u = new URL(baseUrl);
-    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+    return u.hostname === "localhost" || u.hostname === "127.0.0.1";
   } catch {
     return false;
   }
 }
 
-async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
-  const contentType = res.headers.get('content-type') ?? '';
-  if (!contentType.includes('application/json')) return undefined;
+async function safeParseErrorBody(
+  res: Response,
+): Promise<ApiErrorBody | undefined> {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) return undefined;
   try {
     const text = await res.text();
     if (!text) return undefined;
     const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as ApiErrorBody;
     }
     return undefined;
@@ -121,7 +136,12 @@ async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefin
   }
 }
 
-function makeErrorMessage(method: string, url: string, status: number, body: ApiErrorBody | undefined): string {
+function makeErrorMessage(
+  method: string,
+  url: string,
+  status: number,
+  body: ApiErrorBody | undefined,
+): string {
   const detail = body?.message ?? body?.error ?? `HTTP ${status}`;
   return `${method} ${url} failed (${status}): ${detail}`;
 }
@@ -143,18 +163,28 @@ function makeErrorMessage(method: string, url: string, status: number, body: Api
  * console.log(data?.status); // "ok"
  * ```
  */
-export function createStellarBillClient(options: StellarBillClientOptions): StellarBillClient {
+export function createStellarBillClient(
+  options: StellarBillClientOptions,
+): StellarBillClient {
   const baseUrl = validateBaseUrl(options.baseUrl);
 
-  if (typeof console !== 'undefined' && console.warn && baseUrl.startsWith('http://') && !isLocalhost(baseUrl)) {
-    console.warn(`[stellabill-sdk] Insecure baseUrl "${baseUrl}" - use https:// in production`);
+  if (
+    typeof console !== "undefined" &&
+    console.warn &&
+    baseUrl.startsWith("http://") &&
+    !isLocalhost(baseUrl)
+  ) {
+    console.warn(
+      `[stellabill-sdk] Insecure baseUrl "${baseUrl}" - use https:// in production`,
+    );
   }
 
   // Detect a real fetch (Node 20+ exposes globalThis.fetch; browsers always do).
-  const providedFetch = options.fetch ?? (globalThis.fetch as FetchLike | undefined);
-  if (typeof providedFetch !== 'function') {
+  const providedFetch =
+    options.fetch ?? (globalThis.fetch as FetchLike | undefined);
+  if (typeof providedFetch !== "function") {
     throw new StellarBillConfigError(
-      'No fetch implementation available. Pass options.fetch (or run on Node >=20 / a modern browser).',
+      "No fetch implementation available. Pass options.fetch (or run on Node >=20 / a modern browser).",
     );
   }
 
@@ -169,13 +199,13 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
   if (options.headers) {
     for (const [k, v] of Object.entries(options.headers)) {
       const lower = k.toLowerCase();
-      if (lower === 'authorization') continue;
-      if (typeof v === 'string' && v.length > 0) {
+      if (lower === "authorization") continue;
+      if (typeof v === "string" && v.length > 0) {
         extraHeaders[lower] = v;
       }
     }
   }
-  extraHeaders['user-agent'] = userAgent;
+  extraHeaders["user-agent"] = userAgent;
 
   const raw = createClient<paths>({
     baseUrl,
@@ -189,17 +219,17 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
   // fetch, regardless of which request constructor it uses internally.
   const authMiddleware: Middleware = {
     async onRequest({ request }) {
-      if (!request.headers.has('user-agent')) {
-        request.headers.set('user-agent', userAgent);
+      if (!request.headers.has("user-agent")) {
+        request.headers.set("user-agent", userAgent);
       }
       for (const [k, v] of Object.entries(extraHeaders)) {
-        if (!request.headers.has(k) && typeof v === 'string' && v.length > 0) {
+        if (!request.headers.has(k) && typeof v === "string" && v.length > 0) {
           request.headers.set(k, v);
         }
       }
       if (tokenHolder.hasToken()) {
         const t = tokenHolder.get();
-        if (t) request.headers.set('authorization', `Bearer ${t}`);
+        if (t) request.headers.set("authorization", `Bearer ${t}`);
       }
       return request;
     },
@@ -219,11 +249,17 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
     urlPath: string,
     rawResult: unknown,
   ): Promise<SdkResult<T>> {
-    const r = (await rawResult) as { data: T | undefined; error: unknown; response: Response };
+    const r = (await rawResult) as {
+      data: T | undefined;
+      error: unknown;
+      response: Response;
+    };
     const { data, error, response } = r;
     const status = response.status;
     const parsedError: ApiErrorBody | undefined =
-      error && typeof error === 'object' ? (error as ApiErrorBody) : undefined;
+      error && typeof error === "object" && !Array.isArray(error)
+        ? (error as ApiErrorBody)
+        : undefined;
 
     if (throwOnError && (status < 200 || status >= 300)) {
       throw new StellarBillError({
@@ -235,7 +271,14 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
       });
     }
 
-    return { data, error: parsedError, status, response, requestMethod: method, requestUrl: response.url || urlPath };
+    return {
+      data,
+      error: parsedError,
+      status,
+      response,
+      requestMethod: method,
+      requestUrl: response.url || urlPath,
+    };
   }
 
   return {
@@ -249,45 +292,55 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
     },
 
     getHealth: async () => {
-      const res = await raw.GET('/api/health', {});
-      return wrap('GET', '/api/health', res);
+      const res = await raw.GET("/api/health", {});
+      return wrap("GET", "/api/health", res);
     },
 
     listPlans: async (params: ListPlansParams = {}) => {
       const query: Record<string, string | number> = {};
-      if (params.cursor !== undefined) query['cursor'] = params.cursor;
-      if (params.limit !== undefined) query['limit'] = params.limit;
-      const res = await raw.GET('/api/v1/plans', { params: { query } });
-      return wrap('GET', '/api/v1/plans', res);
+      if (params.cursor !== undefined) query["cursor"] = params.cursor;
+      if (params.limit !== undefined) query["limit"] = params.limit;
+      const res = await raw.GET("/api/v1/plans", { params: { query } });
+      return wrap("GET", "/api/v1/plans", res);
     },
 
     listSubscriptions: async (params: ListSubscriptionsParams = {}) => {
       const query: Record<string, string | number> = {};
-      if (params.cursor !== undefined) query['cursor'] = params.cursor;
-      if (params.limit !== undefined) query['limit'] = params.limit;
-      const res = await raw.GET('/api/subscriptions', { params: { query } });
-      return wrap('GET', '/api/subscriptions', res);
+      if (params.cursor !== undefined) query["cursor"] = params.cursor;
+      if (params.limit !== undefined) query["limit"] = params.limit;
+      const res = await raw.GET("/api/subscriptions", { params: { query } });
+      return wrap("GET", "/api/subscriptions", res);
     },
 
     getSubscription: async (id: string) => {
-      if (typeof id !== 'string' || id.length === 0) {
-        throw new StellarBillConfigError('subscription id must be a non-empty string');
+      if (typeof id !== "string" || id.length === 0) {
+        throw new StellarBillConfigError(
+          "subscription id must be a non-empty string",
+        );
       }
       const path = encodeURIComponent(id);
-      const res = await raw.GET('/api/subscriptions/{id}', { params: { path: { id } } });
-      return wrap('GET', `/api/subscriptions/${path}`, res);
+      const res = await raw.GET("/api/subscriptions/{id}", {
+        params: { path: { id } },
+      });
+      return wrap("GET", `/api/subscriptions/${path}`, res);
     },
 
     inspectIdempotencyKey: async (key: string) => {
-      if (typeof key !== 'string' || key.length === 0) {
-        throw new StellarBillConfigError('idempotency key must be a non-empty string');
+      if (typeof key !== "string" || key.length === 0) {
+        throw new StellarBillConfigError(
+          "idempotency key must be a non-empty string",
+        );
       }
       if (key.length > 255) {
-        throw new StellarBillConfigError('idempotency key exceeds maximum length of 255 characters');
+        throw new StellarBillConfigError(
+          "idempotency key exceeds maximum length of 255 characters",
+        );
       }
       const path = encodeURIComponent(key);
-      const res = await raw.GET('/api/v1/idempotency/{key}', { params: { path: { key } } });
-      return wrap('GET', `/api/v1/idempotency/${path}`, res);
+      const res = await raw.GET("/api/v1/idempotency/{key}", {
+        params: { path: { key } },
+      });
+      return wrap("GET", `/api/v1/idempotency/${path}`, res);
     },
   };
 }
@@ -314,7 +367,12 @@ export async function assertOk<T>(result: SdkResult<T>): Promise<T> {
     body: result.error,
     requestUrl: result.requestUrl,
     requestMethod: result.requestMethod,
-    message: makeErrorMessage(result.requestMethod, result.requestUrl, result.status, result.error),
+    message: makeErrorMessage(
+      result.requestMethod,
+      result.requestUrl,
+      result.status,
+      result.error,
+    ),
   });
 }
 

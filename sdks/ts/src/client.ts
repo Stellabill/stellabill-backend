@@ -96,7 +96,17 @@ function validateBaseUrl(raw: unknown): string {
   return parsed.toString().replace(/\/+$/, '');
 }
 
-function isLocalhost(baseUrl: string): boolean {
+/**
+ * True when `baseUrl` points at the local loopback interface
+ * (`localhost` or `127.0.0.1`), regardless of scheme or port. Any value
+ * `URL` cannot parse is treated as non-local, which keeps the insecure-URL
+ * warning conservative.
+ *
+ * Exported for direct boundary testing of the parse-failure branch; it is
+ * intentionally **not** re-exported from `src/index.ts`, so the package's
+ * public surface is unchanged.
+ */
+export function isLocalhost(baseUrl: string): boolean {
   try {
     const u = new URL(baseUrl);
     return u.hostname === 'localhost' || u.hostname === '127.0.0.1';

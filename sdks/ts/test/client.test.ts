@@ -159,6 +159,48 @@ describe('createStellarBillClient - configuration', () => {
   });
 });
 
+/**
+ * Accepted-input coverage for `validateBaseUrl` (sdks/ts/src/client.ts:86 —
+ * `if (typeof raw !== 'string' || raw.trim().length === 0) {`).
+ *
+ * The guard's *rejection* side was already exercised; this pins the accepted
+ * side: a representative valid URL must pass the guard untouched, keep its
+ * documented normalisation (trailing slashes stripped), and produce the same
+ * base for every request the client makes.
+ */
+describe('createStellarBillClient - validateBaseUrl accepted input', () => {
+  it('accepts a representative valid https baseUrl and preserves it verbatim', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.stellabill.com', fetch });
+    await sdk.getHealth();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://api.stellabill.com/api/health');
+  });
+
+  it('accepts a valid baseUrl with one trailing slash and normalizes it away', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.stellabill.com/', fetch });
+    await sdk.getHealth();
+    expect(calls[0]!.url).toBe('https://api.stellabill.com/api/health');
+  });
+
+  it('accepts a valid baseUrl carrying an explicit port', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.stellabill.com:8443', fetch });
+    await sdk.getHealth();
+    expect(calls[0]!.url).toBe('https://api.stellabill.com:8443/api/health');
+  });
+
+  it('accepts a localhost http baseUrl without triggering the insecure warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'http://localhost:8080', fetch });
+    await sdk.getHealth();
+    expect(calls[0]!.url).toBe('http://localhost:8080/api/health');
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('createStellarBillClient - headers and auth', () => {
   it('injects Authorization Bearer header when token is set', async () => {
     const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });

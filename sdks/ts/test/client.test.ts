@@ -159,6 +159,80 @@ describe('createStellarBillClient - configuration', () => {
   });
 });
 
+// `src/client.ts:83` — `if (raw === undefined || raw === null) {`
+//
+// `validateBaseUrl` is module-private, so its boundary is exercised through
+// `createStellarBillClient`, which calls it synchronously before any request
+// is attempted. The `baseUrl is required` branch must catch exactly
+// `undefined` and `null`; every other defined-but-invalid value belongs to the
+// subsequent "non-empty string" / "valid URL" guards. Pinning both sides keeps
+// the thrown error deterministic and prevents the guards from drifting.
+describe('validateBaseUrl boundary (client.ts:83)', () => {
+  const required = /baseUrl is required/;
+
+  it('throws a StellarBillConfigError with "baseUrl is required" for undefined', () => {
+    expect(() => createStellarBillClient({ baseUrl: undefined as unknown as string })).toThrowError(
+      StellarBillConfigError,
+    );
+    expect(() => createStellarBillClient({ baseUrl: undefined as unknown as string })).toThrowError(
+      required,
+    );
+  });
+
+  it('throws "baseUrl is required" for null (the null side of the branch)', () => {
+    expect(() => createStellarBillClient({ baseUrl: null as unknown as string })).toThrowError(
+      StellarBillConfigError,
+    );
+    expect(() => createStellarBillClient({ baseUrl: null as unknown as string })).toThrowError(
+      required,
+    );
+  });
+
+  it('throws "baseUrl is required" when the baseUrl key is absent', () => {
+    expect(() =>
+      createStellarBillClient({} as unknown as Parameters<typeof createStellarBillClient>[0]),
+    ).toThrowError(required);
+  });
+
+  it('routes defined-but-non-string values to the "non-empty string" guard, not "required"', () => {
+    const nonStrings: unknown[] = [123, 0, true, {}, [], Symbol('baseUrl'), () => {}];
+    for (const value of nonStrings) {
+      const call = () => createStellarBillClient({ baseUrl: value as string });
+      expect(call).toThrowError(StellarBillConfigError);
+      expect(call).toThrowError(/non-empty string/);
+      expect(call).not.toThrowError(required);
+    }
+  });
+
+  it('routes defined-but-empty/whitespace strings to the "non-empty string" guard, not "required"', () => {
+    for (const value of ['', '   ', '\t\n']) {
+      const call = () => createStellarBillClient({ baseUrl: value });
+      expect(call).toThrowError(StellarBillConfigError);
+      expect(call).toThrowError(/non-empty string/);
+      expect(call).not.toThrowError(required);
+    }
+  });
+
+  it('does not attempt any request when baseUrl is rejected', () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const rejected: unknown[] = [undefined, null, '', '   ', 'not-a-url'];
+    for (const value of rejected) {
+      expect(() => createStellarBillClient({ baseUrl: value as string, fetch })).toThrowError(
+        StellarBillConfigError,
+      );
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it('accepts a defined, valid baseUrl and proceeds to make requests (success side)', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    await sdk.getHealth();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://api.example.com/api/health');
+  });
+});
+
 describe('createStellarBillClient - headers and auth', () => {
   it('injects Authorization Bearer header when token is set', async () => {
     const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });

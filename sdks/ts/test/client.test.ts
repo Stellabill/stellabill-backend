@@ -184,6 +184,30 @@ describe('createStellarBillClient - headers and auth', () => {
     expect(headers['authorization']).toBeUndefined();
   });
 
+  it('omits Authorization and stores no token when input is empty after trimming (auth.ts:37)', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      token: '   ', // whitespace-only -> sanitizeToken returns undefined
+      fetch,
+    });
+    expect(sdk.getToken()).toBeUndefined();
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBeUndefined();
+  });
+
+  it('rotates to no token when setToken receives whitespace-only input (auth.ts:37)', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', token: 'live', fetch });
+    expect(sdk.getToken()).toBe('live');
+    sdk.setToken('\t\n');
+    expect(sdk.getToken()).toBeUndefined();
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBeUndefined();
+  });
+
   it('setToken rotates the token; subsequent calls use the new one', async () => {
     const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
     const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', token: 'old', fetch });

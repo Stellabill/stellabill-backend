@@ -577,3 +577,61 @@ describe('Token integration with createStellarBillClient', () => {
     expect(sdk1.getToken()).toBeUndefined();
   });
 });
+
+describe('createStellarBillClient - validateBaseUrl boundary (client.ts:86)', () => {
+  // Branch under test:
+  //   if (typeof raw !== 'string' || raw.trim().length === 0) { throw ... }
+  // Existing tests cover undefined/null and the plain '' / '   ' cases. These
+  // pin the non-string side of the `||`, the whitespace characters that
+  // String.prototype.trim() does and does not remove, and the adjacent success
+  // path so the guard cannot silently change which inputs it rejects.
+
+  const nonStrings: Array<[string, unknown]> = [
+    ['a number', 42],
+    ['zero', 0],
+    ['a bigint', 1n],
+    ['a boolean', true],
+    ['an object', {}],
+    ['an array', []],
+    ['a function', () => 'https://api.example.com'],
+    ['a symbol', Symbol('baseUrl')],
+  ];
+
+  for (const [label, value] of nonStrings) {
+    it(`rejects ${label} baseUrl with the non-empty-string error`, () => {
+      expect(() => createStellarBillClient({ baseUrl: value as unknown as string })).toThrow(
+        StellarBillConfigError,
+      );
+      expect(() => createStellarBillClient({ baseUrl: value as unknown as string })).toThrow(
+        /baseUrl must be a non-empty string/,
+      );
+    });
+  }
+
+  const whitespaceOnly = ['\t', '\n', '\r\n', ' \t\n ', '\u00a0', '\u00a0\t'];
+
+  for (const value of whitespaceOnly) {
+    it(`rejects whitespace-only baseUrl ${JSON.stringify(value)}`, () => {
+      expect(() => createStellarBillClient({ baseUrl: value })).toThrow(
+        /baseUrl must be a non-empty string/,
+      );
+    });
+  }
+
+  it('does not treat a zero-width space as trimmable whitespace', () => {
+    // U+200B is not ECMAScript whitespace, so trim() leaves it in place and the
+    // value reaches new URL(). The failure must be the URL error, not the
+    // empty-string error, which pins the boundary between the two guards.
+    expect(() => createStellarBillClient({ baseUrl: '\u200b' })).toThrow(/not a valid URL/);
+    expect(() => createStellarBillClient({ baseUrl: '\u200b' })).not.toThrow(
+      /baseUrl must be a non-empty string/,
+    );
+  });
+
+  it('accepts a valid URL padded with surrounding whitespace and normalises it', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellabill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: '  https://api.example.com///  ', fetch });
+    await sdk.getHealth();
+    expect(calls[0]!.url).toBe('https://api.example.com/api/health');
+  });
+});

@@ -172,6 +172,15 @@ describe('createStellarBillClient - headers and auth', () => {
     expect(headers['authorization']).toBe('Bearer my-token');
   });
 
+  it('still sends a single-character token (hasToken length === 1 boundary, auth.ts:25)', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', token: 'x', fetch });
+    expect(sdk.getToken()).toBe('x');
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBe('Bearer x');
+  });
+
   it('drops malformed token (whitespace inside)', async () => {
     const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
     const sdk = createStellarBillClient({

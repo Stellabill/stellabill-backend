@@ -183,6 +183,9 @@ paths:
           application/merge-patch+json:
             schema:
               $ref: "#/components/schemas/SubscriptionPatch"
+            example:
+              plan_id: "plan_pro"
+              next_billing: null
       responses:
         "200":
           description: Subscription updated
@@ -190,63 +193,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+              example:
+                id: "sub_123"
+                plan_id: "plan_basic"
+                customer: "customer_123"
+                status: "active"
+                amount: "1000"
+                interval: "monthly"
+                next_billing: "2026-08-01T00:00:00Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
-  /api/v1/plans:
-    get:
-      tags: [Plans]
-      summary: List billing plans
-      operationId: listPlans
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: cursor
-          in: query
-          schema:
-            type: string
-          description: Pagination cursor for the next page of results
-          example: "Y3Vyc29yX25leHRfcGFnZQ=="
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            maximum: 100
-          description: Maximum number of items to return
-          example: 20
-      responses:
-        "200":
-          description: Plans list
-          headers:
-            Link:
-              $ref: "#/components/headers/Link"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PlansResponse"
-              example:
-                plans:
-                  - id: "plan_basic"
-                    name: "Basic"
-                    amount: "1000"
-                    currency: "NGN"
-                    interval: "monthly"
-                    description: "Starter plan"
-                  - id: "plan_pro"
-                    name: "Pro"
-                    amount: "5000"
-                    currency: "NGN"
-                    interval: "monthly"
-                    description: "Professional plan"
-                pagination:
-                  has_more: false
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/v1/idempotency/{key}:
     get:
       tags: [Idempotency]
@@ -289,13 +249,6 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 components:
-  responses:
-    UnsupportedMediaType:
-      description: Unsupported content type
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
   headers:
     Link:
       description: |
@@ -338,7 +291,8 @@ components:
         interval:
           type: string
         next_billing:
-          type: [string, 'null']
+          type: string
+          nullable: true
     Error:
       type: object
       additionalProperties: false
@@ -479,6 +433,12 @@ components:
           description: SHA-256 hex digest of the original request body, used to detect key reuse with a different payload.
           example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   responses:
+    UnsupportedMediaType:
+      description: Unsupported content type
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     BadRequest:
       description: Validation or client error
       content:

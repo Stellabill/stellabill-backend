@@ -126,6 +126,15 @@ describe('createStellarBillClient - configuration', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('accepts a valid base URL and normalizes its trailing slashes', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com/sdk///', fetch });
+
+    await sdk.getHealth();
+
+    expect(calls[0]!.url).toBe('https://api.example.com/sdk/api/health');
+  });
+
   it('throws StellarBillConfigError when no fetch implementation is available', () => {
     const saved = (globalThis as { fetch?: unknown }).fetch;
     (globalThis as { fetch?: unknown }).fetch = undefined;

@@ -577,3 +577,168 @@ describe('Token integration with createStellarBillClient', () => {
     expect(sdk1.getToken()).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// throwOnError status boundary
+// ---------------------------------------------------------------------------
+//
+// `wrap()` gates throwing on `status < 200 || status >= 300`, i.e. the accepted
+// band is the closed interval [200, 299]. The existing suite only probes 400 /
+// 404 / 500 / 401, so both edges of that interval are untested — a refactor to
+// `status > 300` or `status <= 200` would silently change the SDK's contract.
+
+/** Build a Response-like object with a status the `Response` constructor forbids (< 200). */
+function remintResponse(status: number, body: unknown): Response {
+  const text = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body);
+  const headers = new Headers({ 'content-type': 'application/json' });
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers,
+    url: 'https://api.example.com/api/health',
+    body: null,
+    text: async () => text,
+    json: async () => JSON.parse(text),
+  } as unknown as Response;
+}
+
+describe('createStellarBillClient - throwOnError status boundary', () => {
+  it.each([200, 201, 250, 299])(
+    'does not throw for accepted status %i (throwOnError: true)',
+    async (status) => {
+      const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' }, { status });
+      const sdk = createStellarBillClient({
+        baseUrl: 'https://api.example.com',
+        throwOnError: true,
+        fetch,
+      });
+
+      const r = await sdk.getHealth();
+
+      expect(r.status).toBe(status);
+      expect(r.error).toBeUndefined();
+    },
+  );
+
+  it.each([300, 301, 302, 400, 500, 599])(
+    'throws StellarBillError for rejected status %i (throwOnError: true)',
+    async (status) => {
+      const { fetch } = mockFetchOnce(
+        { error: 'Rejected', message: `status ${status}`, code: `code_${status}` },
+        { status },
+      );
+      const sdk = createStellarBillClient({
+        baseUrl: 'https://api.example.com',
+        throwOnError: true,
+        fetch,
+      });
+
+      let caught: unknown;
+      try {
+        await sdk.getHealth();
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(StellarBillError);
+      const e = caught as StellarBillError;
+      expect(e.status).toBe(status);
+      expect(e.requestMethod).toBe('GET');
+      expect(e.requestUrl).toBe('/api/health');
+      expect(e.body?.code).toBe(`code_${status}`);
+      expect(e.message).toContain(String(status));
+    },
+  );
+
+  it.each([0, 100, 199])(
+    'throws for below-range status %i, which the Response constructor forbids',
+    async (status) => {
+      const { fetch } = makeFetchForResponse(remintResponse(status, { error: 'Informational' }));
+      const sdk = createStellarBillClient({
+        baseUrl: 'https://api.example.com',
+        throwOnError: true,
+        fetch,
+      });
+
+      let caught: unknown;
+      try {
+        await sdk.getHealth();
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(StellarBillError);
+      expect((caught as StellarBillError).status).toBe(status);
+      expect((caught as StellarBillError).body).toEqual({ error: 'Informational' });
+    },
+  );
+
+  it('does not throw for a rejected status when throwOnError is not set', async () => {
+    const { fetch } = mockFetchOnce(
+      { error: 'Rejected', message: 'gone', code: 'rejected' },
+      { status: 300 },
+    );
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+    const r = await sdk.getHealth();
+
+    expect(r.status).toBe(300);
+    expect(r.error?.code).toBe('rejected');
+  });
+
+  it('surfaces a below-range status as a result when throwOnError is not set', async () => {
+    const { fetch } = makeFetchForResponse(remintResponse(199, { error: 'Informational' }));
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+    const r = await sdk.getHealth();
+
+    expect(r.status).toBe(199);
+    expect(r.error).toEqual({ error: 'Informational' });
+  });
+
+  it('reads the status from the post-middleware response (500 rewritten to 200 does not throw)', async () => {
+    const { fetch } = mockFetchOnce({ error: 'Upstream exploded' }, { status: 500 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+      middleware: [
+        {
+          onResponse: async () =>
+            new Response(JSON.stringify({ status: 'degraded' }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            }),
+        },
+      ],
+    });
+
+    const r = await sdk.getHealth();
+
+    expect(r.status).toBe(200);
+    expect(r.error).toBeUndefined();
+  });
+
+  it('reads the status from the post-middleware response (200 rewritten to 503 throws)', async () => {
+    const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+      middleware: [
+        {
+          onResponse: async () =>
+            new Response(JSON.stringify({ error: 'Service Unavailable', code: 'unavailable' }), {
+              status: 503,
+              headers: { 'content-type': 'application/json' },
+            }),
+        },
+      ],
+    });
+
+    await expect(sdk.getHealth()).rejects.toMatchObject({
+      status: 503,
+      body: { code: 'unavailable' },
+    });
+  });
+});

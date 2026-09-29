@@ -577,3 +577,219 @@ describe('Token integration with createStellarBillClient', () => {
     expect(sdk1.getToken()).toBeUndefined();
   });
 });
+
+describe('getHealth - wrap() rejection branch (client.ts line 253)', () => {
+  // Branch 1: throwOnError:true + non-2xx + JSON error body
+  // wrap() must throw a StellarBillError carrying the parsed body, status,
+  // method, and a human-readable message derived from makeErrorMessage.
+  it('throwOnError:true + non-2xx JSON: throws StellarBillError with parsed body fields', async () => {
+    const errorBody = { error: 'Service Unavailable', message: 'upstream timeout', code: 'upstream_timeout' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 503 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    let caught: unknown;
+    try {
+      await sdk.getHealth();
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(StellarBillError);
+    const e = caught as StellarBillError;
+    expect(e.status).toBe(503);
+    expect(e.requestMethod).toBe('GET');
+    expect(e.requestUrl).toContain('/api/health');
+    expect(e.body?.code).toBe('upstream_timeout');
+    expect(e.body?.message).toBe('upstream timeout');
+    expect(e.message).toContain('503');
+    expect(e.message).toContain('/api/health');
+    expect(e.message).toContain('upstream timeout');
+  });
+
+  // Branch 1 variant: throwOnError:true + 4xx (client error)
+  it('throwOnError:true + 401 JSON: throws StellarBillError with status 401', async () => {
+    const errorBody = { error: 'Unauthorized', message: 'token expired', code: 'auth_expired' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 401 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    await expect(sdk.getHealth()).rejects.toMatchObject({
+      status: 401,
+      requestMethod: 'GET',
+      body: { code: 'auth_expired' },
+    });
+  });
+
+  // Branch 1: error message format — makeErrorMessage prefers body.message over body.error
+  it('throwOnError:true: error message uses body.message when present', async () => {
+    const errorBody = { error: 'Bad Gateway', message: 'downstream unavailable', code: 'bad_gateway' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 502 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    let caught: unknown;
+    try {
+      await sdk.getHealth();
+    } catch (err) {
+      caught = err;
+    }
+
+    const e = caught as StellarBillError;
+    // makeErrorMessage format: "<method> <url> failed (<status>): <detail>"
+    expect(e.message).toMatch(/^GET .+\/api\/health.* failed \(502\): downstream unavailable$/);
+  });
+
+  // Branch 1: error message falls back to body.error when body.message is absent
+  it('throwOnError:true: error message falls back to body.error when message absent', async () => {
+    const errorBody = { error: 'Internal Server Error', code: 'internal_error' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 500 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    let caught: unknown;
+    try {
+      await sdk.getHealth();
+    } catch (err) {
+      caught = err;
+    }
+
+    const e = caught as StellarBillError;
+    expect(e.message).toMatch(/failed \(500\): Internal Server Error$/);
+  });
+
+  // Branch 1: error message falls back to "HTTP <status>" when body is absent
+  it('throwOnError:true: error message falls back to "HTTP <status>" when body has no message or error', async () => {
+    // Non-JSON response → parsedError will be undefined
+    const { fetch } = mockFetchOnce('<html>503</html>', { status: 503, contentType: 'text/html' });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    let caught: unknown;
+    try {
+      await sdk.getHealth();
+    } catch (err) {
+      caught = err;
+    }
+
+    const e = caught as StellarBillError;
+    expect(e.message).toMatch(/failed \(503\): HTTP 503$/);
+    expect(e.body).toBeUndefined();
+  });
+
+  // Branch 2: no throwOnError + non-2xx + JSON → envelope returned, not thrown
+  it('non-2xx with JSON error body returns stable SdkResult envelope (no throw)', async () => {
+    const errorBody = { error: 'Service Unavailable', message: 'db offline', code: 'db_offline' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 503 });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+    const r = await sdk.getHealth();
+
+    expect(r.status).toBe(503);
+    expect(r.data).toBeUndefined();
+    expect(r.error?.code).toBe('db_offline');
+    expect(r.error?.message).toBe('db offline');
+    expect(r.requestMethod).toBe('GET');
+    expect(r.requestUrl).toContain('/api/health');
+    expect(r.response).toBeInstanceOf(Response);
+  });
+
+  // Branch 2: non-2xx 4xx without throwOnError
+  it('non-2xx 429 returns envelope with parsed error without throwing', async () => {
+    const errorBody = { error: 'Too Many Requests', message: 'rate limit exceeded', code: 'rate_limited' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 429 });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+    const r = await sdk.getHealth();
+
+    expect(r.status).toBe(429);
+    expect(r.error?.code).toBe('rate_limited');
+    expect(r.data).toBeUndefined();
+    expect(r.requestMethod).toBe('GET');
+  });
+
+  // Boundary: throwOnError:true + 2xx should NOT throw — wrap only rejects on non-2xx
+  it('throwOnError:true + 200 does NOT throw', async () => {
+    const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' }, { status: 200 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    const r = await sdk.getHealth();
+    expect(r.status).toBe(200);
+    expect(r.data?.status).toBe('ok');
+    expect(r.error).toBeUndefined();
+  });
+
+  // Boundary: status 299 (last valid 2xx) should NOT throw
+  it('throwOnError:true + 299 (last 2xx boundary) does NOT throw', async () => {
+    const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' }, { status: 299 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    const r = await sdk.getHealth();
+    expect(r.status).toBe(299);
+    // No error thrown; error field is undefined since the raw openapi-fetch
+    // response will not carry a parsed error object for a 2xx status.
+    expect(r.requestMethod).toBe('GET');
+    expect(r.requestUrl).toContain('/api/health');
+  });
+
+  // Boundary: status 300 (first non-2xx) should throw when throwOnError:true
+  it('throwOnError:true + 300 (first non-2xx boundary) throws StellarBillError', async () => {
+    const { fetch } = mockFetchOnce({ error: 'Redirect', message: 'moved', code: 'redirect' }, { status: 300 });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    await expect(sdk.getHealth()).rejects.toBeInstanceOf(StellarBillError);
+    await expect(sdk.getHealth()).rejects.toMatchObject({ status: 300 });
+  });
+
+  // Request observability: correct URL and method are recorded on thrown error
+  it('thrown StellarBillError records the health endpoint URL and GET method', async () => {
+    const { fetch } = mockFetchOnce(
+      { error: 'Not Found', message: 'health missing', code: 'not_found' },
+      { status: 404 },
+    );
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      throwOnError: true,
+      fetch,
+    });
+
+    let caught: StellarBillError | undefined;
+    try {
+      await sdk.getHealth();
+    } catch (err) {
+      caught = err as StellarBillError;
+    }
+
+    expect(caught).toBeDefined();
+    expect(caught!.requestMethod).toBe('GET');
+    // The URL may be the resolved Response.url or the fallback urlPath '/api/health'
+    expect(caught!.requestUrl).toMatch(/\/api\/health/);
+  });
+});

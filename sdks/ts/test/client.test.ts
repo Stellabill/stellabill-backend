@@ -576,4 +576,46 @@ describe('Token integration with createStellarBillClient', () => {
     sdk1.setToken(undefined);
     expect(sdk1.getToken()).toBeUndefined();
   });
+
+  it('accepts representative valid token on client creation and injects Authorization header', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const representativeToken = 'sb_live_secret_key_12345';
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      token: representativeToken,
+      fetch,
+    });
+    expect(sdk.getToken()).toBe(representativeToken);
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBe(`Bearer ${representativeToken}`);
+  });
+
+  it('accepts representative valid token on setToken and rotates outbound Authorization header', async () => {
+    const { fetch: fetch1, calls: calls1 } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch: fetch1 });
+    expect(sdk.getToken()).toBeUndefined();
+
+    const validToken = 'sb_live_session_token_xyz';
+    sdk.setToken(validToken);
+    expect(sdk.getToken()).toBe(validToken);
+    await sdk.getHealth();
+    expect(callHeaders(calls1[0]!)['authorization']).toBe(`Bearer ${validToken}`);
+
+    const { fetch: fetch2, calls: calls2 } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdkRotated = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      token: validToken,
+      fetch: fetch2,
+    });
+    const rotatedToken = 'sb_live_session_token_next_gen';
+    sdkRotated.setToken(rotatedToken);
+    expect(sdkRotated.getToken()).toBe(rotatedToken);
+    await sdkRotated.getHealth();
+    expect(callHeaders(calls2[0]!)['authorization']).toBe(`Bearer ${rotatedToken}`);
+
+    sdkRotated.setToken(undefined);
+    expect(sdkRotated.getToken()).toBeUndefined();
+  });
 });
+

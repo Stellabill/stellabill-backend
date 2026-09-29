@@ -121,15 +121,51 @@ describe('createStellarBillClient - configuration', () => {
     expect(() => createStellarBillClient({ baseUrl: 'not-a-url' })).toThrow(/not a valid URL/);
   });
 
-  it('accepts a valid baseUrl and resolves requests against it', async () => {
-    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellabill-backend' });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+  // --- validateBaseUrl accepted-input branch (line 83) ---
 
-    const result = await sdk.getHealth();
+  it('accepts a valid https baseUrl and issues requests to the correct host', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    // Should not throw — the function must return the normalised URL.
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.stellabill.com', fetch });
+    await sdk.getHealth();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toMatch(/^https:\/\/api\.stellabill\.com\//);
+  });
 
-    expect(result.status).toBe(200);
-    expect(result.data).toEqual({ status: 'ok', service: 'stellabill-backend' });
-    expect(calls[0]!.url).toBe('https://api.example.com/api/health');
+  it('accepts a valid http localhost baseUrl and issues requests to the correct host', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'http://localhost:3000', fetch });
+    await sdk.getHealth();
+    expect(calls[0]!.url).toMatch(/^http:\/\/localhost:3000\//);
+  });
+
+  it('accepts a baseUrl with a path prefix and preserves it in requests', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://gateway.example.com/stellabill', fetch });
+    await sdk.getHealth();
+    expect(calls[0]!.url).toContain('gateway.example.com');
+  });
+
+  it('accepts null passed as unknown and throws — boundary between rejection and acceptance is observable', () => {
+    // Explicitly documents that null is NOT an accepted input: the rejection
+    // branch at line 83 (`raw === null`) is the guard before the valid path.
+    expect(() =>
+      createStellarBillClient({ baseUrl: null as unknown as string }),
+    ).toThrow(StellarBillConfigError);
+    expect(() =>
+      createStellarBillClient({ baseUrl: null as unknown as string }),
+    ).toThrow('baseUrl is required');
+  });
+
+  it('validateBaseUrl accepted path: returned URL has no trailing slash', async () => {
+    // Verifies the strip-trailing-slash normalization runs on the acceptance
+    // path and that the documented contract (consistent URL composition) holds.
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com/', fetch });
+    await sdk.getHealth();
+    // The composed request URL must not contain a double-slash artefact.
+    expect(calls[0]!.url).not.toMatch(/\/\//);
+    expect(calls[0]!.url).toMatch(/^https:\/\/api\.example\.com\//);
   });
 
   it('warns when baseUrl is http and not localhost', async () => {

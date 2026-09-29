@@ -811,3 +811,98 @@ describe('Token integration with createStellarBillClient', () => {
     expect(sdk1.getToken()).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// authMiddleware — user-agent header branch (GitHub issue)
+//
+// The `authMiddleware.onRequest` handler contains this branch (client.ts ~178):
+//
+//   if (!request.headers.has('user-agent')) {
+//     request.headers.set('user-agent', userAgent);
+//   }
+//
+// Both sides of this branch must be covered:
+//   1. Absent  → middleware injects the SDK default value (branch body runs)
+//   2. Present → middleware leaves the existing value untouched (branch skips;
+//      the subsequent extraHeaders loop also no-ops because has('user-agent')
+//      is already true)
+// ---------------------------------------------------------------------------
+
+describe('authMiddleware - user-agent header branch', () => {
+  it('injects the SDK default user-agent when the header is absent', async () => {
+    // openapi-fetch constructs the Request in Node without a user-agent header,
+    // so the `!request.headers.has('user-agent')` branch fires. The mock fetch
+    // captures headers after all middleware has run, giving a deterministic,
+    // stable assertion on the injected value.
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+    await sdk.getHealth();
+
+    const headers = callHeaders(calls[0]!);
+
+    // Absence here means the branch failed to fire.
+    expect(headers['user-agent']).toBeDefined();
+
+    // Must match the SDK format exactly — catches any regression in the format
+    // string or version embedding.
+    expect(headers['user-agent']).toMatch(/^@stellabill\/sdk\/\d+\.\d+\.\d+ node\/.+$/);
+
+    // Tie the assertion to the same source of truth the production code uses.
+    const { defaultUserAgent } = await import('../src/version.js');
+    expect(headers['user-agent']).toBe(defaultUserAgent());
+  });
+
+  it('preserves an existing user-agent header and does not overwrite it', async () => {
+    // Exercises the `has('user-agent') === true` path: when the Request
+    // already carries user-agent before authMiddleware runs, the `if` guard
+    // must NOT replace it, and the extraHeaders loop must also skip it.
+    //
+    // openapi-fetch's onRequest queue is FIFO, so authMiddleware (registered
+    // first) runs before any options.middleware — there is no public-API path
+    // to inject a header before it sees the Request. We therefore patch
+    // globalThis.Request with a subclass that injects our custom UA during
+    // Request construction (before the middleware chain) and restore it in a
+    // finally block.
+    const CUSTOM_UA = 'my-test-agent/1.0';
+
+    let capturedUA: string | null = null;
+    const probeFetch: typeof globalThis.fetch = vi.fn(async (input) => {
+      if (input instanceof Request) {
+        capturedUA = input.headers.get('user-agent');
+      }
+      return new Response(JSON.stringify({ status: 'ok', service: 'stellarbill-backend' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    const OriginalRequest = globalThis.Request;
+    class RequestWithUA extends Request {
+      constructor(input: RequestInfo | URL, init?: RequestInit) {
+        const merged = new Headers(init?.headers);
+        if (!merged.has('user-agent')) {
+          merged.set('user-agent', CUSTOM_UA);
+        }
+        super(input, { ...(init ?? {}), headers: merged });
+      }
+    }
+
+    try {
+      (globalThis as { Request: typeof Request }).Request = RequestWithUA;
+      const sdk = createStellarBillClient({
+        baseUrl: 'https://api.example.com',
+        fetch: probeFetch,
+      });
+      await sdk.getHealth();
+    } finally {
+      (globalThis as { Request: typeof Request }).Request = OriginalRequest;
+    }
+
+    // authMiddleware must have seen has('user-agent') === true and skipped the
+    // set(). The extraHeaders loop also skips it. The captured value must still
+    // be our custom string, not the SDK default.
+    expect(capturedUA).toBe(CUSTOM_UA);
+    expect(capturedUA).not.toMatch(/^@stellabill\/sdk\//);
+  });
+});

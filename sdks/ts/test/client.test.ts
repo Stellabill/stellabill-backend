@@ -1173,6 +1173,15 @@ describe('safeParseErrorBody', () => {
     expect(await safeParseErrorBody(r)).toBeUndefined();
   });
 
+  it('returns undefined at text boundary condition when empty', async () => {
+    // This test specifically exercises the boundary condition at line 113: if (!text) return undefined;
+    // It verifies that empty text (falsy value) is handled correctly and returns undefined
+    // without attempting JSON parsing, ensuring the boundary check is observable.
+    const r = new Response('', { status: 400, headers: { 'content-type': 'application/json' } });
+    // This should hit the !text check at line 113 and return undefined immediately
+    expect(await safeParseErrorBody(r)).toBeUndefined();
+  });
+
   it('parses a valid error body', async () => {
     const r = new Response(JSON.stringify({ message: 'bad', code: 'x' }), {
       status: 400,

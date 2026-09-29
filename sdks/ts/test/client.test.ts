@@ -765,3 +765,218 @@ describe('Token integration with createStellarBillClient', () => {
     expect(sdk1.getToken()).toBeUndefined();
   });
 });
+
+/**
+ * Boundary coverage for the `wrap` result adapter in
+ * sdks/ts/src/client.ts:217-239, which unwraps the openapi-fetch triple:
+ *
+ *   const r = (await rawResult) as { data: T | undefined; error: unknown; response: Response };
+ *   const { data, error, response } = r;
+ *   const status = response.status;
+ *   const parsedError = error && typeof error === 'object' ? (error as ApiErrorBody) : undefined;
+ *   if (throwOnError && (status < 200 || status >= 300)) { ... }
+ *   return { ..., requestUrl: response.url || urlPath };
+ *
+ * The adapter deliberately tolerates "any thenable with the data/error/response
+ * triple" so the SDK is not coupled to openapi-fetch's internal typings, which
+ * the comment above it notes have shifted several times. That tolerance is only
+ * as safe as its boundaries, and three of them had no coverage: a non-object
+ * `error`, a populated `response.url`, and the 199/300 edges of the status
+ * comparison.
+ */
+describe('createStellarBillClient - wrap() result adapter boundaries', () => {
+  /**
+   * Build a Response with `status` and `url` forced to exact values.
+   *
+   * Two Response limitations have to be worked around to reach the boundaries:
+   * the constructor only accepts statuses in the 200-599 range (so a sub-200
+   * status is applied afterwards), and `url` is read-only and always empty
+   * unless the Response came from a real fetch, which no mock can produce.
+   */
+  function makeResponse(
+    body: unknown,
+    opts: { status?: number; url?: string; contentType?: string } = {},
+  ): Response {
+    const status = opts.status ?? 200;
+    const text = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body);
+    const ctorStatus = status >= 200 && status <= 599 ? status : 200;
+    // 204/205/304 are null-body statuses: the constructor rejects a body for
+    // them, so the payload has to be dropped to construct one at all.
+    const nullBodyStatus = ctorStatus === 204 || ctorStatus === 205 || ctorStatus === 304;
+    const res = new Response(nullBodyStatus ? null : text, {
+      status: ctorStatus,
+      headers: { 'content-type': opts.contentType ?? 'application/json' },
+    });
+    Object.defineProperty(res, 'status', { value: status, configurable: true });
+    if (opts.url !== undefined) {
+      Object.defineProperty(res, 'url', { value: opts.url, configurable: true });
+    }
+    return res;
+  }
+
+  describe('error payload shape (client.ts:225-226)', () => {
+    it('reports error as undefined when the payload is a JSON string', async () => {
+      // typeof 'boom' === 'string', so parsedError must be undefined rather
+      // than the raw string leaking into SdkResult.error.
+      const { fetch } = makeFetchForResponse(makeResponse('"boom"', { status: 400 }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.status).toBe(400);
+      expect(r.error).toBeUndefined();
+      expect(r.data).toBeUndefined();
+    });
+
+    it('reports error as undefined when the payload is JSON null', async () => {
+      const { fetch } = makeFetchForResponse(makeResponse(null, { status: 400 }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.status).toBe(400);
+      expect(r.error).toBeUndefined();
+    });
+
+    it('reports error as undefined when the payload is a JSON number', async () => {
+      const { fetch } = makeFetchForResponse(makeResponse('42', { status: 400 }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.error).toBeUndefined();
+    });
+
+    it('passes an array error payload through unchanged', async () => {
+      // Arrays are typeof 'object', so the guard lets them through. This pins
+      // the current behaviour rather than endorsing it: ApiErrorBody is an
+      // object shape and an array is not one.
+      const { fetch } = makeFetchForResponse(makeResponse([1, 2, 3], { status: 400 }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.error).toEqual([1, 2, 3]);
+    });
+
+    it('parses a well-formed error object', async () => {
+      const body = { error: 'Bad Request', message: 'Invalid cursor', code: 'invalid_cursor' };
+      const { fetch } = makeFetchForResponse(makeResponse(body, { status: 400 }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.error).toEqual(body);
+    });
+  });
+
+  describe('status comparison edges (client.ts:228)', () => {
+    for (const status of [199, 300, 301, 400, 500, 599]) {
+      it(`throws for status ${status} when throwOnError is true`, async () => {
+        const { fetch } = makeFetchForResponse(makeResponse({ code: 'x' }, { status }));
+        const sdk = createStellarBillClient({
+          baseUrl: 'https://api.example.com',
+          throwOnError: true,
+          fetch,
+        });
+
+        await expect(sdk.getHealth()).rejects.toBeInstanceOf(StellarBillError);
+      });
+    }
+
+    for (const status of [200, 201, 204, 299]) {
+      it(`does not throw for status ${status} when throwOnError is true`, async () => {
+        const { fetch } = makeFetchForResponse(makeResponse({ status: 'ok' }, { status }));
+        const sdk = createStellarBillClient({
+          baseUrl: 'https://api.example.com',
+          throwOnError: true,
+          fetch,
+        });
+
+        await expect(sdk.getHealth()).resolves.toBeDefined();
+      });
+    }
+
+    it('never throws for a non-2xx when throwOnError is false', async () => {
+      const { fetch } = makeFetchForResponse(makeResponse({ code: 'x' }, { status: 199 }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.status).toBe(199);
+    });
+  });
+
+  describe('requestUrl resolution (client.ts:238)', () => {
+    it('prefers a populated response.url over the request path', async () => {
+      const responseUrl = 'https://api.example.com/api/health?resolved=1';
+      const { fetch } = makeFetchForResponse(makeResponse({ status: 'ok' }, { url: responseUrl }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.requestUrl).toBe(responseUrl);
+    });
+
+    it('falls back to the request path when response.url is empty', async () => {
+      const { fetch } = makeFetchForResponse(makeResponse({ status: 'ok' }, { url: '' }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.requestUrl).toContain('/api/health');
+    });
+
+    it('reports the request method alongside the resolved url', async () => {
+      const responseUrl = 'https://api.example.com/api/v1/plans?cursor=c';
+      const { fetch } = makeFetchForResponse(makeResponse({ plans: [] }, { url: responseUrl }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.listPlans({ cursor: 'c' });
+
+      expect(r.requestMethod).toBe('GET');
+      expect(r.requestUrl).toBe(responseUrl);
+    });
+  });
+
+  describe('data and error are mutually exclusive (client.ts:223, 238)', () => {
+    it('reports error as undefined for a 2xx body that looks like an error', async () => {
+      // openapi-fetch routes on response.ok, so a 2xx always populates `data`
+      // and leaves `error` unset. A body carrying a `code` field must not be
+      // mistaken for a failure, or a partial success would surface as an error.
+      const body = { plans: [{ id: 'p1' }], code: 'partial' };
+      const { fetch } = makeFetchForResponse(makeResponse(body, { status: 207 }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.listPlans();
+
+      expect(r.status).toBe(207);
+      expect(r.data).toEqual(body);
+      expect(r.error).toBeUndefined();
+    });
+
+    it('reports data as undefined for a non-2xx body that looks like a success', async () => {
+      // The mirror image: openapi-fetch only fills `data` on 2xx, so a
+      // non-2xx carrying plans must not be read as a successful payload.
+      const body = { plans: [{ id: 'p1' }] };
+      const { fetch } = makeFetchForResponse(makeResponse(body, { status: 400 }));
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.listPlans();
+
+      expect(r.status).toBe(400);
+      expect(r.data).toBeUndefined();
+      expect(r.error).toEqual(body);
+    });
+
+    it('exposes the raw Response on the result envelope', async () => {
+      const res = makeResponse({ status: 'ok' });
+      const { fetch } = makeFetchForResponse(res);
+      const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+
+      const r = await sdk.getHealth();
+
+      expect(r.response).toBe(res);
+    });
+  });
+});

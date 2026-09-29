@@ -94,10 +94,12 @@ describe('createStellarBillClient - configuration', () => {
   it.each([
     ['undefined', undefined],
     ['null', null],
-  ])('rejects %s baseUrl with a stable config error', (_label, baseUrl) => {
+  ])('rejects %s baseUrl before creating requests', (_label, baseUrl) => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
     let thrown: unknown;
+
     try {
-      createStellarBillClient({ baseUrl: baseUrl as unknown as string });
+      createStellarBillClient({ baseUrl: baseUrl as unknown as string, fetch });
     } catch (error) {
       thrown = error;
     }
@@ -107,14 +109,15 @@ describe('createStellarBillClient - configuration', () => {
       name: 'StellarBillConfigError',
       message: 'baseUrl is required',
     });
+    expect(calls).toHaveLength(0);
   });
 
-  it('throws StellarBillConfigError on malformed baseUrl', () => {
+  it('rejects other invalid baseUrl values', () => {
     expect(() => createStellarBillClient({ baseUrl: 123 as unknown as string })).toThrow(
-      /non-empty string/
+      /non-empty string/,
     );
     expect(() => createStellarBillClient({ baseUrl: {} as unknown as string })).toThrow(
-      /non-empty string/
+      /non-empty string/,
     );
     expect(() => createStellarBillClient({ baseUrl: '' })).toThrow(/non-empty/);
     expect(() => createStellarBillClient({ baseUrl: '   ' })).toThrow(/non-empty/);

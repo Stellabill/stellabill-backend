@@ -119,6 +119,8 @@ describe('createStellarBillClient - configuration', () => {
     expect(() => createStellarBillClient({ baseUrl: '' })).toThrow(/non-empty/);
     expect(() => createStellarBillClient({ baseUrl: '   ' })).toThrow(/non-empty/);
     expect(() => createStellarBillClient({ baseUrl: 'not-a-url' })).toThrow(/not a valid URL/);
+    expect(() => createStellarBillClient({ baseUrl: 'ftp://api.example.com' })).toThrow(/http or https/);
+    expect(() => createStellarBillClient({ baseUrl: 'file:///tmp/api' })).toThrow(/http or https/);
   });
 
   it('accepts a valid baseUrl and resolves requests against it', async () => {

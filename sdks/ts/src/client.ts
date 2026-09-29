@@ -125,7 +125,7 @@ export function normalizeErrorBody(parsed: unknown): ApiErrorBody | undefined {
   return undefined;
 }
 
-async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
+export async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
   const contentType = res.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) return undefined;
   try {
@@ -185,7 +185,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
   // truth for the `Authorization` header.
   if (options.headers) {
     for (const [k, v] of Object.entries(options.headers)) {
-      const lower = k.lowerCase();
+      const lower = k.toLowerCase();
       if (lower === 'authorization') continue;
       if (typeof v === 'string' && v.length > 0) {
         extraHeaders[lower] = v;
@@ -235,7 +235,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
     method: string,
     urlPath: string,
     rawResult: unknown,
-  ): Promise<SdkResult<T>>({
+  ): Promise<SdkResult<T>> {
     const r = (await rawResult) as { data: T | undefined; error: unknown; response: Response };
     const { data, error, response } = r;
     const status = response.status;

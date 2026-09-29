@@ -39,6 +39,8 @@ paths:
       tags: [Plans]
       summary: List billing plans
       operationId: listPlans
+      security:
+        - bearerAuth: []
       parameters:
         - name: cursor
           in: query
@@ -196,57 +198,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
-  /api/v1/plans:
-    get:
-      tags: [Plans]
-      summary: List billing plans
-      operationId: listPlans
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: cursor
-          in: query
-          schema:
-            type: string
-          description: Pagination cursor for the next page of results
-          example: "Y3Vyc29yX25leHRfcGFnZQ=="
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            maximum: 100
-          description: Maximum number of items to return
-          example: 20
-      responses:
-        "200":
-          description: Plans list
-          headers:
-            Link:
-              $ref: "#/components/headers/Link"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PlansResponse"
-              example:
-                plans:
-                  - id: "plan_basic"
-                    name: "Basic"
-                    amount: "1000"
-                    currency: "NGN"
-                    interval: "monthly"
-                    description: "Starter plan"
-                  - id: "plan_pro"
-                    name: "Pro"
-                    amount: "5000"
-                    currency: "NGN"
-                    interval: "monthly"
-                    description: "Professional plan"
-                pagination:
-                  has_more: false
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/v1/idempotency/{key}:
     get:
       tags: [Idempotency]
@@ -296,6 +247,64 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    BadRequest:
+      description: Validation or client error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            PaginationLimitExceeded:
+              value:
+                error: "Bad Request"
+                message: "Pagination limit cannot exceed 100 items."
+                code: "validation_error"
+            InvalidCursorFormat:
+              value:
+                error: "Bad Request"
+                message: "Invalid pagination cursor format provided."
+                code: "invalid_cursor"
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            TokenMissing:
+              value:
+                error: "Unauthorized"
+                message: "Authentication token is missing or invalid."
+                code: "auth_unauthorized"
+            TokenExpired:
+              value:
+                error: "Unauthorized"
+                message: "Authentication token has expired."
+                code: "auth_token_expired"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            AccessDenied:
+              value:
+                error: "Forbidden"
+                message: "You do not have permission to access this resource."
+                code: "auth_forbidden"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            ResourceNotFound:
+              value:
+                error: "Not Found"
+                message: "The requested subscription could not be found."
+                code: "resource_not_found"
   headers:
     Link:
       description: |
@@ -322,6 +331,11 @@ components:
         type: integer
         default: 10
         maximum: 100
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     SubscriptionPatch:
       type: object
@@ -478,62 +492,3 @@ components:
           type: string
           description: SHA-256 hex digest of the original request body, used to detect key reuse with a different payload.
           example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  responses:
-    BadRequest:
-      description: Validation or client error
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          examples:
-            PaginationLimitExceeded:
-              value:
-                error: "Bad Request"
-                message: "Pagination limit cannot exceed 100 items."
-                code: "validation_error"
-            InvalidCursorFormat:
-              value:
-                error: "Bad Request"
-                message: "Invalid pagination cursor format provided."
-                code: "invalid_cursor"
-    Unauthorized:
-      description: Missing or invalid authentication
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          examples:
-            TokenMissing:
-              value:
-                error: "Unauthorized"
-                message: "Authentication token is missing or invalid."
-                code: "auth_unauthorized"
-            TokenExpired:
-              value:
-                error: "Unauthorized"
-                message: "Authentication token has expired."
-                code: "auth_token_expired"
-    Forbidden:
-      description: Insufficient permissions
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          examples:
-            AccessDenied:
-              value:
-                error: "Forbidden"
-                message: "You do not have permission to access this resource."
-                code: "auth_forbidden"
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          examples:
-            ResourceNotFound:
-              value:
-                error: "Not Found"
-                message: "The requested subscription could not be found."
-                code: "resource_not_found"

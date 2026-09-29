@@ -92,6 +92,9 @@ function validateBaseUrl(raw: unknown): string {
   } catch {
     throw new StellarBillConfigError(`baseUrl "${raw}" is not a valid URL`);
   }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new StellarBillConfigError('baseUrl must use http or https');
+  }
   // Strip trailing slashes for consistent URL composition.
   return parsed.toString().replace(/\/+$/, '');
 }

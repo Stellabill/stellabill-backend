@@ -147,57 +147,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
-  /api/v1/plans:
-    get:
-      tags: [Plans]
-      summary: List billing plans
-      operationId: listPlans
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: cursor
-          in: query
-          schema:
-            type: string
-          description: Pagination cursor for the next page of results
-          example: "Y3Vyc29yX25leHRfcGFnZQ=="
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            maximum: 100
-          description: Maximum number of items to return
-          example: 20
-      responses:
-        "200":
-          description: Plans list
-          headers:
-            Link:
-              $ref: "#/components/headers/Link"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PlansResponse"
-              example:
-                plans:
-                  - id: "plan_basic"
-                    name: "Basic"
-                    amount: "1000"
-                    currency: "NGN"
-                    interval: "monthly"
-                    description: "Starter plan"
-                  - id: "plan_pro"
-                    name: "Pro"
-                    amount: "5000"
-                    currency: "NGN"
-                    interval: "monthly"
-                    description: "Professional plan"
-                pagination:
-                  has_more: false
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/v1/idempotency/{key}:
     get:
       tags: [Idempotency]

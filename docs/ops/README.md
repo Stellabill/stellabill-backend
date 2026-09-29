@@ -12,6 +12,7 @@ This directory contains incident response runbooks for the Stellabill backend se
 | [db-outage-runbook.md](./db-outage-runbook.md) | PostgreSQL outages, connection pool exhaustion, replica lag, slow queries | Health check `"db": "down"` for > 2 min |
 | [elevated-errors-runbook.md](./elevated-errors-runbook.md) | 5xx spike, panics, worker failures, latency degradation | 5xx rate > 5 % in 5 min |
 | [outbox-backlog.md](./runbooks/outbox-backlog.md) | Outbox event backlog growth, publisher lag, DLQ spikes, dispatcher stalls | `outbox_backlog_depth` > 2,500 for 5 min |
+| [keda-worker-autoscale.md](./keda-worker-autoscale.md) | KEDA scales workers from `outbox_backlog_depth` (1..20 replicas) | Idle backlog → `minReplicaCount=1` |
 
 ---
 
@@ -53,6 +54,7 @@ This directory contains incident response runbooks for the Stellabill backend se
 | Publisher lag (`outbox_publisher_lag_seconds`) | > 60 s | > 300 s |
 | Dead-letter inflow (`dead_letter_events`) | — | >= 5 in 1 min |
 | Dispatcher status | — | Stalled / Stopped |
+| KEDA worker scale (see [keda-worker-autoscale.md](./keda-worker-autoscale.md)) | target 100 events/replica | max 20 replicas; idle → 1 |
 
 ---
 

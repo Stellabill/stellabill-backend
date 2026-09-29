@@ -169,6 +169,11 @@ func (csr *CachedSubscriptionRepo) FindByIDAndTenant(ctx context.Context, id str
 	return &sr, nil
 }
 
+// FindByIDsAndTenant delegates batch fetching to the underlying backend.
+func (csr *CachedSubscriptionRepo) FindByIDsAndTenant(ctx context.Context, ids []string, tenantID string) ([]*SubscriptionRow, error) {
+	return csr.backend.FindByIDsAndTenant(ctx, ids, tenantID)
+}
+
 func (csr *CachedSubscriptionRepo) ListByTenant(ctx context.Context, tenantID string) ([]*SubscriptionRow, error) {
 	return csr.backend.ListByTenant(ctx, tenantID)
 }

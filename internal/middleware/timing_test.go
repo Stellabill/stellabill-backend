@@ -18,7 +18,7 @@ func TestServerTimingMiddleware_Success(t *testing.T) {
 	router.GET("/test", func(c *gin.Context) {
 		rec := RecorderFromGinContext(c)
 		assert.NotNil(t, rec)
-		
+
 		rec.RecordDB(10 * time.Millisecond)
 		rec.RecordCache(2 * time.Millisecond)
 		rec.RecordOutbox(5 * time.Millisecond)
@@ -31,7 +31,7 @@ func TestServerTimingMiddleware_Success(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	header := w.Header().Get("Server-Timing")
 	assert.NotEmpty(t, header)
 	assert.Contains(t, header, "db;dur=10.000")
@@ -55,7 +55,7 @@ func TestServerTimingMiddleware_Error(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	
+
 	header := w.Header().Get("Server-Timing")
 	assert.NotEmpty(t, header)
 	assert.Contains(t, header, "db;dur=1.000")
@@ -77,7 +77,7 @@ func TestServerTimingMiddleware_Empty(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	header := w.Header().Get("Server-Timing")
 	assert.NotEmpty(t, header)
 	assert.Contains(t, header, "db;dur=0.000")
@@ -86,7 +86,7 @@ func TestServerTimingMiddleware_Empty(t *testing.T) {
 func TestRecorderExtraction_NilContext(t *testing.T) {
 	var ctx context.Context
 	assert.Nil(t, RecorderFromContext(ctx))
-	
+
 	var c *gin.Context
 	assert.Nil(t, RecorderFromGinContext(c))
 }

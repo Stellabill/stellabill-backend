@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"stellarbill-backend/internal/db"
-	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/servertiming"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,7 +37,7 @@ func NewPostgresRepository(executor db.DBTX) Repository {
 func (r *postgresRepository) Store(ctx context.Context, event *Event) error {
 	start := time.Now()
 	defer func() {
-		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+		if rec := servertiming.FromContext(ctx); rec != nil {
 			rec.RecordOutbox(time.Since(start))
 		}
 	}()
@@ -76,7 +76,7 @@ func (r *postgresRepository) Store(ctx context.Context, event *Event) error {
 
 func (r *postgresRepository) BulkInsert(ctx context.Context, events []*Event) error {
 	for _, e := range events {
-		if err := r.Store(e); err != nil {
+		if err := r.Store(ctx, e); err != nil {
 			return fmt.Errorf("failed to bulk insert event %s: %w", e.ID, err)
 		}
 	}

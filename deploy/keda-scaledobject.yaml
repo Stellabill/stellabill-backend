@@ -1,0 +1,60 @@
+# KEDA ScaledObject — scale stellabill-worker from outbox backlog depth.
+#
+# Prerequisites:
+#   - KEDA installed in the cluster
+#   - Worker (or API) pods expose Prometheus metrics at /metrics
+#   - Metric outbox_backlog_depth{tenant} is scraped by the Prometheus
+#     instance referenced below (or use the prometheus serverAddress that
+#     KEDA's Prometheus scaler can reach)
+#
+# Behavior:
+#   - minReplicaCount=1 keeps one warm worker when backlog is idle/zero
+#   - maxReplicaCount=20 caps burst capacity
+#   - threshold=100 ≈ DefaultBacklogPerReplica (events per replica)
+#   - query sums all tenants so one hot tenant still scales the pool
+#
+# Threshold reference: docs/ops/keda-worker-autoscale.md
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: stellabill-worker-outbox-backlog
+  namespace: stellabill
+  labels:
+    app: stellabill
+    tier: worker
+    component: background-jobs
+spec:
+  scaleTargetRef:
+    name: stellabill-worker
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  triggers:
+    - type: prometheus
+      metadata:
+        # Reachable Prometheus HTTP API (cluster DNS or external).
+        serverAddress: http://prometheus-server.monitoring.svc.cluster.local:80
+        # Sum backlog across tenants; idle zero series still evaluates to 0.
+        query: sum(outbox_backlog_depth)
+        # Target pending events per replica (see DefaultBacklogPerReplica).
+        threshold: "100"
+        activationThreshold: "0"
+        ignoreNullValues: "true"
+---
+# Optional: Prometheus scrape ServiceMonitor for worker /metrics (Prometheus Operator).
+# Uncomment if your cluster uses ServiceMonitor CRDs and the worker Service exists.
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: stellabill-worker-metrics
+#   namespace: stellabill
+# spec:
+#   selector:
+#     matchLabels:
+#       app: stellabill
+#       tier: worker
+#   endpoints:
+#     - port: metrics
+#       path: /metrics
+#       interval: 15s

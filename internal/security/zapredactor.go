@@ -3,10 +3,62 @@ package security
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+var schemaAllowedTopLevel = map[string]bool{
+	"timestamp":      true,
+	"time":           true,
+	"level":          true,
+	"msg":            true,
+	"request_id":     true,
+	"trace_id":       true,
+	"tenant_id":      true,
+	"method":         true,
+	"path":           true,
+	"status":         true,
+	"latency_ms":     true,
+	"client_ip":      true,
+	"user_agent":     true,
+	"correlation_id": true,
+	"error":          true,
+	"panic":          true,
+	"stack":          true,
+	"authorization":  true,
+	"x-admin-token":  true,
+	"x_admin_token":  true,
+	"admin_token":    true,
+	"token":          true,
+	"jwt":            true,
+	"password":       true,
+	"api_key":        true,
+	"apikey":         true,
+	"secret":         true,
+	"access_token":   true,
+	"refresh_token":  true,
+}
+
+// FilterLogFields drops unknown top-level keys and preserves the required structured-log contract.
+func FilterLogFields(fields []zapcore.Field) []zapcore.Field {
+	if len(fields) == 0 {
+		return fields
+	}
+	filtered := make([]zapcore.Field, 0, len(fields))
+	for _, field := range fields {
+		key := strings.TrimSpace(field.Key)
+		if key == "" {
+			continue
+		}
+		keyLower := strings.ToLower(key)
+		if keyLower == "timestamp" || keyLower == "time" || schemaAllowedTopLevel[keyLower] {
+			filtered = append(filtered, field)
+		}
+	}
+	return filtered
+}
 
 // RedactingCore wraps a zapcore.Core and redacts PII from fields before encoding.
 type RedactingCore struct {
@@ -31,7 +83,7 @@ func (c *RedactingCore) Enabled(level zapcore.Level) bool {
 // Write implements zapcore.Core with field redaction.
 func (c *RedactingCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	entry.Message = MaskPII(entry.Message)
-	redacted := RedactZapCoreFields(fields)
+	redacted := RedactZapCoreFields(FilterLogFields(fields))
 	return c.inner.Write(entry, redacted)
 }
 
@@ -42,7 +94,7 @@ func (c *RedactingCore) Sync() error {
 
 // With implements zapcore.Core.
 func (c *RedactingCore) With(fields []zapcore.Field) zapcore.Core {
-	redacted := RedactZapCoreFields(fields)
+	redacted := RedactZapCoreFields(FilterLogFields(fields))
 	return &RedactingCore{inner: c.inner.With(redacted)}
 }
 
@@ -66,12 +118,10 @@ func RedactZapCoreField(field zapcore.Field) zapcore.Field {
 		}
 		return field
 	case zapcore.ReflectType:
-		// For complex objects, marshal and redact
 		if b, err := json.Marshal(field.Interface); err == nil {
 			var m map[string]interface{}
 			if json.Unmarshal(b, &m) == nil {
 				m = RedactMap(m)
-				// Use ReflectType to let encoder handle marshal
 				return zapcore.Field{
 					Key:       field.Key,
 					Type:      zapcore.ReflectType,
@@ -81,7 +131,6 @@ func RedactZapCoreField(field zapcore.Field) zapcore.Field {
 		}
 		return field
 	default:
-		// Numeric, boolean, time, etc. are safe
 		return field
 	}
 }
@@ -109,10 +158,7 @@ func MustRedactLogger(logger *zap.Logger) *zap.Logger {
 }
 
 // Ensure ProductionLogger and DevLogger use redaction for fields by default.
-// This modifies them after creation to add the redacting core wrapper.
 func init() {
-	// Monkey-patch not recommended; instead provide constructors.
-	// Users should call RedactProductionLogger() and RedactDevLogger().
 }
 
 // RedactProductionLogger returns a production logger with PII redaction on both messages and fields.
@@ -126,6 +172,3 @@ func RedactDevLogger() *zap.Logger {
 	logger := DevLogger()
 	return MustRedactLogger(logger)
 }
-
-// Alternative: Register a zap plugin by replacing zap.RegisterEncoder
-// For now, use the wrap-core approach above.

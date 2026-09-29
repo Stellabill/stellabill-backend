@@ -10,11 +10,14 @@ import (
 	"time"
 )
 
+const FaultInjectionEnabledFlag = "fault_injection_enabled"
+
 type Flag struct {
 	Name        string    `json:"name"`
 	Enabled     bool      `json:"enabled"`
 	Description string    `json:"description"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	Version     int64     `json:"version"`
 }
 
 type Manager struct {
@@ -79,6 +82,13 @@ func (m *Manager) LoadDefaultFlags() {
 			Enabled:     false,
 			Description: "Enable fault injection middleware for resilience testing",
 			UpdatedAt:   time.Now(),
+			Version:     time.Now().UnixNano(),
+		},
+		"statements_partitioning_enabled": {
+			Name:        "statements_partitioning_enabled",
+			Enabled:     false,
+			Description: "Enable partitioning of statements table by month for scale",
+			UpdatedAt:   time.Now(),
 		},
 	}
 
@@ -103,6 +113,7 @@ func (m *Manager) LoadFromEnvironment() {
 						Enabled:     enabled,
 						Description: "Environment-defined flag",
 						UpdatedAt:   time.Now(),
+						Version:     time.Now().UnixNano(),
 					}
 				}
 				m.mutex.Unlock()
@@ -133,6 +144,7 @@ func (m *Manager) LoadFromEnvironment() {
 						Enabled:     enabled,
 						Description: "Environment flag",
 						UpdatedAt:   time.Now(),
+						Version:     time.Now().UnixNano(),
 					}
 				}
 				m.mutex.Unlock()
@@ -178,7 +190,7 @@ func (m *Manager) IsEnabled(flagName string) bool {
 			value = flag.Enabled
 			source = "config"
 
-			// 🔐 SECURITY: protect critical flags
+			// SECURITY: protect critical flags
 			if strings.Contains(flag.Name, "subscriptions") && !value {
 				value = true
 				source = "forced-safe"
@@ -212,22 +224,49 @@ func (m *Manager) GetFlag(flagName string) (*Flag, bool) {
 }
 
 func (m *Manager) SetFlag(flagName string, enabled bool, description string) {
+	m.SetFlagWithVersion(flagName, enabled, description, time.Now().UnixNano())
+}
+
+func (m *Manager) SetFlagWithVersion(flagName string, enabled bool, description string, version int64) bool {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	if flag, exists := m.flags[flagName]; exists {
+		if version <= flag.Version {
+			// Monotonic version check: last writer wins. If version is older, reject.
+			return false
+		}
 		flag.Enabled = enabled
 		flag.UpdatedAt = time.Now()
+		flag.Version = version
 		if description != "" {
 			flag.Description = description
 		}
+		return true
 	} else {
 		m.flags[flagName] = &Flag{
 			Name:        flagName,
 			Enabled:     enabled,
 			Description: description,
 			UpdatedAt:   time.Now(),
+			Version:     version,
 		}
+		return true
+	}
+}
+
+// UpdateFlag atomically updates an existing flag's enabled state and returns the before and after values.
+// It updates both the in-memory flag configuration and the runtime override layer (db).
+// The returned before and after copies can be used for audit logging.
+func (m *Manager) UpdateFlag(flagName string, enabled bool, description string) (*Flag, *Flag, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.flags[name] = &Flag{
+		Name:        name,
+		Enabled:     enabled,
+		Description: description,
+		UpdatedAt:   time.Now(),
+		Version:     1,
 	}
 }
 
@@ -255,7 +294,13 @@ func (m *Manager) sampleLog(name string, value bool, source string) {
 	}
 }
 
-// Global helpers
+// UnmarshalJSON implements json.Unmarshaler.
+func (m *Manager) UnmarshalJSON(data []byte) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return json.Unmarshal(data, &m.flags)
+}
+
 func IsEnabled(flagName string) bool {
 	return GetInstance().IsEnabled(flagName)
 }

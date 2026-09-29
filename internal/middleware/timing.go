@@ -1,73 +1,20 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"stellarbill-backend/internal/servertiming"
 )
 
-// timingRecorderContextKey is the context key for the timing recorder.
-type timingRecorderContextKey struct{}
-
-// ServerTimingRecorder tracks latencies for DB, cache, and outbox.
-type ServerTimingRecorder struct {
-	mu          sync.Mutex
-	dbTotal     time.Duration
-	cacheTotal  time.Duration
-	outboxTotal time.Duration
-}
-
-// RecordDB adds to the total DB duration.
-func (r *ServerTimingRecorder) RecordDB(d time.Duration) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.dbTotal += d
-}
-
-// RecordCache adds to the total Cache duration.
-func (r *ServerTimingRecorder) RecordCache(d time.Duration) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.cacheTotal += d
-}
-
-// RecordOutbox adds to the total Outbox duration.
-func (r *ServerTimingRecorder) RecordOutbox(d time.Duration) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.outboxTotal += d
-}
-
-// RecorderFromContext extracts the ServerTimingRecorder from the given context.
-func RecorderFromContext(ctx context.Context) *ServerTimingRecorder {
-	if ctx == nil {
-		return nil
-	}
-	val := ctx.Value(timingRecorderContextKey{})
-	if rec, ok := val.(*ServerTimingRecorder); ok {
-		return rec
-	}
-	return nil
-}
-
-// RecorderFromGinContext extracts the ServerTimingRecorder from the Gin context.
-func RecorderFromGinContext(c *gin.Context) *ServerTimingRecorder {
+// RecorderFromGinContext extracts the Recorder from the Gin context.
+func RecorderFromGinContext(c *gin.Context) *servertiming.Recorder {
 	if c == nil {
 		return nil
 	}
-	return RecorderFromContext(c.Request.Context())
+	return servertiming.FromContext(c.Request.Context())
 }
 
 // ServerTimingMiddleware intercepts the request and adds a Server-Timing header
@@ -75,10 +22,10 @@ func RecorderFromGinContext(c *gin.Context) *ServerTimingRecorder {
 func ServerTimingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		rec := &ServerTimingRecorder{}
+		rec := &servertiming.Recorder{}
 
 		// Inject into request context
-		ctx := context.WithValue(c.Request.Context(), timingRecorderContextKey{}, rec)
+		ctx := servertiming.WithContext(c.Request.Context(), rec)
 		c.Request = c.Request.WithContext(ctx)
 
 		// Wrap the ResponseWriter to hook before headers are written
@@ -98,7 +45,7 @@ func ServerTimingMiddleware() gin.HandlerFunc {
 
 type serverTimingResponseWriter struct {
 	gin.ResponseWriter
-	recorder *ServerTimingRecorder
+	recorder *servertiming.Recorder
 	start    time.Time
 	written  bool
 }
@@ -126,12 +73,7 @@ func (w *serverTimingResponseWriter) ensureHeaderWritten() {
 	w.written = true
 
 	totalTime := time.Since(w.start)
-
-	w.recorder.mu.Lock()
-	dbTime := w.recorder.dbTotal
-	cacheTime := w.recorder.cacheTotal
-	outboxTime := w.recorder.outboxTotal
-	w.recorder.mu.Unlock()
+	dbTime, cacheTime, outboxTime := w.recorder.Totals()
 
 	// Convert to milliseconds rounded to microsecond precision.
 	// E.g. dbTime.Microseconds() = 1234 -> 1.234 ms.

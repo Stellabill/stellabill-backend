@@ -31,6 +31,7 @@ type mockDBTX struct {
 	execNoCtxCount     int
 	queryNoCtxCount    int
 	queryRowNoCtxCount int
+	queryContextFunc   func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 func newMockDBTX(pingErr error) *mockDBTX {
@@ -51,6 +52,9 @@ func (m *mockDBTX) PrepareContext(ctx context.Context, query string) (*sql.Stmt,
 
 func (m *mockDBTX) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	m.queryCount++
+	if m.queryContextFunc != nil {
+		return m.queryContextFunc(ctx, query, args...)
+	}
 	return nil, nil
 }
 
@@ -130,6 +134,86 @@ func TestReadRouter_ReplicaFailover(t *testing.T) {
 		selected := router.Reader(ctx)
 		assert.Equal(t, replica, selected)
 	})
+}
+
+func TestHedgedQuery_CancelsTheSlowAttempt(t *testing.T) {
+	ctx := context.Background()
+	firstCancelled := make(chan struct{})
+	secondStarted := make(chan struct{})
+
+	winner, err := HedgedQuery(ctx, 10*time.Millisecond, func(attemptCtx context.Context, attempt int) error {
+		if attempt == 1 {
+			go func() {
+				<-attemptCtx.Done()
+				close(firstCancelled)
+			}()
+			<-attemptCtx.Done()
+			return context.Canceled
+		}
+		close(secondStarted)
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, winner)
+	select {
+	case <-firstCancelled:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected first attempt context to be canceled")
+	}
+	select {
+	case <-secondStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected second attempt to start")
+	}
+}
+
+func TestReadRouter_QueryContext_HedgesReadOnlySelectsAcrossReplicas(t *testing.T) {
+	primary := newMockDBTX(nil)
+	replica := newMockDBTX(nil)
+	replica2 := newMockDBTX(nil)
+	router := NewReadRouterWithReplicas(primary, replica, replica2)
+	router.hedgeDelay = 10 * time.Millisecond
+
+	firstAttemptCanceled := make(chan struct{})
+	replica.queryContextFunc = func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		go func() {
+			<-ctx.Done()
+			close(firstAttemptCanceled)
+		}()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	replica2.queryContextFunc = func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		return nil, nil
+	}
+
+	rows, err := router.QueryContext(context.Background(), "SELECT * FROM users")
+	require.NoError(t, err)
+	assert.Nil(t, rows)
+	assert.Equal(t, 1, replica.queryCount)
+	assert.Equal(t, 1, replica2.queryCount)
+	assert.Equal(t, 0, primary.queryCount)
+
+	select {
+	case <-firstAttemptCanceled:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected first attempt context to be canceled after hedge winner")
+	}
+}
+
+func TestReadRouter_QueryContext_DoesNotHedgeWriteQueries(t *testing.T) {
+	primary := newMockDBTX(nil)
+	replica := newMockDBTX(nil)
+	replica2 := newMockDBTX(nil)
+	router := NewReadRouterWithReplicas(primary, replica, replica2)
+	router.hedgeDelay = 10 * time.Millisecond
+
+	_, err := router.QueryContext(context.Background(), "UPDATE users SET active = true")
+	require.NoError(t, err)
+	assert.Equal(t, 1, replica.queryCount)
+	assert.Equal(t, 0, replica2.queryCount)
+	assert.Equal(t, 0, primary.queryCount)
 }
 
 func TestReadRouter_DBTXInterfaceMethods(t *testing.T) {

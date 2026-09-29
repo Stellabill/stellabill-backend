@@ -1,6 +1,66 @@
 # Default values for stellabill
 # This is a YAML-formatted file.
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Argo Rollouts — Canary Strategy
+#
+# Set rollout.enabled=true to replace the api Deployment with an Argo Rollouts
+# Rollout resource. Requires the Argo Rollouts controller to be installed.
+#
+# Traffic steps: 10% → 25% → 50% → 100%
+# Each step runs automated analysis on p99 latency and 5xx error rate.
+# Failed analysis triggers an automatic abort and rollback to the stable revision.
+#
+# Install Argo Rollouts:
+#   kubectl create namespace argo-rollouts
+#   kubectl apply -n argo-rollouts \
+#     -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+rollout:
+  # enabled: set to true to use Argo Rollouts instead of plain Deployment for api.
+  enabled: false
+
+  revisionHistoryLimit: 3
+
+  canary:
+    # Pause durations between traffic weight steps.
+    step1PauseDuration: "2m"   # 10% → wait → 25%
+    step2PauseDuration: "2m"   # 25% → wait → 50%
+    step3PauseDuration: "5m"   # 50% → wait → 100%
+
+    # Seconds to wait before scaling down the canary after abort.
+    abortScaleDownDelaySeconds: 30
+    # Seconds to wait before scaling down after a successful promotion.
+    scaleDownDelaySeconds: 30
+
+  analysis:
+    # Name of the AnalysisTemplate created by this chart.
+    templateName: "stellabill-canary-analysis"
+
+    # Prometheus endpoint reachable from the Argo Rollouts controller.
+    prometheusAddress: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+
+    # How often to query Prometheus during analysis (seconds).
+    intervalSeconds: 60
+
+    # Total number of measurements per metric per analysis run.
+    count: 5
+
+    # How many consecutive failures before the analysis is marked Failed.
+    failureLimit: 1
+
+    # How many Inconclusive results (zero samples) are tolerated before abort.
+    inconclusiveLimit: 3
+
+    # p99 latency threshold in milliseconds. Exceeding this fails the analysis.
+    p99LatencyThresholdMs: 500
+
+    # 5xx error rate threshold (0–1 fraction). Exceeding this fails the analysis.
+    # 0.01 = 1% error rate.
+    errorRateThreshold: 0.01
+
+
+
 # Global image configuration
 image:
   repository: stellabill/backend
@@ -60,6 +120,10 @@ api:
     # For single-node dev clusters, override with maxUnavailable: 1
     minAvailable: 1
     maxUnavailable: null
+  # Coordinate with GRACEFUL_SHUTDOWN_TIMEOUT (default 30s). The application
+  # drains HTTP server → DB pool sequentially, each bounded by 30s. Set
+  # terminationGracePeriodSeconds >= 65 (2*30 + 5 buffer).
+  terminationGracePeriodSeconds: 65
   topologySpread:
     enabled: true
     maxSkew: 1
@@ -109,6 +173,8 @@ worker:
     enabled: true
     minAvailable: 1
     maxUnavailable: null
+  # Coordinate with GRACEFUL_SHUTDOWN_TIMEOUT — see api section above.
+  terminationGracePeriodSeconds: 65
   topologySpread:
     enabled: true
     maxSkew: 1

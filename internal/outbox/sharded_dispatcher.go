@@ -18,22 +18,22 @@ import (
 // contention. Ordering within each tenant is preserved because all events for
 // a given tenant are routed to the same partition via consistent hashing.
 type shardedDispatcher struct {
-	repository Repository
-	publisher  Publisher
+	repository   Repository
+	publisher    Publisher
 	publisherMap map[string]Publisher
-	config     DispatcherConfig
+	config       DispatcherConfig
 
-	db      *sql.DB // for advisory lock management
+	db       *sql.DB   // for advisory lock management
 	lockConn *sql.Conn // dedicated connection holding advisory locks
 
 	ownedShards     map[int]struct{}
 	ownedShardsList []int
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 	running bool
-	mu     sync.RWMutex
+	mu      sync.RWMutex
 
 	publisherFailCount   map[string]int
 	publisherNextAttempt map[string]time.Time
@@ -76,11 +76,11 @@ func NewShardedDispatcher(repository Repository, publisher Publisher, db *sql.DB
 	}
 
 	return &shardedDispatcher{
-		repository: repository,
-		publisher:  publisher,
-		config:     config,
-		db:         db,
-		ownedShards:    ownedSet,
+		repository:      repository,
+		publisher:       publisher,
+		config:          config,
+		db:              db,
+		ownedShards:     ownedSet,
 		ownedShardsList: config.OwnedShards,
 	}, nil
 }

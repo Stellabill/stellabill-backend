@@ -2,7 +2,7 @@ package cache
 
 import (
 	"context"
-	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/servertiming"
 	"sync"
 	"time"
 )
@@ -36,7 +36,7 @@ func NewInMemory() *InMemory {
 func (m *InMemory) Get(ctx context.Context, key string) ([]byte, error) {
 	start := time.Now()
 	defer func() {
-		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+		if rec := servertiming.FromContext(ctx); rec != nil {
 			rec.RecordCache(time.Since(start))
 		}
 	}()
@@ -58,7 +58,7 @@ func (m *InMemory) Get(ctx context.Context, key string) ([]byte, error) {
 func (m *InMemory) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
 	start := time.Now()
 	defer func() {
-		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+		if rec := servertiming.FromContext(ctx); rec != nil {
 			rec.RecordCache(time.Since(start))
 		}
 	}()
@@ -75,7 +75,7 @@ func (m *InMemory) Set(ctx context.Context, key string, value []byte, ttl time.D
 func (m *InMemory) Delete(ctx context.Context, key string) error {
 	start := time.Now()
 	defer func() {
-		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+		if rec := servertiming.FromContext(ctx); rec != nil {
 			rec.RecordCache(time.Since(start))
 		}
 	}()

@@ -2,7 +2,7 @@ name: Pact Provider Verification
 
 on:
   push:
-    branches: [ main, test/webhook-pact-provider ]
+    branches: [ main, test/webhook-pact-provider, test/pact-provider-verification ]
   pull_request:
     branches: [ main ]
 
@@ -28,6 +28,9 @@ jobs:
         env:
           WEBHOOK_SECRET: test-webhook-secret-for-pact
           GIN_MODE: test
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          GIT_COMMIT: ${{ github.sha }}
         run: go test ./tests/pact/... -v -timeout 120s
 
       - name: Run full test suite

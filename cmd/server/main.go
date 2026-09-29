@@ -2,148 +2,130 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"stellarbill-backend/internal/auth"
-	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/db"
-	"stellarbill-backend/internal/metrics"
-	"stellarbill-backend/internal/routes"
+	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	_ "github.com/lib/pq"
+	"stellarbill-backend/internal/db"
+	"stellarbill-backend/internal/metrics"
 )
 
-var (
-	listenAndServe = func(srv *http.Server) error {
-		return srv.ListenAndServe()
-	}
-
-	// openDB is a variable so tests can inject a mock.
-	openDB = func(driver, connStr string) (*sql.DB, error) {
-		return sql.Open(driver, connStr)
-	}
-)
+// listenAndServe is a package-level variable so tests can inject a fake
+// listener without network access.
+var listenAndServe = func(srv *http.Server) error {
+	return srv.ListenAndServe()
+}
 
 func main() {
-	cfg, err := config.Load()
+	pool, replicaPool, srv, err := InitializeServer()
 	if err != nil {
 		printConfigError(err)
 		os.Exit(1)
 	}
 
-	if cfg.Env == "production" {
-		gin.SetMode(gin.ReleaseMode)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	spiffeVerifier, err := auth.NewSpiffeVerifier(context.Background(), cfg.SpiffeSocketPath, cfg.SpiffeTrustDomain, cfg.Env)
-	if err != nil {
-		log.Fatalf("failed to initialize SPIFFE verifier: %v", err)
-	}
-	if spiffeVerifier != nil {
-		if v, ok := spiffeVerifier.(interface{ Close() }); ok {
-			defer v.Close()
-		}
-	}
+	shutdownTimeout := time.Duration(shutdownTimeoutSecs()) * time.Second
 
-	// Start KPI metrics refresh worker when a database is available.
-	var kpiJob *worker.KpiRefreshJob
-	if db != nil {
-		kpiJob = worker.NewKpiRefreshJob(db, worker.DefaultKpiRefreshConfig(), stdLogger{})
-		kpiJob.Start()
-		log.Println("KPI metrics refresh worker started (hourly)")
-	}
-
-	router := gin.New()
-	router.Use(gin.Recovery())
-
-	routes.Register(router)
-
-	// Stop the KPI worker on server shutdown.
-	if kpiJob != nil {
+	// cleanup drains the primary and replica database pools after the HTTP
+	// server has stopped accepting new connections. It always runs (even if
+	// HTTP shutdown timed out) so half-open connections are closed before the
+	// process exits. DrainPool is a no-op for the nil replica pool when no
+	// replica is configured.
+	cleanup := func(cleanupCtx context.Context) error {
+		start := time.Now()
 		defer func() {
-			if err := kpiJob.Stop(); err != nil {
-				log.Printf("KPI refresh worker stop: %v", err)
-			}
+			metrics.ShutdownDuration.Observe(time.Since(start).Seconds())
 		}()
-	}
-
-	addr := fmt.Sprintf(":%d", cfg.Port)
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      router,
-		ReadTimeout:  time.Duration(cfg.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second,
-		IdleTimeout:  time.Duration(cfg.IdleTimeout) * time.Second,
-	}
-
-	pool, err := db.NewPool(context.Background(), cfg)
-	if err != nil {
-		log.Fatalf("failed to create database pool: %v", err)
-	}
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-
-	shutdownTimeout := time.Duration(cfg.GracefulShutdownTimeout) * time.Second
-	if err := runHTTPServer(context.Background(), sig, srv, shutdownTimeout, func(ctx context.Context) error {
-		if pool != nil {
-			pool.Close()
+		if err := db.DrainPool(cleanupCtx, pool); err != nil {
+			return err
 		}
-		return nil
-	}); err != nil {
+		return db.DrainPool(cleanupCtx, replicaPool)
+	}
+
+	log.Printf("server listening on %s", srv.Addr)
+	if err := runHTTPServer(ctx, make(chan os.Signal, 1), srv, shutdownTimeout, cleanup); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }
 
-func runHTTPServer(ctx context.Context, sig chan os.Signal, srv *http.Server, shutdownTimeout time.Duration, cleanup func(context.Context) error) error {
-	start := time.Now()
-
-	serveErr := make(chan error, 1)
+// runHTTPServer starts srv and performs a graceful shutdown when ctx is
+// cancelled.  The optional cleanup function is always called during shutdown
+// (even if HTTP shutdown times out) so that resources such as the database
+// pool are drained before the process exits.
+// A second signal on secondSignal forces an immediate close.
+func runHTTPServer(
+	ctx context.Context,
+	secondSignal <-chan os.Signal,
+	srv *http.Server,
+	shutdownTimeout time.Duration,
+	cleanup func(context.Context) error,
+) error {
+	serverErr := make(chan error, 1)
 	go func() {
-		serveErr <- listenAndServe(srv)
+		err := listenAndServe(srv)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serverErr <- err
 	}()
 
 	select {
+	case err := <-serverErr:
+		return err
 	case <-ctx.Done():
-	case s := <-sig:
-		log.Printf("received signal %v, initiating graceful shutdown", s)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		select {
-		case <-sig:
-			_ = srv.Close()
-			return fmt.Errorf("forced shutdown after second signal: %w", err)
-		default:
+	// Always call cleanup on exit so resources (DB pool) are drained even
+	// when the HTTP server shutdown times out.  cleanup gets a fresh context
+	// to avoid racing with an expired shutdownCtx. Errors are logged rather
+	// than returned so the HTTP shutdown error takes precedence.
+	defer func() {
+		if cleanup != nil {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			defer cleanupCancel()
+			if err := cleanup(cleanupCtx); err != nil {
+				log.Printf("cleanup error during shutdown: %v", err)
+			}
 		}
+	}()
+
+	// A second signal forces an immediate close.
+	go func() {
+		select {
+		case <-secondSignal:
+			srv.Close()
+		case <-shutdownCtx.Done():
+		}
+	}()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("http server shutdown: %w", err)
 	}
 
-	if err := <-serveErr; err != nil && err != http.ErrServerClosed {
+	if shutdownCtx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("http server shutdown: timed out")
+	}
+
+	if err := <-serverErr; err != nil {
 		return err
 	}
 
-	if cleanup != nil {
-		if err := cleanup(context.Background()); err != nil {
-			return fmt.Errorf("cleanup: %w", err)
-		}
-	}
-
-	metrics.ShutdownDuration.Observe(time.Since(start).Seconds())
 	return nil
 }
 
 func printConfigError(err error) {
-	fmt.Fprintf(os.Stderr, "%v\n", err)
+	fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 }
 
 // stdLogger adapts the standard log package to the worker's logger interface.
@@ -151,4 +133,17 @@ type stdLogger struct{}
 
 func (stdLogger) Error(msg string, keysAndValues ...any) {
 	log.Println(append([]any{"ERROR: " + msg}, keysAndValues...)...)
+}
+
+// shutdownTimeoutSecs reads the GRACEFUL_SHUTDOWN_TIMEOUT env var, falling
+// back to 30 seconds. This is kept outside config.Load() so main() can
+// consume the graceful shutdown timeout without threading the full Config
+// through InitializeServer.
+func shutdownTimeoutSecs() int {
+	if v := os.Getenv("GRACEFUL_SHUTDOWN_TIMEOUT"); v != "" {
+		if s, err := strconv.Atoi(v); err == nil && s >= 1 && s <= 600 {
+			return s
+		}
+	}
+	return 30
 }

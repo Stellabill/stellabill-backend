@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -25,7 +26,7 @@ func newMemoryRepository() *memoryRepository {
 	}
 }
 
-func (m *memoryRepository) Store(context.Background(), event *Event) error {
+func (m *memoryRepository) Store(_ context.Context, event *Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	copy := *event

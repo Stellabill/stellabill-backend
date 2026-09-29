@@ -18,12 +18,14 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
 	return func(c *gin.Context) {
 		callerID, exists := c.Get("callerID")
 		if !exists {
+			audit.LogAction(c, "reconciliation.execute", "reconciliation", "denied", map[string]string{"reason": "missing_auth"})
 			RespondWithAuthError(c, "Missing authentication credentials")
 			return
 		}
 
 		tenantID, exists := c.Get("tenantID")
 		if !exists {
+			audit.LogAction(c, "reconciliation.execute", "reconciliation", "denied", map[string]string{"reason": "missing_tenant"})
 			RespondWithAuthError(c, "Missing tenant context")
 			return
 		}
@@ -31,6 +33,7 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
 
 		roles := auth.ExtractRoles(c)
 		if !hasAnyPermission(roles, auth.PermManageReconciliation) {
+			audit.LogAction(c, "reconciliation.execute", "reconciliation", "denied", map[string]string{"reason": "insufficient_permissions"})
 			RespondWithError(c, http.StatusForbidden, ErrorCodeForbidden, "Insufficient permissions for reconciliation")
 			return
 		}
@@ -40,6 +43,7 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
 
 		var backendSubs []reconciliation.BackendSubscription
 		if err := c.ShouldBindJSON(&backendSubs); err != nil {
+			audit.LogAction(c, "reconciliation.execute", "reconciliation", "denied", map[string]string{"reason": "invalid_request"})
 			RespondWithValidationError(c, "Invalid request body", map[string]interface{}{
 				"reason": err.Error(),
 			})
@@ -50,6 +54,7 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
 		if !isAdmin {
 			for _, b := range backendSubs {
 				if b.TenantID != "" && b.TenantID != tid {
+					audit.LogAction(c, "reconciliation.execute", "reconciliation", "denied", map[string]string{"reason": "cross_tenant"})
 					RespondWithError(c, http.StatusForbidden, ErrorCodeForbidden,
 						"Cannot reconcile subscriptions belonging to another tenant")
 					return
@@ -96,6 +101,12 @@ func NewReconcileHandler(adapter reconciliation.Adapter, store reconciliation.St
 				c.Header("X-Reconcile-Save-Error", err.Error())
 			}
 		}
+
+		audit.LogAction(c, "reconciliation.execute", "reconciliation", "success", map[string]string{
+			"total":      strconv.Itoa(len(reports)),
+			"matched":    strconv.Itoa(matched),
+			"mismatched": strconv.Itoa(len(reports) - matched),
+		})
 
 		c.JSON(http.StatusOK, gin.H{
 			"summary": gin.H{"total": len(reports), "matched": matched, "mismatched": len(reports) - matched},

@@ -152,8 +152,8 @@ func TestTenantRateLimitMiddleware_Anonymous(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	config := TenantRateLimitConfig{
 		Enabled: true,
-		RPS:     5,
-		Burst:   10,
+		RPS:     1,
+		Burst:   2,
 	}
 	middleware := TenantRateLimitMiddleware(config)
 
@@ -163,19 +163,20 @@ func TestTenantRateLimitMiddleware_Anonymous(t *testing.T) {
 		c.Status(http.StatusOK)
 	})
 
-	// Test anonymous requests (no tenantID in context)
-	for i := 0; i < 10; i++ {
+	// Anonymous requests (no tenantID in context) share a single bucket:
+	// burst (2) pass, then every subsequent anonymous request is rejected.
+	for i := 0; i < 5; i++ {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/test", nil)
 		router.ServeHTTP(w, req)
 
-		if i < 10 {
+		if i < 2 {
 			if w.Code != http.StatusOK {
-				t.Errorf("request %d: expected status OK, got %d", i, w.Code)
+				t.Fatalf("request %d: expected OK (anonymous burst), got %d", i, w.Code)
 			}
 		} else {
 			if w.Code != http.StatusTooManyRequests {
-				t.Errorf("request %d: expected status 429, got %d", i, w.Code)
+				t.Fatalf("request %d: expected 429 (shared anonymous bucket), got %d", i, w.Code)
 			}
 		}
 	}
@@ -304,6 +305,48 @@ func TestTenantRateLimiter_Stop(t *testing.T) {
 
 	// Calling stop again should not panic
 	limiter.Stop()
+}
+
+func TestTenantRateLimiter_IdleEvictionFreesMemory(t *testing.T) {
+	limiter := NewTenantRateLimiter(5, 10)
+	defer limiter.Stop()
+
+	if got := limiter.Len(); got != 0 {
+		t.Fatalf("expected no active tenants on a fresh limiter, got %d", got)
+	}
+
+	for _, tenant := range []string{"t-1", "t-2", "t-3"} {
+		limiter.Allow(tenant)
+	}
+	if got := limiter.Len(); got != 3 {
+		t.Fatalf("expected 3 active tenants after traffic, got %d", got)
+	}
+
+	// Age every limiter past the idle TTL, then run eviction.
+	for i := 0; i < numShards; i++ {
+		shard := limiter.shards[i]
+		shard.mu.Lock()
+		for _, tl := range shard.limiters {
+			tl.mu.Lock()
+			tl.lastAccess = time.Now().Add(-limiter.idleTTL - time.Minute)
+			tl.mu.Unlock()
+		}
+		shard.mu.Unlock()
+	}
+	limiter.evictIdleLimiters()
+
+	if got := limiter.Len(); got != 0 {
+		t.Fatalf("expected idle eviction to release all limiters, got %d active", got)
+	}
+}
+
+func TestTenantRateLimiter_ZeroIdleTTLFallsBackToDefault(t *testing.T) {
+	limiter := NewTenantRateLimiterWithIdleTTL(5, 10, 0)
+	defer limiter.Stop()
+
+	if limiter.idleTTL != limiterTTL {
+		t.Fatalf("expected default idle TTL %s, got %s", limiterTTL, limiter.idleTTL)
+	}
 }
 
 func TestTenantRateLimitMiddleware_DefaultValues(t *testing.T) {

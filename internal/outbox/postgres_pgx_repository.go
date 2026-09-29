@@ -10,14 +10,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 	"stellarbill-backend/internal/db"
 )
 
 type pgxPool interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Begin(ctx context.Context) (pgx.Tx, error)
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 	CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
@@ -33,8 +33,7 @@ func NewPostgresPgxRepository(pool pgxPool) Repository {
 	return &PostgresPgxRepository{pool: pool}
 }
 
-func (r *PostgresPgxRepository) Store(event *Event) error {
-	ctx := context.Background()
+func (r *PostgresPgxRepository) Store(ctx context.Context, event *Event) error {
 	if event.TenantID != "" {
 		ctx = db.ContextWithTenantID(ctx, event.TenantID)
 	}
@@ -63,7 +62,7 @@ func (r *PostgresPgxRepository) BulkInsert(ctx context.Context, events []*Event)
 		return nil
 	}
 	if len(events) == 1 {
-		return r.Store(events[0])
+		return r.Store(ctx, events[0])
 	}
 
 	tenantID := events[0].TenantID

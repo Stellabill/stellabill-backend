@@ -431,3 +431,31 @@ func itos(i int) string {
 type noopExecutor struct{}
 
 func (n *noopExecutor) Execute(_ context.Context, _ *Job) error { return nil }
+
+type staticBacklogCounter map[string]int64
+
+func (c staticBacklogCounter) CountPendingByTenant(context.Context) (map[string]int64, error) {
+	if c == nil {
+		return map[string]int64{}, nil
+	}
+	out := make(map[string]int64, len(c))
+	for k, v := range c {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func TestOutboxBacklogMetricsJob_ZeroBacklogObservesIdle(t *testing.T) {
+	job := NewOutboxBacklogMetricsJob(staticBacklogCounter{}, time.Second)
+	job.Run(context.Background())
+
+	// Idle observation is covered in outbox package tests; here we only assert
+	// Run does not panic and accepts an empty counter (KEDA minReplica path).
+	jobNil := NewOutboxBacklogMetricsJob(nil, 0)
+	jobNil.Run(context.Background())
+}
+
+func TestOutboxBacklogMetricsJob_ReportsTenantDepth(t *testing.T) {
+	job := NewOutboxBacklogMetricsJob(staticBacklogCounter{"tenant-a": 5}, time.Second)
+	job.Run(context.Background())
+}

@@ -43,7 +43,7 @@ type Guard struct {
 	inner prometheus.Registerer
 
 	mu                 sync.RWMutex
-	observedComboCount map[string]int   // metric name -> count of distinct label-value tuples seen
+	observedComboCount map[string]int // metric name -> count of distinct label-value tuples seen
 	cardinalityLimit   int
 	maxLabelsPerMetric int
 }

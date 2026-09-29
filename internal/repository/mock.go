@@ -1,6 +1,18 @@
 package repository
 
-import "context"
+import (
+	"context"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+)
+
+var (
+	mockPlanTracer = otel.Tracer("repository/plans")
+	mockSubTracer  = otel.Tracer("repository/subscriptions")
+)
 
 // MockSubscriptionRepo is an in-memory SubscriptionRepository for testing.
 type MockSubscriptionRepo struct {
@@ -17,23 +29,51 @@ func NewMockSubscriptionRepo(rows ...*SubscriptionRow) *MockSubscriptionRepo {
 }
 
 // FindByID returns the SubscriptionRow with the given ID, or ErrNotFound.
-func (m *MockSubscriptionRepo) FindByID(_ context.Context, id string) (*SubscriptionRow, error) {
+func (m *MockSubscriptionRepo) FindByID(ctx context.Context, id string) (*SubscriptionRow, error) {
+	ctx, span := mockSubTracer.Start(ctx, "SubscriptionRepo.FindByID", trace.WithAttributes(
+		attribute.String("subscription.id", id),
+	))
+	defer span.End()
+
 	row, ok := m.records[id]
 	if !ok {
+		span.SetStatus(codes.Error, "subscription not found")
 		return nil, ErrNotFound
 	}
 	return row, nil
 }
 
-func (m *MockSubscriptionRepo) FindByIDAndTenant(_ context.Context, id string, tenantID string) (*SubscriptionRow, error) {
+func (m *MockSubscriptionRepo) FindByIDAndTenant(ctx context.Context, id string, tenantID string) (*SubscriptionRow, error) {
+	ctx, span := mockSubTracer.Start(ctx, "SubscriptionRepo.FindByID", trace.WithAttributes(
+		attribute.String("subscription.id", id),
+		attribute.String("tenant.id", tenantID),
+	))
+	defer span.End()
+
 	row, ok := m.records[id]
 	if !ok {
+		span.SetStatus(codes.Error, "subscription not found")
 		return nil, ErrNotFound
 	}
 	if row.TenantID != tenantID {
+		span.SetStatus(codes.Error, "tenant mismatch")
 		return nil, ErrNotFound
 	}
 	return row, nil
+}
+
+func (m *MockSubscriptionRepo) FindByIDsAndTenant(_ context.Context, ids []string, tenantID string) ([]*SubscriptionRow, error) {
+	idMap := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idMap[id] = true
+	}
+	var result []*SubscriptionRow
+	for _, r := range m.records {
+		if idMap[r.ID] && (tenantID == "" || r.TenantID == tenantID) {
+			result = append(result, r)
+		}
+	}
+	return result, nil
 }
 
 func (m *MockSubscriptionRepo) ListByTenant(_ context.Context, tenantID string) ([]*SubscriptionRow, error) {
@@ -73,12 +113,48 @@ func NewMockPlanRepo(rows ...*PlanRow) *MockPlanRepo {
 }
 
 // FindByID returns the PlanRow with the given ID, or ErrNotFound.
-func (m *MockPlanRepo) FindByID(_ context.Context, id string) (*PlanRow, error) {
+func (m *MockPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, error) {
+	ctx, span := mockPlanTracer.Start(ctx, "PlanRepo.FindByID", trace.WithAttributes(
+		attribute.String("plan.id", id),
+	))
+	defer span.End()
+
 	row, ok := m.records[id]
 	if !ok {
+		span.SetStatus(codes.Error, "plan not found")
 		return nil, ErrNotFound
 	}
 	return row, nil
+}
+
+// FindByIDs returns PlanRows matching any of the given IDs.
+func (m *MockPlanRepo) FindByIDs(_ context.Context, ids []string) ([]*PlanRow, error) {
+	idMap := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idMap[id] = true
+	}
+	var result []*PlanRow
+	for _, r := range m.records {
+		if idMap[r.ID] {
+			result = append(result, r)
+		}
+	}
+	return result, nil
+}
+
+// FindByIDsAndTenant returns PlanRows matching any of the given IDs for a tenant.
+func (m *MockPlanRepo) FindByIDsAndTenant(_ context.Context, ids []string, tenantID string) ([]*PlanRow, error) {
+	idMap := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idMap[id] = true
+	}
+	var result []*PlanRow
+	for _, r := range m.records {
+		if idMap[r.ID] && (tenantID == "" || r.TenantID == tenantID) {
+			result = append(result, r)
+		}
+	}
+	return result, nil
 }
 
 // List returns all PlanRows stored in the mock repository.

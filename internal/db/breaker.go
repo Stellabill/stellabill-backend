@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"stellarbill-backend/internal/config"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,6 +22,16 @@ type BreakerPool struct {
 
 // NewBreakerPool creates a new BreakerPool using the provided pool and circuit breaker configuration.
 func NewBreakerPool(pool *pgxpool.Pool, maxFailures uint32, timeoutSeconds uint32, halfOpenMaxRequests uint32) *BreakerPool {
+	if maxFailures == 0 {
+		maxFailures = config.DefaultDBBreakerMaxFailures
+	}
+	if timeoutSeconds == 0 {
+		timeoutSeconds = config.DefaultDBBreakerTimeoutSeconds
+	}
+	if halfOpenMaxRequests == 0 {
+		halfOpenMaxRequests = config.DefaultDBBreakerHalfOpenMaxRequests
+	}
+
 	settings := gobreaker.Settings{
 		Name:        "db-pool",
 		MaxRequests: halfOpenMaxRequests,
@@ -38,6 +50,11 @@ func NewBreakerPool(pool *pgxpool.Pool, maxFailures uint32, timeoutSeconds uint3
 	}
 }
 
+// NewBreakerPoolFromConfig creates a breaker-backed pool using the validated app configuration.
+func NewBreakerPoolFromConfig(pool *pgxpool.Pool, cfg config.Config) *BreakerPool {
+	return NewBreakerPool(pool, cfg.DBBreakerMaxFailures, cfg.DBBreakerTimeoutSeconds, cfg.DBBreakerHalfOpenMaxRequests)
+}
+
 // Pool returns the underlying *pgxpool.Pool (for cases where raw access is needed).
 func (b *BreakerPool) Pool() *pgxpool.Pool {
 	return b.pool
@@ -53,12 +70,38 @@ func (b *BreakerPool) Counts() gobreaker.Counts {
 	return b.breaker.Counts()
 }
 
+// BreakerState returns a machine-readable snapshot of the circuit state for health and diagnostics endpoints.
+func (b *BreakerPool) BreakerState() map[string]interface{} {
+	if b == nil || b.breaker == nil {
+		return map[string]interface{}{"state": gobreaker.StateClosed.String(), "consecutive_failures": uint32(0), "total_failures": uint32(0), "requests": uint32(0)}
+	}
+	counts := b.breaker.Counts()
+	return map[string]interface{}{
+		"state":                b.breaker.State().String(),
+		"consecutive_failures": counts.ConsecutiveFailures,
+		"total_failures":       counts.TotalFailures,
+		"requests":             counts.Requests,
+	}
+}
+
+func (b *BreakerPool) execute(fn func() error) error {
+	if b == nil || b.breaker == nil {
+		return fmt.Errorf("db circuit breaker not initialized")
+	}
+	_, err := b.breaker.Execute(func() (interface{}, error) {
+		return nil, fn()
+	})
+	if err != nil && errors.Is(err, gobreaker.ErrOpenState) {
+		return fmt.Errorf("circuit breaker open: %w", err)
+	}
+	return err
+}
+
 // PingContext pings the database through the circuit breaker.
 func (b *BreakerPool) PingContext(ctx context.Context) error {
-	_, err := b.breaker.Execute(func() (interface{}, error) {
-		return nil, b.pool.Ping(ctx)
+	return b.execute(func() error {
+		return b.pool.Ping(ctx)
 	})
-	return err
 }
 
 // Query executes a query on the database through the circuit breaker.

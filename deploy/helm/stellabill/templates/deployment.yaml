@@ -11,9 +11,12 @@ metadata:
     {{- include "stellabill.labels" $ | nindent 4 }}
     app.kubernetes.io/component: {{ $component }}
     tier: {{ $values.labels.tier }}
-spec:
-  replicas: {{ $values.replicas }}
-  selector:
+spec:  replicas: {{ $values.replicas }}
+      {{- if $values.terminationGracePeriodSeconds }}
+      # Coordinate with GRACEFUL_SHUTDOWN_TIMEOUT — see deploy/kustomize/base/deployment.yaml
+      terminationGracePeriodSeconds: {{ $values.terminationGracePeriodSeconds }}
+      {{- end }}
+      selector:
     matchLabels:
       {{- include "stellabill.componentSelectorLabels" (dict "Chart" $.Chart "Release" $.Release "component" $component) | nindent 6 }}
       tier: {{ $values.labels.tier }}

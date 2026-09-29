@@ -108,15 +108,30 @@ go tool cover -html=coverage.out   # opens browser
 
 ### 4.2 Integration tests (Docker required)
 
-Integration tests spin up an ephemeral Postgres container automatically via
-`testcontainers-go`. No manual database setup is needed.
+Integration tests spin up reusable Postgres, Redis, and mock webhook receiver
+containers automatically via `testcontainers-go`. No Compose bootstrap or
+fixed host ports are needed.
 
 ```bash
-go test -tags integration -v -race -count=1 -timeout 120s ./integration/...
+go test -tags integration -v -race -count=1 -timeout 5m ./tests/integration/...
 ```
 
-`TestMain` applies all SQL migrations before any test case runs. The container
-is torn down automatically when the suite finishes.
+The suite creates one stack and shares it between tests (`Reuse: true`).
+Docker assigns every host port, so parallel test processes do not contend for
+5432, 6379, or 8080. Postgres and Redis credentials are generated for each
+run. All mapped ports bind to `127.0.0.1`, so the test services are not exposed
+to the local network.
+
+Ryuk removes leaked containers after interrupted runs and should remain
+enabled on developer machines and CI. Only set
+`TESTCONTAINERS_RYUK_DISABLED=true` in a trusted, isolated environment where
+the Docker socket policy prevents Ryuk from running and an external cleanup
+job is guaranteed. Disabling Ryuk on a shared Docker host can leave containers,
+credentials, and consumed resources behind.
+
+The images use explicit version tags. Review and update those versions
+deliberately; do not replace them with `latest`. The mock webhook receiver is
+for local test payloads only and must never receive production secrets or PII.
 
 ### 4.3 Race detector
 

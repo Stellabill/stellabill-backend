@@ -2,7 +2,7 @@ package cache
 
 import (
 	"context"
-	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/servertiming"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -37,7 +37,7 @@ func NewRedisFromURL(url string) (*Redis, error) {
 func (r *Redis) Get(ctx context.Context, key string) ([]byte, error) {
 	start := time.Now()
 	defer func() {
-		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+		if rec := servertiming.FromContext(ctx); rec != nil {
 			rec.RecordCache(time.Since(start))
 		}
 	}()
@@ -55,7 +55,7 @@ func (r *Redis) Get(ctx context.Context, key string) ([]byte, error) {
 func (r *Redis) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
 	start := time.Now()
 	defer func() {
-		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+		if rec := servertiming.FromContext(ctx); rec != nil {
 			rec.RecordCache(time.Since(start))
 		}
 	}()
@@ -70,7 +70,7 @@ func (r *Redis) Set(ctx context.Context, key string, value []byte, ttl time.Dura
 func (r *Redis) Delete(ctx context.Context, key string) error {
 	start := time.Now()
 	defer func() {
-		if rec := middleware.RecorderFromContext(ctx); rec != nil {
+		if rec := servertiming.FromContext(ctx); rec != nil {
 			rec.RecordCache(time.Since(start))
 		}
 	}()

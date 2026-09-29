@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"stellarbill-backend/internal/errcode"
 	"stellarbill-backend/internal/security"
 	"stellarbill-backend/internal/service"
 
@@ -10,24 +12,38 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrorCode represents a standardized error code
-type ErrorCode string
+// ErrorCode represents a standardized error code.
+// It delegates to the errcode registry for stable identifiers.
+type ErrorCode = errcode.Code
 
 const (
 	// Client errors
-	ErrorCodeBadRequest       ErrorCode = "BAD_REQUEST"
-	ErrorCodeUnauthorized     ErrorCode = "UNAUTHORIZED"
-	ErrorCodeForbidden        ErrorCode = "FORBIDDEN"
-	ErrorCodeNotFound         ErrorCode = "NOT_FOUND"
-	ErrorCodeConflict         ErrorCode = "CONFLICT"
-	ErrorCodeValidationFailed ErrorCode = "VALIDATION_FAILED"
-	// ErrorCodeUnknownField is returned when a mutation request body contains a
-	// field not defined in the API schema. See internal/decoder for details.
-	ErrorCodeUnknownField ErrorCode = "UNKNOWN_FIELD"
+	ErrorCodeBadRequest       ErrorCode = errcode.CodeBadRequest
+	ErrorCodeUnauthorized     ErrorCode = errcode.CodeUnauthorized
+	ErrorCodeForbidden        ErrorCode = errcode.CodeForbidden
+	ErrorCodeNotFound         ErrorCode = errcode.CodeNotFound
+	ErrorCodeConflict         ErrorCode = errcode.CodeConflict
+	ErrorCodeValidationFailed ErrorCode = errcode.CodeValidationFailed
+	ErrorCodeUnknownField     ErrorCode = errcode.CodeUnknownField
 
 	// Server errors
-	ErrorCodeInternalError      ErrorCode = "INTERNAL_ERROR"
-	ErrorCodeServiceUnavailable ErrorCode = "SERVICE_UNAVAILABLE"
+	ErrorCodeInternalError      ErrorCode = errcode.CodeInternalError
+	ErrorCodeServiceUnavailable ErrorCode = errcode.CodeServiceUnavailable
+
+	// Subscription-scoped error codes
+	ErrorCodeSubscriptionNotFound          ErrorCode = errcode.CodeSubscriptionNotFound
+	ErrorCodeSubscriptionDeleted           ErrorCode = errcode.CodeSubscriptionDeleted
+	ErrorCodeSubscriptionForbidden         ErrorCode = errcode.CodeSubscriptionForbidden
+	ErrorCodeSubscriptionInvalidTransition ErrorCode = errcode.CodeSubscriptionInvalidTransition
+	ErrorCodeSubscriptionUnknownState      ErrorCode = errcode.CodeSubscriptionUnknownState
+	ErrorCodeSubscriptionInvalidStatus     ErrorCode = errcode.CodeSubscriptionInvalidStatus
+	ErrorCodeSubscriptionBillingParse      ErrorCode = errcode.CodeSubscriptionBillingParse
+
+	// Export error codes
+	ErrorCodeExportInProgress ErrorCode = errcode.CodeExportInProgress
+
+	// Swap error codes
+	ErrorCodeSwapInsufficientLiquidity ErrorCode = errcode.CodeSwapInsufficientLiquidity
 )
 
 // ErrorEnvelope represents a standardized error response
@@ -116,19 +132,20 @@ func generateTraceID() string {
 	return uuid.New().String()
 }
 
-// MapServiceErrorToResponse maps domain service errors to HTTP status codes and error codes
+// MapServiceErrorToResponse maps domain service errors to HTTP status codes and error codes.
 func MapServiceErrorToResponse(err error) (int, ErrorCode, string) {
-	switch err {
-	case service.ErrNotFound:
-		return http.StatusNotFound, ErrorCodeNotFound, "The requested resource was not found"
-	case service.ErrDeleted:
-		return http.StatusGone, ErrorCodeNotFound, "The requested resource has been deleted"
-	case service.ErrForbidden:
-		return http.StatusForbidden, ErrorCodeForbidden, "You do not have permission to access this resource"
-	case service.ErrBillingParse:
-		return http.StatusInternalServerError, ErrorCodeInternalError, "An internal error occurred while processing your request"
+	code := errcode.Lookup(err)
+	switch {
+	case errors.Is(err, service.ErrNotFound):
+		return http.StatusNotFound, ErrorCode(code), "The requested resource was not found"
+	case errors.Is(err, service.ErrDeleted):
+		return http.StatusGone, ErrorCode(code), "The requested resource has been deleted"
+	case errors.Is(err, service.ErrForbidden):
+		return http.StatusForbidden, ErrorCode(code), "You do not have permission to access this resource"
+	case errors.Is(err, service.ErrBillingParse):
+		return http.StatusInternalServerError, ErrorCode(code), "An internal error occurred while processing your request"
 	default:
-		return http.StatusInternalServerError, ErrorCodeInternalError, "An unexpected error occurred"
+		return http.StatusInternalServerError, ErrorCode(code), "An unexpected error occurred"
 	}
 }
 

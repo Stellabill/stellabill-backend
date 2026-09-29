@@ -1,0 +1,57 @@
+name: Security Scan — Gitleaks
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  schedule:
+    - cron: '0 6 * * *'       # daily at 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks-scan:
+    name: Secret Detection (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history is required for --log-opts or --commits scanning.
+          # Without it gitleaks can only scan the HEAD tree.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/gitleaks_8.18.2_linux_amd64.tar.gz \
+            | tar xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Run gitleaks (full history)
+        run: |
+          gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --verbose \
+            --no-banner
+
+      # ------------------------------------------------------------------
+      # If the scan finds leaks, upload the SARIF report for GitHub code
+      # scanning so findings are visible in the Security tab.
+      # ------------------------------------------------------------------
+      - name: Upload SARIF to GitHub Code Scanning
+        if: failure()
+        continue-on-error: true
+        run: |
+          gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --report-format sarif \
+            --report-path gitleaks.sarif \
+            --no-banner || true
+          gh codeql upload-sarif gitleaks.sarif --repository ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

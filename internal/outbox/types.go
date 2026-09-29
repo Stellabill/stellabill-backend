@@ -26,7 +26,6 @@ type Event struct {
 	UpdatedAt       time.Time       `json:"updated_at" db:"updated_at"`
 	Version         int             `json:"version" db:"version"`
 	DeduplicationID *string         `json:"deduplication_id,omitempty" db:"deduplication_id"`
-	TenantID        *string         `json:"tenant_id,omitempty" db:"tenant_id"`
 	Partition       int             `json:"partition" db:"partition"`
 }
 

@@ -10,7 +10,7 @@ All admin API requests must be signed with an HMAC-SHA256 signature to ensure au
 
 Every admin API request must include the following headers:
 
-1. `X-Stellabill-Date`: Unix timestamp in seconds (UTC) when the request was created. The timestamp must be within ±60 seconds of the server's current time.
+1. `X-Stellabill-Date`: Unix timestamp in seconds (UTC) when the request was created. The timestamp must be within °60 seconds of the server's current time.
 2. `X-Stellabill-Request-ID`: A unique identifier for this request (e.g., a UUID). This is used to prevent replay attacks.
 3. `X-Stellabill-Signature`: The HMAC-SHA256 signature of the canonical request, prefixed with `v1=`.
 
@@ -19,17 +19,17 @@ Every admin API request must include the following headers:
 The canonical request is a string constructed as follows:
 
 ```
-<Method>
-<Path>
-<QueryString>
-<SignedHeaders>
-<SignedHeadersNames>
-<BodyHash>
+[Method]
+[Path]
+[QueryString]
+[SignedHeaders]
+[SignedHeadersNames]
+[BodyHash]
 ```
 
 ### Component Details
 
-1. **Method**: The HTTP method in uppercase (e.g., `POST`, `GET`).
+1. **Method**: The HTTP method in uppercase (e.g., `Post`, `GET`).
 2. **Path**: The URL path (e.g., `/api/admin/purge`). If empty, use `/`.
 3. **QueryString**: The sorted, URL-encoded query parameters, joined with `&`. Parameters are sorted lexicographically by key, then by value.
 4. **SignedHeaders**: The signed headers in the format `key:value\n` for each header. The keys are lowercase and values are trimmed.
@@ -86,7 +86,7 @@ const secret = "your-admin-signing-secret";
 const canonicalRequest = "..."; // as above
 
 const hmac = crypto.createHmac("sha256", secret);
-hmac.update(canonicalRequest);
+mic,update(canonicalRequest);
 const signature = "v1=" + hmac.digest("hex");
 ```
 

@@ -19,16 +19,16 @@ import (
 type fakeKpiStore struct {
 	mu sync.Mutex
 
-	mrrCents         int64
-	mrrErr           error
-	planCounts       map[KpiPlanKey]int64
-	planErr          error
-	churnRate        float64
-	churnErr         error
+	mrrCents   int64
+	mrrErr     error
+	planCounts map[KpiPlanKey]int64
+	planErr    error
+	churnRate  float64
+	churnErr   error
 
-	computeMRRCalls           int
-	countActiveCalls          int
-	computeChurnCalls         int
+	computeMRRCalls   int
+	countActiveCalls  int
+	computeChurnCalls int
 }
 
 func (f *fakeKpiStore) ComputeMRRInCents(_ context.Context) (int64, error) {
@@ -164,7 +164,7 @@ func TestKpiRefreshOnce_EmptyPlans(t *testing.T) {
 func TestKpiRefreshOnce_PlanCountsNil(t *testing.T) {
 	resetKpiGauges()
 	store := &fakeKpiStore{
-		mrrCents:  50000,
+		mrrCents:   50000,
 		planCounts: nil,
 		churnRate:  0,
 	}

@@ -1,6 +1,10 @@
 package service
 
-import "errors"
+import (
+	"errors"
+
+	"stellarbill-backend/internal/errcode"
+)
 
 var (
 	// ErrNotFound is returned when the requested subscription does not exist.
@@ -27,3 +31,14 @@ var (
 	// ErrInvalidStatus is returned when the target status is not a known subscription status.
 	ErrInvalidStatus = errors.New("invalid status")
 )
+
+func init() {
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrNotFound) }, errcode.CodeNotFound)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrDeleted) }, errcode.CodeSubscriptionDeleted)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrForbidden) }, errcode.CodeForbidden)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrBillingParse) }, errcode.CodeSubscriptionBillingParse)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrExportInProgress) }, errcode.CodeExportInProgress)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrInvalidTransition) }, errcode.CodeSubscriptionInvalidTransition)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrUnknownCurrentState) }, errcode.CodeSubscriptionUnknownState)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrInvalidStatus) }, errcode.CodeSubscriptionInvalidStatus)
+}

@@ -8,6 +8,14 @@ metadata:
     component: backend
 spec:
   replicas: 2
+  # Coordinate with GRACEFUL_SHUTDOWN_TIMEOUT (default 30s). The
+  # application drains the HTTP server first (up to
+  # GRACEFUL_SHUTDOWN_TIMEOUT), then drains the DB pool (up to another
+  # GRACEFUL_SHUTDOWN_TIMEOUT). Add a 5s buffer so Kubernetes doesn't
+  # SIGKILL the pod while the pool is still draining.
+  # Formula: >= 2 * GRACEFUL_SHUTDOWN_TIMEOUT + 5
+  # Default: >= 65 seconds (30 + 30 + 5).
+  terminationGracePeriodSeconds: 65
   selector:
     matchLabels:
       app: stellabill

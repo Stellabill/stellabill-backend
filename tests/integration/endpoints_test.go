@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"stellarbill-backend/internal/auth"
@@ -12,11 +13,11 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 func setupRouter() *gin.Engine {
 	// Initialize required configuration for tests
-	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
 	os.Setenv("MOCK_DB", "true")
 	os.Setenv("JWT_SECRET", "Test-Secret-Must-Be-Long-And-Complex-123!")
 	os.Setenv("ADMIN_TOKEN", "Admin-Token-Must-Be-Long-And-Complex-123!")
@@ -34,6 +35,7 @@ func setupRouter() *gin.Engine {
 }
 
 func TestHealthEndpointAuthnz(t *testing.T) {
+	require.NoError(t, requireStack(t).PingPostgres(context.Background()))
 	router := setupRouter()
 
 	tests := []struct {
@@ -88,6 +90,7 @@ func TestHealthEndpointAuthnz(t *testing.T) {
 }
 
 func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
+	require.NoError(t, requireStack(t).PingRedis(context.Background()))
 	router := setupRouter()
 	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)
@@ -176,6 +179,7 @@ func TestListPlansAuthenticationAndAuthorization(t *testing.T) {
 }
 
 func TestListSubscriptionsAuthorizationEnforcement(t *testing.T) {
+	require.NoError(t, requireStack(t).PingWebhook(context.Background()))
 	router := setupRouter()
 	cfg, _ := config.Load()
 	tg := testutil.NewTestTokenGenerator(cfg.JWTSecret)

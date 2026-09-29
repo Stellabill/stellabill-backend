@@ -2,10 +2,15 @@ package auth
 
 import (
 	"context"
+	"crypto"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -22,15 +27,100 @@ type ErrorResponse struct {
 
 // Config holds JWT requirements
 type Config struct {
-	Secret   []byte
-	Issuer   string
-	Audience string
+	Secret       []byte
+	Issuer       string
+	Audience     string
+	Algorithm    string // Required. Must be "HS256" (or "HS384", "HS512").
+	ClockSkewSec int64  // Allowed clock drift in seconds. Range: 0-300.
+	MaxTokenAge  int64  // Maximum token age beyond expiry in seconds. 0 = disabled.
+}
+
+// ValidateConfig checks that the Config meets minimum security requirements.
+// It is called once at middleware creation time; a misconfiguration causes an
+// immediate panic so the problem surfaces at deploy time rather than at
+// request time.
+func (cfg *Config) ValidateConfig() {
+	if len(cfg.Secret) < 32 {
+		panic("auth: JWT secret must be at least 32 bytes")
+	}
+	if cfg.Issuer == "" {
+		panic("auth: JWT issuer is required")
+	}
+	if cfg.Audience == "" {
+		panic("auth: JWT audience is required")
+	}
+	if cfg.Algorithm == "" {
+		panic("auth: JWT algorithm is required")
+	}
+	if cfg.ClockSkewSec < 0 || cfg.ClockSkewSec > 300 {
+		panic("auth: ClockSkewSec must be between 0 and 300")
+	}
+	if cfg.MaxTokenAge < 0 {
+		panic("auth: MaxTokenAge must be non-negative")
+	}
+}
+
+// validateClaimsStrict enforces issuer, audience, expiry, nbf, and token-age
+// checks with bounded clock skew. It returns nil on success or a descriptive
+// error suitable for 401 responses.
+func validateClaimsStrict(cfg *Config, claims *Claims, now time.Time) error {
+	// Issuer — exact match, always required.
+	if claims.Issuer != cfg.Issuer {
+		return fmt.Errorf("invalid issuer: expected %q, got %q", cfg.Issuer, claims.Issuer)
+	}
+
+	// Audience — must contain our required value.
+	if !containsString(cfg.Audience, claims.Audience) {
+		return fmt.Errorf("invalid audience: required %q not found in %v", cfg.Audience, claims.Audience)
+	}
+
+	// ExpiresAt — mandatory; rejected if expired beyond clock skew.
+	if claims.ExpiresAt == nil {
+		return errors.New("token expiration claim missing")
+	}
+	skew := time.Duration(cfg.ClockSkewSec) * time.Second
+	if now.After(claims.ExpiresAt.Time.Add(skew)) {
+		return fmt.Errorf(
+			"token expired at %v (now: %v, allowed skew: %ds)",
+			claims.ExpiresAt.Time.Format(time.RFC3339),
+			now.Format(time.RFC3339),
+			cfg.ClockSkewSec,
+		)
+	}
+
+	// NotBefore — rejected if used before nbf minus clock skew.
+	if claims.NotBefore != nil {
+		if now.Before(claims.NotBefore.Time.Add(-skew)) {
+			return fmt.Errorf(
+				"token not valid until %v (now: %v, allowed skew: %ds)",
+				claims.NotBefore.Time.Format(time.RFC3339),
+				now.Format(time.RFC3339),
+				cfg.ClockSkewSec,
+			)
+		}
+	}
+
+	// MaxTokenAge — optional upper bound on token age.
+	if cfg.MaxTokenAge > 0 && claims.IssuedAt != nil {
+		age := now.Sub(claims.IssuedAt.Time).Seconds()
+		if age > float64(cfg.MaxTokenAge) {
+			return fmt.Errorf(
+				"token too old: issued %ds ago, max age %ds",
+				int64(age), cfg.MaxTokenAge,
+			)
+		}
+	}
+
+	return nil
 }
 
 // Claims is defined in claims.go
 
 // JWTMiddleware creates a middleware verifying tokens against the provided config
 func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {
+	// Fail fast: validate config once at startup.
+	cfg.ValidateConfig()
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -39,36 +129,44 @@ func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Expecting "Bearer <token>"
-			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-				respondWithError(w, http.StatusUnauthorized, "invalid authorization format")
-				return
-			}
+const (
+	defaultJWKSRefreshTTL = 60 * time.Second
+	defaultJWKSNegativeTTL = 60 * time.Second
+	defaultHTTPClientTimeout  = 10 * time.Second
+)
 
 			tokenString := parts[1]
-			claims := &Claims{}
-
-			token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
-				// Validate the signing algorithm
-				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, errors.New("unexpected signing method")
+				if tokenString == "" {
+					respondWithError(w, http.StatusUnauthorized, "invalid authorization format")
+					return
 				}
-				return cfg.Secret, nil
-			})
+				claims := &Claims{}
+
+				// Use a large leeway to disable the parser's built-in time
+				// validation. validateClaimsStrict applies the configured
+				// ClockSkewSec for precise tolerance.
+				token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+					// Explicitly validate the signing algorithm to prevent
+					// algorithm-confusion attacks (e.g. "none", RSA-to-HMAC
+					// substitution).
+					if t.Method.Alg() != cfg.Algorithm {
+						return nil, fmt.Errorf(
+							"unexpected algorithm: expected %s, got %s",
+							cfg.Algorithm, t.Method.Alg(),
+						)
+					}
+					return cfg.Secret, nil
+				}, jwt.WithLeeway(time.Hour*24*365))
 
 			if err != nil || !token.Valid {
 				respondWithError(w, http.StatusUnauthorized, "invalid or expired token")
 				return
 			}
 
-			// Validate Issuer and Audience if configured
-			if cfg.Issuer != "" && claims.Issuer != cfg.Issuer {
-				respondWithError(w, http.StatusUnauthorized, "invalid issuer")
-				return
-			}
-			if cfg.Audience != "" && !stringInSlice(cfg.Audience, claims.Audience) {
-				respondWithError(w, http.StatusUnauthorized, "invalid audience")
+			// Strict claims validation (issuer, audience, clock skew,
+			// not-before, token age).
+			if err := validateClaimsStrict(&cfg, claims, time.Now()); err != nil {
+				respondWithError(w, http.StatusUnauthorized, err.Error())
 				return
 			}
 
@@ -77,10 +175,24 @@ func JWTMiddleware(cfg Config) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+
+type jwksKeyCache struct {
+	mu         sync.RWMutex
+	fetchMu    sync.Mutex
+	url        string
+	client     *http.Client
+	refreshTTL  time.Duration
+	negativeTTL time.Duration
+	keys       map[string]crypto.PublicKey
+	fetchedAt  time.Time
+	negative   map[string]time.Time
 }
 
 // GetPrincipal safely extracts the user ID from the context in downstream handlers
 func GetPrincipal(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
 	val, ok := ctx.Value(PrincipalKey).(string)
 	return val, ok
 }
@@ -92,7 +204,7 @@ func respondWithError(w http.ResponseWriter, code int, msg string) {
 	json.NewEncoder(w).Encode(ErrorResponse{Error: msg})
 }
 
-func stringInSlice(a string, list []string) bool {
+func containsString(a string, list []string) bool {
 	for _, b := range list {
 		if b == a {
 			return true
@@ -103,15 +215,17 @@ func stringInSlice(a string, list []string) bool {
 
 // TokenGenerator creates JWT tokens for testing and internal use.
 type TokenGenerator struct {
-	secret []byte
-	issuer string
+	secret   []byte
+	issuer   string
+	audience string
 }
 
 // NewTokenGenerator creates a new token generator.
 func NewTokenGenerator(secret string) *TokenGenerator {
 	return &TokenGenerator{
-		secret: []byte(secret),
-		issuer: "stellarbill-backend",
+		secret:   []byte(secret),
+		issuer:   "stellarbill-backend",
+		audience: "api-clients",
 	}
 }
 
@@ -121,9 +235,10 @@ func (tg *TokenGenerator) generateToken(userID, email, role, tenantID string, ex
 		UserID:   userID,
 		Email:    email,
 		Role:     Role(role),
-		TenantID: "test-tenant",
+		TenantID: tenantID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    tg.issuer,
+			Audience:  jwt.ClaimStrings{tg.audience},
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Subject:   userID,
@@ -161,11 +276,12 @@ func (tg *TokenGenerator) GenerateTokenWithoutRoles(userID, email string) (strin
 // GenerateTokenWithoutUserID creates a token missing the user_id/subject claim.
 func (tg *TokenGenerator) GenerateTokenWithoutUserID(email, role string) (string, error) {
 	claims := Claims{
-		Email:    email,
-		Role:     Role(role),
+		Email: email,
+		Role:  Role(role),
 		TenantID: "tenant-1",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    tg.issuer,
+			Audience:  jwt.ClaimStrings{tg.audience},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},

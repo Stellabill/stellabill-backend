@@ -1,3 +1,41 @@
+name: Release
+
+# Trigger when a semantic version tag is pushed (e.g. v1.2.3, v0.4.0-rc.1).
+# Maintained releases only; pre-releases and patch lines produce the same pipeline.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (without the leading 'v'). Used for manual repro."
+        required: true
+        default: ""
+
+# Hard-deny everything by default; each job opts in to what it actually needs.
+permissions: {}
+
+concurrency:
+  # Only one release pipeline runs at a time per ref to avoid duplicate pushes.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Build & publish a multi-arch image to GHCR.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # checkout
+      packages: write  # push image + signature layers to GHCR
+      id-token: write  # exchange for Fulcio certificate during cosign sign
+    outputs:
+      image: ${{ env.IMAGE }}
+      digest: ${{ steps.build.outputs.digest }}
+      tag: ${{ steps.meta.outputs.tag }}
 name: release-sdk
 
 # Publish the @stellabill/sdk TypeScript SDK to npm whenever a GitHub
@@ -37,6 +75,215 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Resolve image name
+        id: meta
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          # GHCR is lowercase-only. Convert via bash parameter expansion rather
+          # than a non-existent GitHub Actions expression.
+          IMAGE="ghcr.io/${REPO,,}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            : # tag already in the proper form
+          else
+            # workflow_dispatch fallback: use SHA
+            TAG="sha-${GITHUB_SHA::7}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.title=stellabill-backend
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.tag }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.event.repository.updated_at }}
+          provenance: true   # produce SLSA-style provenance in image manifest
+          sbom: true         # produce SBOM layer (syft)
+
+      - name: Export IMAGE for downstream jobs
+        run: |
+          echo "IMAGE=${{ steps.meta.outputs.image }}" >> "$GITHUB_ENV"
+          echo "TAG=${{ steps.meta.outputs.tag }}" >> "$GITHUB_ENV"
+          echo "DIGEST=${{ steps.build.outputs.digest }}" >> "$GITHUB_ENV"
+
+  # ---------------------------------------------------------------------------
+  # 2. Generate a SLSA v1 provenance predicate (minimal hand-rolled in-toto
+  #    statement). This is intentionally simpler than the slsa-github-generator
+  #    framework so it stays auditable end-to-end.
+  # ---------------------------------------------------------------------------
+  provenance:
+    name: Generate SLSA provenance
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      predicate-path: ${{ steps.write.outputs.path }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image digest
+        id: resolve
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ env.DIGEST }}
+        run: |
+          if [ -z "${IMAGE}" ] || [ -z "${DIGEST}" ]; then
+            echo "IMAGE or DIGEST missing - previous job did not export" >&2
+            exit 1
+          fi
+          # strip the sha256: prefix for in-toto digest field
+          SHORT_DIGEST="${DIGEST#sha256:}"
+          echo "subject=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "short=${SHORT_DIGEST}"     >> "$GITHUB_OUTPUT"
+
+      - name: Build SLSA v1 predicate
+        id: write
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          SHORT_DIGEST: ${{ steps.resolve.outputs.short }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REF: ${{ github.ref }}
+        run: |
+          mkdir -p artifacts
+          cat > artifacts/provenance.intoto.jsonl <<EOF
+          {"_type":"https://in-toto.io/Statement/v1","predicateType":"https://slsa.dev/provenance/v1","subject":[{"name":"${IMAGE}","digest":{"sha256":"${SHORT_DIGEST}"}}],"predicate":{"buildDefinition":{"buildType":"https://github.com/actions/workflow/v1","externalParameters":{"workflow":".github/workflows/release.yml","ref":"${REF}"},"resolvedDependencies":[{"name":"source","uri":"git+https://github.com/${GITHUB_REPOSITORY}@${SHA}"}]},"runDetails":{"builder":{"id":"https://github.com/actions/runner"},"metadata":{"invocationId":"https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}"}}}}
+          EOF
+          echo "path=$(pwd)/artifacts/provenance.intoto.jsonl" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # 3. Sign the published image digest with cosign keyless using the GitHub
+  #    OIDC token (Fulcio issues a short-lived certificate bound to the workflow).
+  # ---------------------------------------------------------------------------
+  sign:
+    name: Cosign sign (keyless)
+    needs: [build, provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # required for keyless signing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.5.0
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign image by digest
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ env.DIGEST }}
+        run: |
+          # Pin the signing target to the digest, not the tag, so a future
+          # re-tag of the tag cannot invalidate the signature.
+          # --oidc-provider=github explicitly declares the GH Actions OIDC
+          # issuer to Fulcio; cosign would auto-detect it anyway, but the
+          # explicit flag is required by the project issue (#437) and makes
+          # the trust path auditable.
+          cosign sign --yes \
+            --oidc-provider=github \
+            "${IMAGE}@${DIGEST}"
+
+      # --- Attach SLSA provenance as a cosign attestation layer ---
+      - name: Attest SLSA provenance
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ env.DIGEST }}
+          PREDICATE: ${{ needs.provenance.outputs.predicate-path }}
+        run: |
+          # The provenance job produces a FULL in-toto statement (with
+          # _type/predicateType/subject/predicate), so we use --statement.
+          # Using --predicate here would cause cosign to wrap an already
+          # wrapped statement and the resulting attestation would not match
+          # what Kyverno expects.
+          # --oidc-provider=github mirrors the signing identity (Fulcio bound
+          # to GH Actions OIDC) so the attestation lands on Rekor under the
+          # same certificate identity as the signature.
+          cosign attest --yes \
+            --type slsaprovenance \
+            --oidc-provider=github \
+            --statement "${PREDICATE}" \
+            "${IMAGE}@${DIGEST}"
+
+  # ---------------------------------------------------------------------------
+  # 4. Re-verify the signature in the same job graph before declaring success.
+  #    This is the same command a cluster operator would run on a workstation.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Cosign verify (keyless)
+    needs: sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required by cosign verify-blob / verify for client state
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.5.0
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Verify image signature
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ env.DIGEST }}
+        run: |
+          # Pin the organisation to known-good forks/upstream. `*` would let an
+          # attacker publish a repo called `stellabill-backend` and impersonate.
+          cosign verify \
+            --certificate-identity-regexp 'https://github.com/(Stellabill|believetimothy)/stellabill-backend/.github/workflows/release.yml@refs/tags/.+' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            --output text \
+            "${IMAGE}@${DIGEST}"
+
+      - name: Verify SLSA provenance attestation
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ env.DIGEST }}
+        run: |
+          cosign verify-attestation \
+            --type slsaprovenance \
+            --certificate-identity-regexp 'https://github.com/(Stellabill|believetimothy)/stellabill-backend/.github/workflows/release.yml@refs/tags/.+' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            --output text \
+            "${IMAGE}@${DIGEST}"
       - name: Checkout release tag
         if: github.event_name == 'release'
         run: git checkout ${{ github.event.release.tag_name }}

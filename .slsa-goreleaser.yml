@@ -1,0 +1,20 @@
+# SLSA Go builder configuration.
+# Used by slsa-framework/slsa-github-generator builder_go_slsa3.yml.
+# Reference: https://github.com/slsa-framework/slsa-github-generator/blob/main/internal/builders/go/README.md
+
+version: 1
+
+env:
+  - CGO_ENABLED=0
+  - GO111MODULE=on
+
+flags:
+  - -trimpath
+  - -ldflags=-s -w
+
+goos: linux
+goarch: amd64
+
+binary: stellabill-backend
+
+main: ./cmd/server

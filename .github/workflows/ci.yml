@@ -29,6 +29,8 @@ jobs:
           test -z "$(gofumpt -l .)"
       - name: OpenAPI validation
         run: go run ./cmd/openapi-validate
+      - name: OpenAPI examples lint
+        run: go run ./tools/openapi-lint
       - name: Migration Safety Validation
         run: go run ./cmd/validate-migrations
       - name: ADR lint (unique numbers + index)

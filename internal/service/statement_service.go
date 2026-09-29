@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/storage/s3"
 	"stellarbill-backend/internal/timeutil"
 )
 
@@ -11,6 +12,7 @@ import (
 type StatementService interface {
 	GetDetail(ctx context.Context, callerID string, roles []string, statementID string) (*StatementDetail, []string, error)
 	ListByCustomer(ctx context.Context, callerID string, roles []string, customerID string, q repository.StatementQuery) (*ListStatementsDetail, int, []string, error)
+	ExportStatements(ctx context.Context, callerID string, roles []string, tenantID, customerID string, uploader s3.S3Uploader) (*ExportResult, error)
 }
 
 // statementService is the concrete implementation of StatementService.

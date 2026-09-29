@@ -54,7 +54,7 @@ func TestGradient2Limiter_ConvergenceOnTimeouts(t *testing.T) {
 	cfg.InitialLimit = 20
 	cfg.MinLimit = 1
 	cfg.MaxLimit = 50
-	
+
 	limiter := NewGradient2Limiter(cfg)
 
 	// Simulate sustained timeouts
@@ -63,7 +63,7 @@ func TestGradient2Limiter_ConvergenceOnTimeouts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		
+
 		// Simulate timeout error
 		rel(errors.New("timeout"))
 	}
@@ -83,7 +83,7 @@ func TestGradient2Limiter_IncreaseOnSuccess(t *testing.T) {
 	cfg.InitialLimit = 5
 	cfg.MinLimit = 1
 	cfg.MaxLimit = 50
-	
+
 	limiter := NewGradient2Limiter(cfg)
 
 	// Establish RttNoLoad

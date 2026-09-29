@@ -45,21 +45,21 @@ func CancelSubscriptionFlow(
 					sc.Set("previous_status", result.PreviousStatus)
 					return nil
 				},
-			Compensate: func(ctx context.Context, sc SagaContext) error {
-				prev, ok := sc.Get("previous_status")
-				if !ok {
-					return fmt.Errorf("previous status not found in saga context")
-				}
-				prevStr, ok := prev.(string)
-				if !ok {
-					return fmt.Errorf("previous status is not a string")
-				}
-				_, err := subSvc.ChangeStatus(ctx, tenantID, actorID, subscriptionID, prevStr)
-				if err != nil {
-					return fmt.Errorf("restore subscription status to %s: %w", prev, err)
-				}
-				return nil
-			},
+				Compensate: func(ctx context.Context, sc SagaContext) error {
+					prev, ok := sc.Get("previous_status")
+					if !ok {
+						return fmt.Errorf("previous status not found in saga context")
+					}
+					prevStr, ok := prev.(string)
+					if !ok {
+						return fmt.Errorf("previous status is not a string")
+					}
+					_, err := subSvc.ChangeStatus(ctx, tenantID, actorID, subscriptionID, prevStr)
+					if err != nil {
+						return fmt.Errorf("restore subscription status to %s: %w", prev, err)
+					}
+					return nil
+				},
 			},
 			{
 				Key: "create_refund_statement",
@@ -83,15 +83,15 @@ func CancelSubscriptionFlow(
 					sc.Set("refund_created", true)
 					return nil
 				},
-			Compensate: func(ctx context.Context, sc SagaContext) error {
-				created, _ := sc.Get("refund_created")
-				createdBool, _ := created.(bool)
-				if created == nil || !createdBool {
+				Compensate: func(ctx context.Context, sc SagaContext) error {
+					created, _ := sc.Get("refund_created")
+					createdBool, _ := created.(bool)
+					if created == nil || !createdBool {
 						return nil
 					}
-				existing, err := stmtRepo.FindByID(ctx, refundStatementID)
-				if err != nil {
-					if errors.Is(err, repository.ErrNotFound) {
+					existing, err := stmtRepo.FindByID(ctx, refundStatementID)
+					if err != nil {
+						if errors.Is(err, repository.ErrNotFound) {
 							return nil
 						}
 						return fmt.Errorf("find refund statement for void: %w", err)

@@ -133,6 +133,24 @@ func TestDefaultHTTPClient_Post_MaxBodySize(t *testing.T) {
 	assert.Equal(t, http.StatusOK, statusCode)
 }
 
+func TestDefaultHTTPClient_Post_ContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(time.Second)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := NewDefaultHTTPClient(5*time.Second, "")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = client.Post(ctx, server.URL, "application/json", []byte(`{}`))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+}
+
 func TestDefaultHTTPClient_Post_InvalidRequest(t *testing.T) {
 	client, err := NewDefaultHTTPClient(5*time.Second, "")
 	require.NoError(t, err)

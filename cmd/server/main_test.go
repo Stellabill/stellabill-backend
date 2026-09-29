@@ -138,6 +138,7 @@ func TestRunHTTPServer_SecondSignalForcesClose(t *testing.T) {
 	ln, restore := listenOnLocalhost(t)
 	defer restore()
 
+	var cleanupCalled atomic.Bool
 	started := make(chan struct{})
 	srv := &http.Server{
 		Addr: ln.Addr().String(),
@@ -151,7 +152,10 @@ func TestRunHTTPServer_SecondSignalForcesClose(t *testing.T) {
 	secondSignal := make(chan os.Signal, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- runHTTPServer(ctx, secondSignal, srv, time.Second, nil)
+		done <- runHTTPServer(ctx, secondSignal, srv, time.Second, func(context.Context) error {
+			cleanupCalled.Store(true)
+			return nil
+		})
 	}()
 
 	client := &http.Client{Timeout: time.Second}
@@ -167,10 +171,59 @@ func TestRunHTTPServer_SecondSignalForcesClose(t *testing.T) {
 
 	err := <-done
 	if err == nil {
-		t.Fatal("expected forced shutdown error")
+		t.Fatal("expected error after second signal forced close")
 	}
-	if !strings.Contains(err.Error(), "forced shutdown after second signal") {
-		t.Fatalf("expected forced shutdown error, got %v", err)
+	if !strings.Contains(err.Error(), "http server shutdown") {
+		t.Fatalf("expected shutdown error to mention http server shutdown, got %v", err)
+	}
+	if !cleanupCalled.Load() {
+		t.Fatal("expected cleanup to be called even after second signal forced close")
+	}
+	<-clientDone
+}
+
+// TestRunHTTPServer_CleanupCalledOnTimeout verifies that the cleanup function
+// is called even when the HTTP server shutdown times out. This ensures the
+// database pool is always drained before exit.
+func TestRunHTTPServer_CleanupCalledOnTimeout(t *testing.T) {
+	ln, restore := listenOnLocalhost(t)
+	defer restore()
+
+	started := make(chan struct{})
+	var cleanupCalled atomic.Bool
+	srv := &http.Server{
+		Addr: ln.Addr().String(),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(started)
+			select {} // hang forever to cause shutdown timeout
+		}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runHTTPServer(ctx, make(chan os.Signal), srv, 25*time.Millisecond, func(context.Context) error {
+			cleanupCalled.Store(true)
+			return nil
+		})
+	}()
+
+	client := &http.Client{Timeout: time.Second}
+	clientDone := make(chan struct{})
+	go func() {
+		_, _ = client.Get("http://" + ln.Addr().String())
+		close(clientDone)
+	}()
+
+	<-started
+	cancel()
+
+	err := <-done
+	if err == nil {
+		t.Fatal("expected shutdown timeout error")
+	}
+	if !cleanupCalled.Load() {
+		t.Fatal("expected cleanup to be called even on shutdown timeout")
 	}
 	<-clientDone
 }

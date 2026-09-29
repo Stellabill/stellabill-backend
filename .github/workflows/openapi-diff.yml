@@ -1,0 +1,38 @@
+name: OpenAPI Diff
+
+on:
+  pull_request:
+    paths:
+      - 'openapi/openapi.yaml'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  openapi-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run OpenAPI Diff
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/app openapitools/openapi-diff:latest /app/openapi/baseline.yaml /app/openapi/openapi.yaml --markdown /app/diff.md || true
+
+      - name: Post diff to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('diff.md')) {
+              const diff = fs.readFileSync('diff.md', 'utf8');
+              if (diff.trim().length > 0) {
+                github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: `### OpenAPI Changes\n\n${diff}`
+                });
+              }
+            }

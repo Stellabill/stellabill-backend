@@ -3,13 +3,16 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sony/gobreaker"
 )
 
 // Health status constants
@@ -264,6 +267,14 @@ func (hc *HealthChecker) checkDatabase(ctx context.Context) interface{} {
 		return DependencyHealth{
 			Status:  StatusUnhealthy,
 			Message: "database connection closed unexpectedly",
+			Latency: latency.String(),
+		}
+	}
+
+	if errors.Is(lastErr, gobreaker.ErrOpenState) || strings.Contains(lastErr.Error(), "circuit breaker open") {
+		return DependencyHealth{
+			Status:  StatusUnhealthy,
+			Message: "database circuit breaker open - failing fast while DB recovers",
 			Latency: latency.String(),
 		}
 	}

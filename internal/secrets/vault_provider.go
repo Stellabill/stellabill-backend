@@ -23,15 +23,26 @@ type cacheEntry struct {
 	expiresAt time.Time
 }
 
+// callState models a single in-flight Vault fetch shared by concurrent
+// callers. It implements single-flight so a stampede of readers (either cache
+// misses or proactive refreshes near TTL expiry) coalesces into one HTTP
+// request instead of N duplicate requests to the Vault cluster.
+type callState struct {
+	done chan struct{} // closed when the shared fetch completes
+	val  string
+	err  error
+}
+
 type VaultProvider struct {
 	address    string
 	token      string
 	pathPrefix string
 	client     *http.Client
 
-	cache map[string]*cacheEntry
-	mu    sync.RWMutex
-	ttl   time.Duration
+	cache    map[string]*cacheEntry
+	inflight map[string]*callState
+	mu       sync.RWMutex
+	ttl      time.Duration
 }
 
 func NewVaultProvider(address, token, pathPrefix string) *VaultProvider {
@@ -44,6 +55,7 @@ func NewVaultProvider(address, token, pathPrefix string) *VaultProvider {
 		pathPrefix: pathPrefix,
 		client:     &http.Client{Timeout: 5 * time.Second},
 		cache:      make(map[string]*cacheEntry),
+		inflight:   make(map[string]*callState),
 		ttl:        5 * time.Minute,
 	}
 }
@@ -59,6 +71,10 @@ func (p *VaultProvider) GetSecret(ctx context.Context, key string) (string, erro
 	p.mu.RUnlock()
 
 	if ok && time.Now().Before(entry.expiresAt) {
+		// TTL caching with proactive refresh: as an entry nears expiry we
+		// kick a background refresh while still serving the current value.
+		// The single-flight guard in fetchAndCache keeps concurrent readers
+		// from issuing a thundering herd of refresh requests.
 		if time.Until(entry.expiresAt) < p.ttl/5 {
 			go p.refreshSecret(key)
 		}
@@ -69,19 +85,37 @@ func (p *VaultProvider) GetSecret(ctx context.Context, key string) (string, erro
 }
 
 func (p *VaultProvider) fetchAndCache(ctx context.Context, key string) (string, error) {
-	val, err := p.fetchFromVault(ctx, key)
-	if err != nil {
-		return "", err
-	}
-
+	// Single-flight: if another goroutine is already fetching this key, join
+	// it and reuse its result instead of issuing a duplicate Vault request.
 	p.mu.Lock()
-	p.cache[key] = &cacheEntry{
-		value:     val,
-		expiresAt: time.Now().Add(p.ttl),
+	if cs, ok := p.inflight[key]; ok {
+		p.mu.Unlock()
+		select {
+		case <-cs.done:
+			return cs.val, cs.err
+		case <-ctx.Done():
+			return "", fmt.Errorf("%w: %v", ErrProviderTimeout, ctx.Err())
+		}
 	}
+	cs := &callState{done: make(chan struct{})}
+	p.inflight[key] = cs
 	p.mu.Unlock()
 
-	return val, nil
+	val, err := p.fetchFromVault(ctx, key)
+
+	p.mu.Lock()
+	delete(p.inflight, key)
+	if err == nil {
+		p.cache[key] = &cacheEntry{
+			value:     val,
+			expiresAt: time.Now().Add(p.ttl),
+		}
+	}
+	cs.val, cs.err = val, err
+	close(cs.done)
+	p.mu.Unlock()
+
+	return val, err
 }
 
 func (p *VaultProvider) fetchFromVault(ctx context.Context, key string) (string, error) {
@@ -97,18 +131,26 @@ func (p *VaultProvider) fetchFromVault(ctx context.Context, key string) (string,
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || osIsTimeout(err) {
+		if errors.Is(err, context.DeadlineExceeded) || osIsTimeout(err) || ctx.Err() != nil {
 			return "", ErrProviderTimeout
 		}
 		return "", fmt.Errorf("vault request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// 403 "permission denied" and 404 "no such secret" mean the secret is not
+	// resolvable from this provider, so the chain falls through to the next
+	// provider. Everything else is treated as a hard failure so a broken or
+	// revoked token (401) or a degraded Vault backend (5xx) is never silently
+	// masked by an environment fallback.
 	if resp.StatusCode == http.StatusForbidden {
 		return "", fmt.Errorf("vault access forbidden: %w", ErrSecretNotFound)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return "", fmt.Errorf("vault path not found: %w", ErrSecretNotFound)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("vault access unauthorized: token rejected")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("vault returned status %d", resp.StatusCode)

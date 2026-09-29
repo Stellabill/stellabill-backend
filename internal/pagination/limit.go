@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	"stellarbill-backend/internal/errcode"
 )
 
 const (
@@ -15,6 +17,10 @@ const (
 
 // ErrInvalidLimit is returned when a limit parameter is not a valid integer.
 var ErrInvalidLimit = errors.New("invalid limit value")
+
+func init() {
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrInvalidLimit) }, errcode.CodeInvalidLimit)
+}
 
 // ParseLimit parses the raw limit query parameter.
 // It enforces the following rules:

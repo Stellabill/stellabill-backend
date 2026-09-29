@@ -16,8 +16,16 @@ var fullyRedactedFieldNames = map[string]bool{
 	"api_key":       true,
 	"apikey":        true,
 	"authorization": true,
+	"x-admin-token": true,
+	"x_admin_token": true,
+	"admin_token":   true,
 	"access_token":  true,
 	"refresh_token": true,
+	"client_secret": true,
+	"private_key":   true,
+	"session_token": true,
+	"cookie":        true,
+	"set-cookie":    true,
 }
 
 var (
@@ -25,12 +33,38 @@ var (
 	amountPattern = regexp.MustCompile(`\$?\d+\.\d{2}`)
 )
 
+func redactSensitiveFragments(s string) string {
+	if s == "" {
+		return ""
+	}
+	lower := strings.ToLower(s)
+
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)\S+`),
+		regexp.MustCompile(`(?i)(x-admin-token\s*[:=]\s*)\S+`),
+		regexp.MustCompile(`(?i)(jwt\s*[:=]\s*)[^\s"'&,;]+`),
+		regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*`),
+		regexp.MustCompile(`(?i)(password\s*[:=]\s*["']?)[^\s"'&,;]+`),
+		regexp.MustCompile(`(?i)(api[_-]?key\s*[:=]\s*["']?)[^\s"'&,;]+`),
+		regexp.MustCompile(`(?i)(secret\s*[:=]\s*["']?)[^\s"'&,;]+`),
+		regexp.MustCompile(`(?i)(token\s*[:=]\s*["']?)[^\s"'&,;]+`),
+	}
+	for _, re := range patterns {
+		s = re.ReplaceAllString(s, `${1}***REDACTED***`)
+	}
+	if strings.Contains(lower, "jwt=") || strings.Contains(lower, "jwt:") || strings.Contains(lower, "eyj") {
+		s = regexp.MustCompile(`(?i)(jwt\s*[:=]\s*["']?)(eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+)`).ReplaceAllString(s, `${1}***REDACTED***`)
+	}
+	return s
+}
+
 // MaskPII redacts simple PII patterns from a string.
 func MaskPII(input string) string {
 	if input == "" {
 		return ""
 	}
-	out := idPattern.ReplaceAllStringFunc(input, func(match string) string {
+	out := redactSensitiveFragments(input)
+	out = idPattern.ReplaceAllStringFunc(out, func(match string) string {
 		sub := idPattern.FindStringSubmatch(match)
 		if len(sub) > 2 {
 			prefix := strings.ToLower(sub[1])
@@ -56,7 +90,18 @@ func RedactMap(m map[string]interface{}) map[string]interface{} {
 		}
 		switch s := v.(type) {
 		case string:
-			m[k] = MaskPII(s)
+			m[k] = RedactStringField(k, s)
+		case map[string]interface{}:
+			m[k] = RedactMap(s)
+		case []interface{}:
+			for i, item := range s {
+				if sm, ok := item.(map[string]interface{}); ok {
+					s[i] = RedactMap(sm)
+				} else if ss, ok := item.(string); ok {
+					s[i] = RedactStringField(k, ss)
+				}
+			}
+			m[k] = s
 		}
 	}
 	return m
@@ -88,5 +133,5 @@ func RedactStringField(key, value string) string {
 	if fullyRedactedFieldNames[strings.ToLower(key)] {
 		return "***REDACTED***"
 	}
-	return MaskPII(value)
+	return MaskPII(redactSensitiveFragments(value))
 }

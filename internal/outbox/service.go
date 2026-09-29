@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,8 +34,12 @@ type JWEConfig struct {
 // ServiceConfig holds configuration for the outbox service
 type ServiceConfig struct {
 	DispatcherConfig DispatcherConfig
-	PublisherType    string // "console", "http", "multi"
+	PublisherType    string // "console", "http", "multi", "kafka"
 	HTTPEndpoint     string
+	KafkaBrokers     []string
+	KafkaTopicMap    map[string]string
+	KafkaAcks        string
+	KafkaTopicAcks   string
 	JWE              *JWEConfig
 	// HTTPPool is the shared connection pool used by the "http" and
 	// "multi" publisher types. Defaults to a package-level shared pool
@@ -49,6 +54,7 @@ func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 
 	// Create publisher based on configuration
 	var publisher Publisher
+	httpClient := NewPooledHTTPClient(defaultHTTPPool)
 	switch config.PublisherType {
 	case "console":
 		publisher = NewConsolePublisher()
@@ -59,6 +65,43 @@ func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 			NewConsolePublisher(),
 			NewHTTPPublisher(config.HTTPEndpoint, httpClient),
 		)
+	case "kafka":
+		fallback := NewHTTPPublisher(config.HTTPEndpoint, httpClient)
+		kafkaPublisher, err := NewKafkaPublisherFromEnv(fallback)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create kafka publisher: %w", err)
+		}
+		if len(config.KafkaBrokers) > 0 {
+			kafkaPublisher.brokers = append([]string(nil), config.KafkaBrokers...)
+		}
+		if len(config.KafkaTopicMap) > 0 {
+			kafkaPublisher.topicMapping = cloneTopicMapping(config.KafkaTopicMap)
+		}
+		if config.KafkaAcks != "" {
+			ack, err := parseKafkaAck(config.KafkaAcks)
+			if err != nil {
+				return nil, fmt.Errorf("invalid kafka ack setting: %w", err)
+			}
+			kafkaPublisher.defaultAck = ack
+		}
+		if config.KafkaTopicAcks != "" {
+			for _, entry := range strings.Split(config.KafkaTopicAcks, ",") {
+				entry = strings.TrimSpace(entry)
+				if entry == "" {
+					continue
+				}
+				parts := strings.SplitN(entry, "=", 2)
+				if len(parts) != 2 {
+					return nil, fmt.Errorf("invalid kafka topic ack setting %q", entry)
+				}
+				ack, err := parseKafkaAck(strings.TrimSpace(parts[1]))
+				if err != nil {
+					return nil, fmt.Errorf("invalid kafka topic ack setting %q: %w", entry, err)
+				}
+				kafkaPublisher.topicAcks[strings.TrimSpace(parts[0])] = ack
+			}
+		}
+		publisher = kafkaPublisher
 	default:
 		publisher = NewConsolePublisher() // Default to console
 	}
@@ -108,8 +151,8 @@ func (s *Service) PublishEvent(ctx context.Context, eventType string, data inter
 	}
 
 	// Compute partition from tenant_id using the consistent hash ring.
-	if s.ring != nil && event.TenantID != nil {
-		event.Partition = s.ring.GetPartition(*event.TenantID)
+	if s.ring != nil && event.TenantID != "" {
+		event.Partition = s.ring.GetPartition(event.TenantID)
 	}
 
 	if err := s.storeEventInTransaction(ctx, event); err != nil {
@@ -148,7 +191,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 	} else {
 		event, createErr := NewEventWithDeduplication(eventType, data, aggregateID, aggregateType, deduplicationID)
 		if event != nil {
-			event.TenantID = tenantID
+			event.TenantID = tenantIDString(tenantID)
 		}
 		return event, createErr
 	}
@@ -168,7 +211,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 				UpdatedAt:       time.Now(),
 				Version:         1,
 				DeduplicationID: deduplicationID,
-				TenantID:        tenantID,
+				TenantID:        tenantIDString(tenantID),
 			}
 			errMsg := err.Error()
 			event.ErrorMessage = &errMsg
@@ -191,7 +234,7 @@ func (s *Service) buildEvent(eventType string, data interface{}, aggregateID, ag
 		UpdatedAt:       time.Now(),
 		Version:         1,
 		DeduplicationID: deduplicationID,
-		TenantID:        tenantID,
+		TenantID:        tenantIDString(tenantID),
 	}, nil
 }
 
@@ -218,7 +261,7 @@ func (s *Service) storeEventInTransaction(ctx context.Context, event *Event) err
 
 // PublishEventWithTx publishes an event within an existing transaction
 func (s *Service) PublishEventWithTx(ctx context.Context, tx *sql.Tx, eventType string, data interface{}, aggregateID, aggregateType *string) (*Event, error) {
-	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil)
+	event, err := s.buildEvent(eventType, data, aggregateID, aggregateType, nil, extractTenantID(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
@@ -368,6 +411,14 @@ func mustMarshalEventData(eventType string, data interface{}) json.RawMessage {
 		return raw
 	}
 	return envelope.EventData
+}
+
+// tenantIDString dereferences a tenant ID pointer, defaulting to empty.
+func tenantIDString(tenantID *string) string {
+	if tenantID == nil {
+		return ""
+	}
+	return *tenantID
 }
 
 // extractTenantID pulls the tenant_id value from the context. The middleware

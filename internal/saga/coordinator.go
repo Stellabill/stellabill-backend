@@ -2,242 +2,205 @@ package saga
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"stellarbill-backend/internal/security"
 	"time"
-
-	"go.uber.org/zap"
 )
 
-type sagaCoordinator struct {
+// Coordinator executes sagas step by step, persisting progress — the saga
+// itself plus per-step results — through a Store. It resumes interrupted sagas
+// from the first step that has not completed, and compensates already-executed
+// steps in reverse order when a later step exhausts its retries.
+type coordinator struct {
 	store       Store
 	constructor SagaConstructor
 }
 
-func NewCoordinator(store Store, constructor SagaConstructor) Coordinator {
-	return &sagaCoordinator{store: store, constructor: constructor}
+// NewCoordinator creates a coordinator that persists progression to store.
+// constructor is used by Resume to rebuild step definitions for a saga loaded
+// from the store and may be nil if the caller rebuilds steps itself.
+func NewCoordinator(store Store, constructor SagaConstructor) *coordinator {
+	return &coordinator{store: store, constructor: constructor}
 }
 
-func (c *sagaCoordinator) Execute(ctx context.Context, saga *Saga) error {
+// Execute runs every step of the saga in order. Each step is retried according
+// to its RetryPolicy; when a step fails for good, already-executed steps are
+// compensated in reverse order. The saga is marked completed, compensated, or
+// failed and persisted before this returns.
+func (c *coordinator) Execute(ctx context.Context, saga *Saga) error {
 	if saga.ID == "" {
-		return errors.New("saga ID is required")
+		return fmt.Errorf("saga execution requires a saga ID")
 	}
 	if len(saga.Steps) == 0 {
-		return errors.New("saga must have at least one step")
+		return fmt.Errorf("saga %s has no steps to execute", saga.ID)
 	}
 
-	saga.Status = SagaRunning
-	saga.CreatedAt = time.Now()
-	saga.UpdatedAt = time.Now()
-
-	if err := c.store.Save(ctx, saga); err != nil {
-		return fmt.Errorf("save saga: %w", err)
+	if err := c.begin(ctx, saga); err != nil {
+		return err
 	}
 
-	for i, step := range saga.Steps {
-		sr := &StepResult{
-			SagaID:  saga.ID,
-			StepKey: step.Key,
-			Status:  StepPending,
-		}
-
-		now := time.Now()
-		sr.Status = StepRunning
-		sr.ExecutedAt = &now
-		if err := c.store.SaveStepResult(ctx, saga.ID, sr); err != nil {
-			return fmt.Errorf("save step result %s: %w", step.Key, err)
-		}
-
-		if err := step.Execute(ctx, saga.Context); err != nil {
-			now := time.Now()
-			sr.Status = StepFailed
-			sr.ExecutedAt = &now
-			sr.ErrorMessage = err.Error()
-			_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-
-			security.ProductionLogger().Warn("saga step failed, starting compensation",
-				zap.String("saga_id", saga.ID),
-				zap.String("saga_name", saga.Name),
-				zap.String("step_key", step.Key),
-				zap.Int("step_index", i),
-				zap.Int("total_steps", len(saga.Steps)),
-				zap.Error(err),
-			)
-
-			c.compensate(ctx, saga, i)
-			return fmt.Errorf("saga step %s failed: %w", step.Key, err)
-		}
-
-		sr.Status = StepCompleted
-		_ = c.store.SaveStepResult(ctx, saga.ID, sr)
+	err := c.runFrom(ctx, saga, nil)
+	if err == nil {
+		saga.Status = SagaCompleted
+		return c.save(ctx, saga)
 	}
-
-	saga.Status = SagaCompleted
-	saga.UpdatedAt = time.Now()
-	_ = c.store.Save(ctx, saga)
-
-	return nil
+	return err
 }
 
-func (c *sagaCoordinator) compensate(ctx context.Context, saga *Saga, failedIndex int) {
-	saga.Status = SagaCompensating
-	saga.UpdatedAt = time.Now()
-	_ = c.store.Save(ctx, saga)
-
-	allCompensated := true
-
-	for i := failedIndex - 1; i >= 0; i-- {
-		step := saga.Steps[i]
-		now := time.Now()
-		sr := &StepResult{
-			SagaID:        saga.ID,
-			StepKey:       step.Key,
-			Status:        StepCompensating,
-			CompensatedAt: &now,
-		}
-		_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-
-		if err := step.Compensate(ctx, saga.Context); err != nil {
-			now := time.Now()
-			sr.Status = StepCompensationFailed
-			sr.CompensatedAt = &now
-			sr.ErrorMessage = err.Error()
-			_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-			allCompensated = false
-
-			security.ProductionLogger().Error("saga compensation failed",
-				zap.String("saga_id", saga.ID),
-				zap.String("saga_name", saga.Name),
-				zap.String("step_key", step.Key),
-				zap.Int("step_index", i),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		sr.Status = StepCompensated
-		_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-	}
-
-	if allCompensated {
-		saga.Status = SagaCompensated
-	} else {
-		saga.Status = SagaFailed
-	}
-	saga.UpdatedAt = time.Now()
-	_ = c.store.Save(ctx, saga)
-}
-
-func (c *sagaCoordinator) Resume(ctx context.Context, sagaID string) error {
+// Resume reloads a saga and its recorded step results and continues execution
+// from the first step that has not completed. Steps already marked completed
+// are skipped; steps marked retrying are attempted again.
+func (c *coordinator) Resume(ctx context.Context, sagaID string) error {
 	saga, results, err := c.store.Load(ctx, sagaID)
 	if err != nil {
-		return fmt.Errorf("load saga %s: %w", sagaID, err)
+		return fmt.Errorf("load saga %s for resume: %w", sagaID, err)
 	}
-
 	if c.constructor != nil {
 		saga, err = c.constructor(ctx, saga)
 		if err != nil {
 			return fmt.Errorf("reconstruct saga %s: %w", sagaID, err)
 		}
 	}
-
-	completed := make(map[string]StepStatus)
-	for _, r := range results {
-		completed[r.StepKey] = r.Status
+	if len(saga.Steps) == 0 {
+		return fmt.Errorf("saga %s has no steps to resume", sagaID)
 	}
 
-	switch saga.Status {
-	case SagaRunning, SagaCompensating:
-	default:
-		return nil
+	done := make(map[string]bool, len(results))
+	for _, sr := range results {
+		done[sr.StepKey] = sr.Status == StepCompleted
 	}
 
-	if saga.Status == SagaRunning {
-		compensationNeeded := false
-		failedIdx := -1
-
-		for i, step := range saga.Steps {
-			status, exists := completed[step.Key]
-
-			if !exists || status == StepPending || status == StepRunning {
-				sr := &StepResult{SagaID: saga.ID, StepKey: step.Key, Status: StepRunning}
-				now := time.Now()
-				sr.ExecutedAt = &now
-				_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-
-				if err := step.Execute(ctx, saga.Context); err != nil {
-					now := time.Now()
-					sr.Status = StepFailed
-					sr.ExecutedAt = &now
-					sr.ErrorMessage = err.Error()
-					_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-					compensationNeeded = true
-					failedIdx = i
-					break
-				}
-
-				sr.Status = StepCompleted
-				_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-			} else if status == StepFailed {
-				compensationNeeded = true
-				failedIdx = i
-				break
-			}
-		}
-
-		if compensationNeeded && failedIdx >= 0 {
-			c.compensate(ctx, saga, failedIdx)
-		} else if !compensationNeeded {
-			saga.Status = SagaCompleted
-			saga.UpdatedAt = time.Now()
-			_ = c.store.Save(ctx, saga)
-		}
+	if err := c.begin(ctx, saga); err != nil {
+		return err
 	}
 
-	if saga.Status == SagaCompensating {
-		for i := len(saga.Steps) - 1; i >= 0; i-- {
-			step := saga.Steps[i]
-			status, exists := completed[step.Key]
-			if !exists || status == StepCompleted {
-				now := time.Now()
-				sr := &StepResult{
-					SagaID:        saga.ID,
-					StepKey:       step.Key,
-					Status:        StepCompensating,
-					CompensatedAt: &now,
-				}
-				_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-
-				if err := step.Compensate(ctx, saga.Context); err != nil {
-					now := time.Now()
-					sr.Status = StepCompensationFailed
-					sr.CompensatedAt = &now
-					sr.ErrorMessage = err.Error()
-					_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-					continue
-				}
-
-				sr.Status = StepCompensated
-				_ = c.store.SaveStepResult(ctx, saga.ID, sr)
-			}
-		}
-
-		allCompensated := true
-		for _, r := range results {
-			if r.Status == StepCompensationFailed {
-				allCompensated = false
-				break
-			}
-		}
-		if allCompensated {
-			saga.Status = SagaCompensated
-		} else {
-			saga.Status = SagaFailed
-		}
-		saga.UpdatedAt = time.Now()
-		_ = c.store.Save(ctx, saga)
+	err = c.runFrom(ctx, saga, done)
+	if err == nil {
+		saga.Status = SagaCompleted
+		return c.save(ctx, saga)
 	}
+	return err
+}
 
+// runFrom executes every step in saga.Steps, skipping any step marked
+// completed in done.
+func (c *coordinator) runFrom(ctx context.Context, saga *Saga, done map[string]bool) error {
+	for i := range saga.Steps {
+		if done[saga.Steps[i].Key] {
+			continue
+		}
+		if err := c.runStep(ctx, saga, i); err != nil {
+			c.failAndCompensate(ctx, saga, i)
+			return err
+		}
+	}
 	return nil
+}
+
+// runStep executes a single step with retries, recording each transition as a
+// step result.
+func (c *coordinator) runStep(ctx context.Context, saga *Saga, i int) error {
+	step := saga.Steps[i]
+	now := time.Now().UTC()
+	retries := 0
+	for {
+		err := step.Execute(ctx, saga.Context)
+		if err == nil {
+			return c.store.SaveStepResult(ctx, saga.ID, &StepResult{
+				SagaID:     saga.ID,
+				StepKey:    step.Key,
+				Status:     StepCompleted,
+				ExecutedAt: &now,
+			})
+		}
+
+		if step.RetryPolicy == nil || !step.RetryPolicy.ShouldRetry(retries+1) {
+			_ = c.store.SaveStepResult(ctx, saga.ID, &StepResult{
+				SagaID:       saga.ID,
+				StepKey:      step.Key,
+				Status:       StepFailed,
+				ErrorMessage: err.Error(),
+				ExecutedAt:   &now,
+			})
+			return err
+		}
+
+		retries++
+		SagaStepRetriesTotal.WithLabelValues(saga.Name, step.Key).Inc()
+		if rerr := c.store.SaveStepResult(ctx, saga.ID, &StepResult{
+			SagaID:       saga.ID,
+			StepKey:      step.Key,
+			Status:       StepRetrying,
+			RetryAttempt: retries,
+			ExecutedAt:   &now,
+		}); rerr != nil {
+			return rerr
+		}
+
+		delay := step.RetryPolicy.NextDelay(retries)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
+// failAndCompensate records the saga as failed or compensated and compensates
+// the steps that already succeeded, in reverse order, for the step that just
+// exhausted its retries.
+func (c *coordinator) failAndCompensate(ctx context.Context, saga *Saga, failedIdx int) {
+	compFailed := false
+	for j := failedIdx - 1; j >= 0; j-- {
+		step := saga.Steps[j]
+		compAt := time.Now().UTC()
+		if step.Compensate == nil {
+			_ = c.store.SaveStepResult(ctx, saga.ID, &StepResult{
+				SagaID:        saga.ID,
+				StepKey:       step.Key,
+				Status:        StepCompensated,
+				CompensatedAt: &compAt,
+			})
+			continue
+		}
+		if cerr := step.Compensate(ctx, saga.Context); cerr != nil {
+			_ = c.store.SaveStepResult(ctx, saga.ID, &StepResult{
+				SagaID:        saga.ID,
+				StepKey:       step.Key,
+				Status:        StepCompensationFailed,
+				ErrorMessage:  cerr.Error(),
+				CompensatedAt: &compAt,
+			})
+			compFailed = true
+			break
+		}
+		_ = c.store.SaveStepResult(ctx, saga.ID, &StepResult{
+			SagaID:        saga.ID,
+			StepKey:       step.Key,
+			Status:        StepCompensated,
+			CompensatedAt: &compAt,
+		})
+	}
+
+	if compFailed {
+		saga.Status = SagaFailed
+	} else {
+		saga.Status = SagaCompensated
+	}
+	_ = c.save(ctx, saga)
+}
+
+// begin marks the saga as running and persists its initial state.
+func (c *coordinator) begin(ctx context.Context, saga *Saga) error {
+	now := time.Now().UTC()
+	saga.Status = SagaRunning
+	if saga.CreatedAt.IsZero() {
+		saga.CreatedAt = now
+	}
+	saga.UpdatedAt = now
+	return c.store.Save(ctx, saga)
+}
+
+func (c *coordinator) save(ctx context.Context, saga *Saga) error {
+	saga.UpdatedAt = time.Now().UTC()
+	return c.store.Save(ctx, saga)
 }

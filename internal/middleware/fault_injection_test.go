@@ -3,9 +3,11 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
-	"stellarbill-backend/internal/featureflags"
+	"strings"
 	"testing"
 	"time"
+
+	"stellarbill-backend/internal/featureflags"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,174 +15,222 @@ import (
 func TestFaultInjection_Disabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	featureflags.GetInstance().SetFlag("fault_injection_enabled", false, "")
+	featureflags.GetInstance().SetFlag(featureflags.FaultInjectionEnabledFlag, false, "")
 
+	router.Use(func(c *gin.Context) {
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
 	router.Use(FaultInjection())
 	router.GET("/test", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "success"})
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})
 
-	req, _ := http.NewRequest("GET", "/test", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set(faultHeader, "status=503")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != 200 {
-		t.Errorf("Expected status 200, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
 }
 
-func TestFaultInjection_Status503(t *testing.T) {
+func TestFaultInjection_AdminCanInjectStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	featureflags.GetInstance().SetFlag("fault_injection_enabled", true, "")
+	featureflags.GetInstance().SetFlag(featureflags.FaultInjectionEnabledFlag, true, "")
 
+	router.Use(func(c *gin.Context) {
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
 	router.Use(FaultInjection())
 	router.GET("/test", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "success"})
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})
 
-	req, _ := http.NewRequest("GET", "/test", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set(faultHeader, "status=503")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != 503 {
-		t.Errorf("Expected status 503, got %d", w.Code)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
 	}
 }
 
-func TestFaultInjection_Latency(t *testing.T) {
+func TestFaultInjection_NonAdminCannotInject(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	featureflags.GetInstance().SetFlag("fault_injection_enabled", true, "")
+	featureflags.GetInstance().SetFlag(featureflags.FaultInjectionEnabledFlag, true, "")
 
+	router.Use(func(c *gin.Context) {
+		c.Set("roles", []string{"customer"})
+		c.Next()
+	})
 	router.Use(FaultInjection())
 	router.GET("/test", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "success"})
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})
 
-	req, _ := http.NewRequest("GET", "/test", nil)
-	req.Header.Set(faultHeader, "latency=10ms")
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(faultHeader, "status=503")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected non-admin request to pass through, got %d", w.Code)
+	}
+}
+
+func TestFaultInjection_InvalidHeaderReturns400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	featureflags.GetInstance().SetFlag(featureflags.FaultInjectionEnabledFlag, true, "")
+
+	router.Use(func(c *gin.Context) {
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
+	router.Use(FaultInjection())
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(faultHeader, "status=oops,prob=0.5")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestFaultInjection_LatencyBoundedAndProbZeroNoop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	featureflags.GetInstance().SetFlag(featureflags.FaultInjectionEnabledFlag, true, "")
+
+	router.Use(func(c *gin.Context) {
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
+	router.Use(FaultInjection())
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(faultHeader, "latency=30s,prob=0")
 	w := httptest.NewRecorder()
 	start := time.Now()
 	router.ServeHTTP(w, req)
-	duration := time.Since(start)
-
-	if duration < 10*time.Millisecond {
-		t.Errorf("Expected latency at least 10ms, got %v", duration)
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("prob=0 should bypass fault injection; elapsed=%v", time.Since(start))
 	}
-	if w.Code != 200 {
-		t.Errorf("Expected status 200, got %d", w.Code)
-	}
-}
-
-func TestFaultInjection_NoHeader(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	featureflags.GetInstance().SetFlag("fault_injection_enabled", true, "")
-
-	router.Use(FaultInjection())
-	router.GET("/test", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "success"})
-	})
-
-	req, _ := http.NewRequest("GET", "/test", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Errorf("Expected status 200, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
 }
 
 func TestFaultInjection_CancelCtx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	featureflags.GetInstance().SetFlag("fault_injection_enabled", true, "")
+	featureflags.GetInstance().SetFlag(featureflags.FaultInjectionEnabledFlag, true, "")
 
+	router.Use(func(c *gin.Context) {
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
 	router.Use(FaultInjection())
 	router.GET("/test", func(c *gin.Context) {
 		select {
 		case <-c.Request.Context().Done():
 			c.JSON(499, gin.H{"message": "context cancelled"})
 		case <-time.After(100 * time.Millisecond):
-			c.JSON(200, gin.H{"message": "success"})
+			c.JSON(http.StatusOK, gin.H{"message": "success"})
 		}
 	})
 
-	req, _ := http.NewRequest("GET", "/test", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set(faultHeader, "cancel=true")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected cancelled context to yield 499, got %d", w.Code)
+	}
 }
 
 func TestParseFaultHeader(t *testing.T) {
 	tests := []struct {
-		name     string
-		header   string
-		expected faultConfig
+		name    string
+		header  string
+		want    FaultSpec
+		wantErr bool
 	}{
-		{
-			name:     "empty header",
-			header:   "",
-			expected: faultConfig{},
-		},
-		{
-			name:   "latency only",
-			header: "latency=500ms",
-			expected: faultConfig{
-				latency: 500 * time.Millisecond,
-			},
-		},
-		{
-			name:   "status only",
-			header: "status=503",
-			expected: faultConfig{
-				status: 503,
-			},
-		},
-		{
-			name:   "prob only",
-			header: "prob=0.5",
-			expected: faultConfig{
-				prob: 0.5,
-			},
-		},
-		{
-			name:   "cancel only",
-			header: "cancel=true",
-			expected: faultConfig{
-				cancelCtx: true,
-			},
-		},
-		{
-			name:   "all fields",
-			header: "latency=1s,status=500,prob=0.1,cancel=true",
-			expected: faultConfig{
-				latency:   1 * time.Second,
-				status:    500,
-				prob:      0.1,
-				cancelCtx: true,
-			},
-		},
+		{name: "empty header", header: "", want: FaultSpec{}},
+		{name: "latency only", header: "latency=500ms", want: FaultSpec{Latency: 500 * time.Millisecond}},
+		{name: "status only", header: "status=503", want: FaultSpec{Status: 503}},
+		{name: "prob only", header: "prob=0.5", want: FaultSpec{Prob: 0.5}},
+		{name: "cancel only", header: "cancel=true", want: FaultSpec{Cancel: true}},
+		{name: "all fields", header: "latency=1s,status=500,prob=0.1,cancel=true", want: FaultSpec{Latency: 1 * time.Second, Status: 500, Prob: 0.1, Cancel: true}},
+		{name: "duplicate keys use last value", header: "status=503,status=500", want: FaultSpec{Status: 500}},
+		{name: "out of bounds latency capped", header: "latency=30s", want: FaultSpec{Latency: maxFaultLatency}},
+		{name: "invalid key", header: "oops=1", wantErr: true},
+		{name: "invalid status", header: "status=900", wantErr: true},
+		{name: "invalid prob", header: "prob=2", wantErr: true},
+		{name: "missing value", header: "status=", wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseFaultHeader(tt.header)
-			if result.latency != tt.expected.latency {
-				t.Errorf("Expected latency %v, got %v", tt.expected.latency, result.latency)
+			got, err := ParseFaultHeader(tt.header)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q", tt.header)
+				}
+				return
 			}
-			if result.status != tt.expected.status {
-				t.Errorf("Expected status %d, got %d", tt.expected.status, result.status)
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tt.header, err)
 			}
-			if result.prob != tt.expected.prob {
-				t.Errorf("Expected prob %f, got %f", tt.expected.prob, result.prob)
+			if got.Latency != tt.want.Latency {
+				t.Fatalf("latency mismatch: got=%v want=%v", got.Latency, tt.want.Latency)
 			}
-			if result.cancelCtx != tt.expected.cancelCtx {
-				t.Errorf("Expected cancelCtx %v, got %v", tt.expected.cancelCtx, result.cancelCtx)
+			if got.Status != tt.want.Status {
+				t.Fatalf("status mismatch: got=%d want=%d", got.Status, tt.want.Status)
+			}
+			if got.Prob != tt.want.Prob {
+				t.Fatalf("prob mismatch: got=%v want=%v", got.Prob, tt.want.Prob)
+			}
+			if got.Cancel != tt.want.Cancel {
+				t.Fatalf("cancel mismatch: got=%v want=%v", got.Cancel, tt.want.Cancel)
 			}
 		})
+	}
+}
+
+func TestFaultInjection_UsesAdminRolesFromContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	featureflags.GetInstance().SetFlag(featureflags.FaultInjectionEnabledFlag, true, "")
+
+	router.Use(func(c *gin.Context) {
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
+	router.Use(FaultInjection())
+	router.GET("/test", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", strings.NewReader(""))
+	req.Header.Set(faultHeader, "status=503")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected injected error, got %d", w.Code)
 	}
 }

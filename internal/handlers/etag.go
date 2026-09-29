@@ -20,7 +20,7 @@ func ParseIfMatch(header string) (int64, error) {
 	if header == "" {
 		return 0, fmt.Errorf("missing If-Match header")
 	}
-	
+
 	header = strings.Trim(header, `"`)
 	if strings.HasPrefix(header, "W/") {
 		header = strings.TrimPrefix(header, "W/")

@@ -1,0 +1,76 @@
+# Kyverno admission policy: enforce cosign keyless signature + SLSA v1 provenance
+# for every Pod that pulls a Stellabill-published container image.
+#
+# Broad contract (do not relax without a tracked ADR):
+# 1. Any image matching `ghcr.io/stellabill/stellabill-backend*` MUST be signed
+#    by Fulcio via the GitHub Actions OIDC token issued by
+#    https://token.actions.githubusercontent.com. The signing identity MUST be
+#    the `release.yml` workflow running on a tag ref on a known-good org.
+# 2. The image MUST also carry a SLSA v1 provenance attestation signed by the
+#    same workflow identity. This binds the artifact to its build invocation.
+# 3. The policy is in Enforce mode — unsigned or forged images are REJECTED at
+#    admission. Use a Kyverno PolicyException for emergency bypasses (see
+#    docs/image-signing-cosign.md#rollback).
+#
+# SECURITY NOTE: The subject regex explicitly enumerates the trusted orgs.
+# `https://github.com/*/` was removed — an attacker can publish a public repo
+# called `stellabill-backend` and bypass the wildcard check. To allow fork
+# staging, add the fork owner to the alternation ALONG WITH a tracked ADR.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-stellabill-images
+  annotations:
+    policies.kyverno.io/title: Verify Stellabill container images
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/description: >-
+      Requires every Stellabill-published image to be signed with cosign
+      keyless (GitHub OIDC) AND attested with a SLSA v1 provenance predicate
+      before admission. Unsigned or forged images are rejected.
+    policies.kyverno.io/severity: high
+  labels:
+    app.kubernetes.io/part-of: stellabill-platform
+spec:
+  # Hard-fail unknown / unsigned images. Switch to Audit for staged roll-out.
+  validationFailureAction: Enforce
+  background: false          # only enforce on new/changed workloads
+  schemaValidation: false    # do not require the Kyverno resource itself to validate
+
+  rules:
+    - name: require-cosign-and-slsa
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/stellabill/stellabill-backend*"
+          # Cosign keyless Fulcio signature (GitHub OIDC) — required.
+          required: true
+          verifyDigest: true
+          mutateDigest: true
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    # Pin to the real organisations only. `*` would let any
+                    # GitHub user with a repo named `stellabill-backend` and
+                    # a `.github/workflows/release.yml` bypass admission.
+                    subject: "https://github.com/(Stellabill|believetimothy)/stellabill-backend/.github/workflows/release.yml@refs/tags/.+"
+                    issuer:  "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"
+          # SLSA v1 provenance attestation — required and must be signed by the
+          # same workflow identity.
+          attestations:
+            - predicateType: "https://slsa.dev/provenance/v1"
+              attestors:
+                - count: 1
+                  entries:
+                    - keyless:
+                        subject: "https://github.com/(Stellabill|believetimothy)/stellabill-backend/.github/workflows/release.yml@refs/tags/.+"
+                        issuer:  "https://token.actions.githubusercontent.com"
+                        rekor:
+                          url: "https://rekor.sigstore.dev"

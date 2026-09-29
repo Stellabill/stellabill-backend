@@ -12,7 +12,7 @@ import (
 func TestGenerateETag(t *testing.T) {
 	updatedAt := time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)
 	version := int64(42)
-	
+
 	etag := GenerateETag(updatedAt, version)
 	expected := `W/"1672574400000000000-42"`
 	if etag != expected {

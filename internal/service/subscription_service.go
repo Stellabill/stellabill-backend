@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
@@ -51,34 +52,72 @@ func (s *subscriptionService) GetDetail(ctx context.Context, tenantID string, ca
 	var warnings []string
 
 	// 1. Fetch subscription row scoped to tenant.
-	row, err := s.subRepo.FindByIDAndTenant(ctx, subscriptionID, tenantID)
-	if err != nil {
-		if err == repository.ErrNotFound {
-			return nil, nil, ErrNotFound
+	var row *repository.SubscriptionRow
+	if loader := repository.LoaderFromContext(ctx); loader != nil {
+		r, err := loader.LoadSubscription(ctx, tenantID, subscriptionID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				span.SetStatus(codes.Error, "subscription not found")
+				return nil, nil, ErrNotFound
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, nil, err
 		}
-		return nil, nil, err
+		row = r
+	} else {
+		r, err := s.subRepo.FindByIDAndTenant(ctx, subscriptionID, tenantID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				span.SetStatus(codes.Error, "subscription not found")
+				return nil, nil, ErrNotFound
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, nil, err
+		}
+		row = r
 	}
 
 	// 2. Soft-delete check.
 	if row.DeletedAt != nil {
+		span.SetStatus(codes.Error, "subscription deleted")
 		return nil, nil, ErrDeleted
 	}
 
 	// 3. Ownership check.
 	if callerID != row.CustomerID {
+		span.SetStatus(codes.Error, "forbidden")
 		return nil, nil, ErrForbidden
 	}
 
 	// 4. Fetch plan metadata (non-fatal if missing).
 	var planMeta *PlanMetadata
-	planRow, err := s.planRepo.FindByID(ctx, row.PlanID)
-	if err != nil {
-		if err == repository.ErrNotFound {
-			warnings = append(warnings, "plan not found")
+	var planRow *repository.PlanRow
+	if loader := repository.LoaderFromContext(ctx); loader != nil {
+		pr, err := loader.LoadPlan(ctx, tenantID, row.PlanID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				warnings = append(warnings, "plan not found")
+			} else {
+				return nil, nil, err
+			}
 		} else {
-			return nil, nil, err
+			planRow = pr
 		}
 	} else {
+		pr, err := s.planRepo.FindByID(ctx, row.PlanID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				warnings = append(warnings, "plan not found")
+			} else {
+				return nil, nil, err
+			}
+		} else {
+			planRow = pr
+		}
+	}
+	if planRow != nil {
 		planMeta = &PlanMetadata{
 			PlanID:      planRow.ID,
 			Name:        planRow.Name,

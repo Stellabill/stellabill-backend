@@ -6,6 +6,8 @@ import (
 	"math"
 	"time"
 
+	"stellarbill-backend/internal/errcode"
+
 	"github.com/shopspring/decimal"
 )
 
@@ -42,6 +44,12 @@ var ErrInvalidTaxRate = errors.New("tax rate must be between 0 and 1 inclusive")
 // ErrInvalidParts is returned when the number of proration parts is ≤ 0.
 var ErrInvalidParts = errors.New("parts must be greater than zero")
 
+func init() {
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrInvalidAmount) }, errcode.CodeFeeInvalidAmount)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrInvalidTaxRate) }, errcode.CodeFeeInvalidTaxRate)
+	errcode.Register(func(err error) bool { return errors.Is(err, ErrInvalidParts) }, errcode.CodeFeeInvalidParts)
+}
+
 // MoneyAmount holds a currency-aware decimal amount.
 type MoneyAmount struct {
 	Value    decimal.Decimal
@@ -77,10 +85,10 @@ func ProrateFee(amount decimal.Decimal, currency string, parts int) ([]decimal.D
 	// Each part in minor units avoids floating-point drift.
 	//   base    = floor(rounded / parts)
 	//   remainder is distributed to the first r parts (standard "largest-remainder")
-	minor := rounded.Shift(scale)                            // e.g. 10.00 USD → 1000
+	minor := rounded.Shift(scale) // e.g. 10.00 USD → 1000
 	partsD := decimal.NewFromInt(int64(parts))
-	base := minor.Div(partsD).Floor()                        // integer quotient
-	remainder := minor.Sub(base.Mul(partsD))                 // 0 ≤ remainder < parts
+	base := minor.Div(partsD).Floor()        // integer quotient
+	remainder := minor.Sub(base.Mul(partsD)) // 0 ≤ remainder < parts
 	remainderInt := remainder.IntPart()
 
 	result := make([]decimal.Decimal, parts)

@@ -1,6 +1,8 @@
 # Stellabill Backend
 
-Go (Gin) API backend for Stellabill - subscription and billing plans API. This repo is backend-only; a separate frontend consumes these APIs.
+[Go (Gin) API backend for Stellabill - subscription and billing plans API. This repo is backend-only; a separate frontend consumes these APIs.]
+
+For a concise tech-stack, API overview, and quick startup instructions see [TECH_STACK.md](TECH_STACK.md).
 
 [![CI](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml)
 
@@ -400,6 +402,55 @@ Every push and pull request runs the following checks automatically via GitHub A
 | Coverage threshold | `./scripts/check-coverage.sh coverage.out 95` (≥ 95 % on `internal/`) |
 
 Coverage artifacts (`coverage.out`) are uploaded and retained for 14 days on every run.
+
+---
+
+## SLSA Level 3 Provenance
+
+Every GitHub Release produces cryptographically-signed provenance for both the
+Go binary and the container image using
+[slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator).
+
+### What SLSA Level 3 guarantees
+
+- The binary and image were built by the pinned GitHub Actions workflow (`.github/workflows/release-go.yml`), not by an individual developer's machine.
+- The provenance document is signed via Sigstore keyless signing (OIDC → Fulcio CA → Rekor transparency log) — no pre-shared key required to verify.
+- The staging deploy job is gated: it calls `slsa-verifier` and **blocks the deploy** if provenance cannot be verified.
+
+### Quick verification
+
+**Binary:**
+
+```bash
+TAG=v1.2.3
+gh release download "${TAG}" \
+  --repo Stellabill/stellabill-backend \
+  --pattern "stellabill-backend" \
+  --pattern "stellabill-backend.intoto.jsonl"
+
+slsa-verifier verify-artifact stellabill-backend \
+  --provenance-path stellabill-backend.intoto.jsonl \
+  --source-uri     github.com/Stellabill/stellabill-backend \
+  --source-tag     "${TAG}"
+# Expected: PASSED: SLSA verification passed
+```
+
+**Container image:**
+
+```bash
+DIGEST=sha256:<digest-from-release-notes-or-ghcr>
+slsa-verifier verify-image \
+  "ghcr.io/Stellabill/stellabill-backend@${DIGEST}" \
+  --source-uri github.com/Stellabill/stellabill-backend \
+  --source-tag "${TAG}"
+# Expected: PASSED: SLSA verification passed
+```
+
+See **[docs/slsa-verification.md](docs/slsa-verification.md)** for the full verification guide, including cosign usage, provenance document inspection, and CI automation examples.
+
+See **[docs/branch-protection.md](docs/branch-protection.md)** for the repository settings required to maintain the SLSA guarantee.
+
+---
 
 ### Run checks locally before opening a PR
 

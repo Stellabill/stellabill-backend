@@ -1,0 +1,12 @@
+# Trivy ignore list
+# ==================
+# Each entry documents the CVE, the package affected, the reason for the
+# suppression, and a review-by date so the decision is revisited.
+#
+# Format:
+# CVE-ID [optional: package@version] [optional: expiry YYYY-MM-DD]
+#   Reason: <justification>
+
+# Example (commented):
+# CVE-2023-12345  pkg:golang/github.com/example/lib@v1.0.0  2025-06-01
+#   Reason: Only exploitable with physical access; fix waiting on upstream release.

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -86,6 +87,35 @@ func TestVaultProvider_GetSecret(t *testing.T) {
 		}
 	})
 
+	t.Run("Vault 401 is a hard error, not a fallthrough", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		p := NewVaultProvider(server.URL, "revoked-token", "secret/data")
+		_, err := p.GetSecret(context.Background(), "KEY")
+		if err == nil {
+			t.Fatal("expected an error for 401, got nil")
+		}
+		if errors.Is(err, ErrSecretNotFound) {
+			t.Error("401 must not be treated as not-found; a revoked token is a hard failure")
+		}
+	})
+
+	t.Run("Vault 5xx is a hard error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer server.Close()
+
+		p := NewVaultProvider(server.URL, "token", "secret/data")
+		_, err := p.GetSecret(context.Background(), "KEY")
+		if err == nil || containsError(err, ErrSecretNotFound) {
+			t.Errorf("expected a hard 500 error, got %v", err)
+		}
+	})
+
 	t.Run("Network timeout returns ErrProviderTimeout", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(100 * time.Millisecond)
@@ -99,6 +129,30 @@ func TestVaultProvider_GetSecret(t *testing.T) {
 		_, err := p.GetSecret(context.Background(), "KEY")
 		if err == nil || !containsError(err, ErrProviderTimeout) {
 			t.Errorf("expected ErrProviderTimeout for timeout, got %v", err)
+		}
+	})
+
+	t.Run("cancelled context returns ErrProviderTimeout", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		p := NewVaultProvider(server.URL, "token", "secret/data")
+		_, err := p.GetSecret(ctx, "KEY")
+		if err == nil || !containsError(err, ErrProviderTimeout) {
+			t.Errorf("expected ErrProviderTimeout for cancelled context, got %v", err)
+		}
+	})
+
+	t.Run("empty key returns ErrSecretNotFound", func(t *testing.T) {
+		p := NewVaultProvider("http://127.0.0.1:1", "token", "secret/data")
+		_, err := p.GetSecret(context.Background(), "   ")
+		if err == nil || !containsError(err, ErrSecretNotFound) {
+			t.Errorf("expected ErrSecretNotFound for empty key, got %v", err)
 		}
 	})
 
@@ -137,6 +191,73 @@ func TestVaultProvider_GetSecret(t *testing.T) {
 		val, _ = p.GetSecret(context.Background(), "KEY")
 		if val != "val-2" {
 			t.Errorf("expected val-2 after background refresh, got %s", val)
+		}
+	})
+
+	t.Run("concurrent readers coalesce into a single request", func(t *testing.T) {
+		var callCount int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&callCount, 1)
+			time.Sleep(20 * time.Millisecond) // widen the stampede window
+			resp := vaultResponse{}
+			resp.Data.Data = map[string]interface{}{"KEY": "shared"}
+			json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		p := NewVaultProvider(server.URL, "token", "secret/data")
+
+		const workers = 16
+		var wg sync.WaitGroup
+		errs := make(chan error, workers)
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				val, err := p.GetSecret(context.Background(), "KEY")
+				if err != nil {
+					errs <- err
+					return
+				}
+				if val != "shared" {
+					errs <- fmt.Errorf("unexpected value: %q", val)
+				}
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Errorf("concurrent read error: %v", err)
+		}
+		if got := atomic.LoadInt32(&callCount); got != 1 {
+			t.Errorf("expected a single Vault request (single-flight), got %d", got)
+		}
+	})
+
+	t.Run("failure is recoverable on a later read", func(t *testing.T) {
+		var callCount int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if atomic.AddInt32(&callCount, 1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			resp := vaultResponse{}
+			resp.Data.Data = map[string]interface{}{"KEY": "after-recovery"}
+			json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		p := NewVaultProvider(server.URL, "token", "secret/data")
+
+		if _, err := p.GetSecret(context.Background(), "KEY"); err == nil {
+			t.Fatal("expected an error on the first fetch")
+		}
+		val, err := p.GetSecret(context.Background(), "KEY")
+		if err != nil {
+			t.Fatalf("unexpected error after recovery: %v", err)
+		}
+		if val != "after-recovery" {
+			t.Errorf("expected after-recovery, got %s", val)
 		}
 	})
 }

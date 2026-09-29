@@ -36,16 +36,29 @@ type TenantRateLimiter struct {
 	shards     []*shard
 	rps        int
 	burst      int
+	idleTTL    time.Duration
 	evictionCh chan struct{}
 	stopOnce   sync.Once
 }
 
-// NewTenantRateLimiter creates a new per-tenant rate limiter
+// NewTenantRateLimiter creates a new per-tenant rate limiter with the
+// default idle TTL.
 func NewTenantRateLimiter(rps, burst int) *TenantRateLimiter {
+	return NewTenantRateLimiterWithIdleTTL(rps, burst, limiterTTL)
+}
+
+// NewTenantRateLimiterWithIdleTTL creates a new per-tenant rate limiter with a
+// custom idle TTL for eviction. A non-positive TTL falls back to the default.
+func NewTenantRateLimiterWithIdleTTL(rps, burst int, idleTTL time.Duration) *TenantRateLimiter {
+	if idleTTL <= 0 {
+		idleTTL = limiterTTL
+	}
+
 	trl := &TenantRateLimiter{
 		shards:     make([]*shard, numShards),
 		rps:        rps,
 		burst:      burst,
+		idleTTL:    idleTTL,
 		evictionCh: make(chan struct{}, 1),
 	}
 
@@ -133,13 +146,26 @@ func (trl *TenantRateLimiter) evictIdleLimiters() {
 		shard.mu.Lock()
 		for tenantID, limiter := range shard.limiters {
 			limiter.mu.Lock()
-			if now.Sub(limiter.lastAccess) > limiterTTL {
+			if now.Sub(limiter.lastAccess) > trl.idleTTL {
 				delete(shard.limiters, tenantID)
 			}
 			limiter.mu.Unlock()
 		}
 		shard.mu.Unlock()
 	}
+}
+
+// Len reports the number of tenants currently holding an active limiter. It
+// is meant for diagnostics and tests (e.g. asserting idle eviction frees
+// memory).
+func (trl *TenantRateLimiter) Len() int {
+	total := 0
+	for _, shard := range trl.shards {
+		shard.mu.RLock()
+		total += len(shard.limiters)
+		shard.mu.RUnlock()
+	}
+	return total
 }
 
 // Stop stops the eviction goroutine
@@ -201,10 +227,20 @@ type TenantRateLimitConfig struct {
 	RPS              int
 	Burst            int
 	LogRateLimitHits bool
+	// IdleTTL controls how long an unused tenant limiter is kept before it is
+	// evicted. Zero means the default (5 minutes).
+	IdleTTL time.Duration
 }
 
 // TenantRateLimitMiddleware creates a Gin middleware for per-tenant rate limiting
 func TenantRateLimitMiddleware(config TenantRateLimitConfig) gin.HandlerFunc {
+	// Disabled middleware is a no-op and does not spawn an eviction goroutine.
+	if !config.Enabled {
+		return func(c *gin.Context) {
+			c.Next()
+		}
+	}
+
 	if config.RPS <= 0 {
 		config.RPS = 5 // Default: 5 requests per second per tenant
 	}
@@ -212,15 +248,9 @@ func TenantRateLimitMiddleware(config TenantRateLimitConfig) gin.HandlerFunc {
 		config.Burst = config.RPS * 2 // Default burst: 2x rate
 	}
 
-	limiter := NewTenantRateLimiter(config.RPS, config.Burst)
+	limiter := NewTenantRateLimiterWithIdleTTL(config.RPS, config.Burst, config.IdleTTL)
 
 	return func(c *gin.Context) {
-		// Skip rate limiting if disabled
-		if !config.Enabled {
-			c.Next()
-			return
-		}
-
 		// Extract tenant ID from context (set by auth middleware)
 		tenantID := "anonymous"
 		if tid, exists := c.Get("tenantID"); exists {

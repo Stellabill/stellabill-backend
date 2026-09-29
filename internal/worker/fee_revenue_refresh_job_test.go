@@ -328,6 +328,22 @@ func TestRefreshDuringLongRunningQuery(t *testing.T) {
 	}
 }
 
+func TestFeeRevenueRefreshJob_StartIsIdempotent(t *testing.T) {
+	store := &fakeFeeRevenueStore{}
+	j := newFeeRevenueRefreshJob(store, FeeRevenueRefreshConfig{PollInterval: time.Hour}, nil)
+
+	j.Start()
+	j.Start()
+	time.Sleep(50 * time.Millisecond)
+
+	if got := j.GetStats().Refreshed; got != 1 {
+		t.Errorf("repeated Start must not create another loop; refreshes = %d, want 1", got)
+	}
+	if err := j.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 func TestFeeRevenueRefreshJob_StartStopHealth(t *testing.T) {
 	store := &fakeFeeRevenueStore{}
 	j := newFeeRevenueRefreshJob(store, FeeRevenueRefreshConfig{PollInterval: time.Hour}, nil)

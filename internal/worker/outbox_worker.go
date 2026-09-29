@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"stellarbill-backend/internal/outbox"
 )
 
 // OutboxEvent mirrors the outbox_events table schema.
@@ -179,6 +181,8 @@ func (w *OutboxWorker) pollLoop() {
 	ticker := time.NewTicker(w.config.PollInterval)
 	defer ticker.Stop()
 
+	w.refreshBacklogMetrics(w.ctx)
+
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -193,6 +197,8 @@ func (w *OutboxWorker) poll() {
 	w.mu.Lock()
 	w.lastPollTime = time.Now()
 	w.mu.Unlock()
+
+	w.refreshBacklogMetrics(w.ctx)
 
 	events, err := w.claimBatch(w.ctx)
 	if err != nil {
@@ -364,6 +370,43 @@ func (w *OutboxWorker) handleFailure(event *OutboxEvent, publishErr error) {
 	w.mu.Lock()
 	w.failed++
 	w.mu.Unlock()
+}
+
+// refreshBacklogMetrics publishes outbox_backlog_depth{tenant} for KEDA.
+// A zero-row result observes an empty map so the gauge reports idle/zero and
+// replicas can settle at minReplicaCount.
+func (w *OutboxWorker) refreshBacklogMetrics(ctx context.Context) {
+	if w.db == nil {
+		outbox.ObserveOutboxBacklogDepth(nil)
+		return
+	}
+
+	query := `
+		SELECT COALESCE(tenant_id, ''), COUNT(*)
+		FROM outbox_events
+		WHERE status = $1
+		   OR (status = $2 AND next_retry_at IS NOT NULL AND next_retry_at <= $3)
+		GROUP BY COALESCE(tenant_id, '')
+	`
+	rows, err := w.db.QueryContext(ctx, query, OutboxStatusPending, OutboxStatusFailed, time.Now())
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	depths := make(map[string]int64)
+	for rows.Next() {
+		var tenant string
+		var count int64
+		if err := rows.Scan(&tenant, &count); err != nil {
+			return
+		}
+		depths[outbox.CapTenantLabel(tenant)] += count
+	}
+	if err := rows.Err(); err != nil {
+		return
+	}
+	outbox.ObserveOutboxBacklogDepth(depths)
 }
 
 // ---------------------------------------------------------------------------

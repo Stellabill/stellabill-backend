@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +44,42 @@ func TestAdminSigningMiddleware(t *testing.T) {
 
 				r := httptest.NewRecorder()
 				req := httptest.NewRequest("POST", "/api/admin/purge?attempt=1&target=billing-cache", strings.NewReader(string(body)))
+				req.Header.Set(AdminDateHeader, date)
+				req.Header.Set(AdminRequestIDHeader, requestID)
+				req.Header.Set(AdminSignatureHeader, AdminSignatureVersion+"="+sig)
+				return r, req
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "empty_body_valid_signature",
+			setupRequest: func() (*httptest.ResponseRecorder, *http.Request) {
+				body := []byte{}
+				requestID := uuid.New().String()
+				date := fmt.Sprintf("%d", time.Now().Unix())
+				canonicalReq := buildTestCanonicalRequest("POST", "/api/admin/purge", "", date, requestID, body)
+				sig := generateAdminSignature(canonicalReq, secret)
+
+				r := httptest.NewRecorder()
+				req := httptest.NewRequest("POST", "/api/admin/purge", strings.NewReader(string(body)))
+				req.Header.Set(AdminDateHeader, date)
+				req.Header.Set(AdminRequestIDHeader, requestID)
+				req.Header.Set(AdminSignatureHeader, AdminSignatureVersion+"="+sig)
+				return r, req
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "query_parameters_are_canonicalized",
+			setupRequest: func() (*httptest.ResponseRecorder, *http.Request) {
+				body := []byte(`{"partial": "0"}`)
+				requestID := uuid.New().String()
+				date := fmt.Sprintf("%d", time.Now().Unix())
+				canonicalReq := buildTestCanonicalRequest("POST", "/api/admin/purge", "attempt=1&target=billing-cache", date, requestID, body)
+				sig := generateAdminSignature(canonicalReq, secret)
+
+				r := httptest.NewRecorder()
+				req := httptest.NewRequest("POST", "/api/admin/purge?target=billing-cache&attempt=1", strings.NewReader(string(body)))
 				req.Header.Set(AdminDateHeader, date)
 				req.Header.Set(AdminRequestIDHeader, requestID)
 				req.Header.Set(AdminSignatureHeader, AdminSignatureVersion+"="+sig)
@@ -230,6 +268,91 @@ func TestAdminSigningMiddleware(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdminSigningMiddlewareBodyPreserved(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	secret := "test_admin_secret_key_123456789"
+	cfg := &AdminSigningConfig{SecretKey: secret}
+	middleware := AdminSigningMiddleware(cfg)
+	router := gin.New()
+
+	body := []byte(`{"partial":"0","note":"preserve-me"}`)
+	requestID := uuid.New().String()
+	date := fmt.Sprintf("%d", time.Now().Unix())
+	canonicalReq := buildTestCanonicalRequest("POST", "/api/admin/purge", "target=billing-cache", date, requestID, body)
+	sig := generateAdminSignature(canonicalReq, secret)
+
+	router.POST("/api/admin/purge", middleware, func(c *gin.Context) {
+		got, err := io.ReadAll(c.Request.Body)
+		assert.NoError(t, err)
+		assert.Equal(t, body, got)
+		c.Status(http.StatusOK)
+	})
+
+	r := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/admin/purge?target=billing-cache", strings.NewReader(string(body)))
+	req.Header.Set(AdminDateHeader, date)
+	req.Header.Set(AdminRequestIDHeader, requestID)
+	req.Header.Set(AdminSignatureHeader, AdminSignatureVersion+"="+sig)
+	router.ServeHTTP(r, req)
+
+	assert.Equal(t, http.StatusOK, r.Code)
+}
+
+func TestAdminSigningMiddlewareConcurrentReplay(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	secret := "test_admin_secret_key_123456789"
+	cfg := &AdminSigningConfig{SecretKey: secret}
+	middleware := AdminSigningMiddleware(cfg)
+	router := gin.New()
+	router.POST("/api/admin/purge", middleware, func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	body := []byte(`{"partial":"0"}`)
+	requestID := uuid.New().String()
+	date := fmt.Sprintf("%d", time.Now().Unix())
+	canonicalReq := buildTestCanonicalRequest("POST", "/api/admin/purge", "", date, requestID, body)
+	sig := generateAdminSignature(canonicalReq, secret)
+
+	const requests = 10
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	successes := 0
+	replays := 0
+
+	for i := 0; i < requests; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			r := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", "/api/admin/purge", strings.NewReader(string(body)))
+			req.Header.Set(AdminDateHeader, date)
+			req.Header.Set(AdminRequestIDHeader, requestID)
+			req.Header.Set(AdminSignatureHeader, AdminSignatureVersion+"="+sig)
+
+			router.ServeHTTP(r, req)
+
+			mu.Lock()
+			defer mu.Unlock()
+			switch r.Code {
+			case http.StatusOK:
+				successes++
+			case http.StatusUnauthorized:
+				if strings.Contains(r.Body.String(), ErrAdminReplayDetected.Error()) {
+					replays++
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	assert.Equal(t, 1, successes, "only one request with a given request ID may succeed")
+	assert.Equal(t, requests-1, replays, "all other requests must be rejected as replays")
 }
 
 func buildTestCanonicalRequest(method, path, queryStr, date, requestID string, body []byte) string {

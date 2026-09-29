@@ -1,14 +1,17 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"stellarbill-backend/internal/pagination"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -66,6 +69,10 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// nil-svc guard: keeps legacy/coverage tests that pass nil working.
 		if svc == nil {
+			if wantsCSV(c) {
+				writeStatementsCSV(c, "", nil, nil)
+				return
+			}
 			c.JSON(http.StatusOK, gin.H{"statements": []interface{}{}})
 			return
 		}
@@ -131,6 +138,11 @@ func NewListStatementsHandler(svc service.StatementService) gin.HandlerFunc {
 		// would produce a link that doesn't actually advance the collection.
 		if header := pagination.LinkHeader(requestBaseURL(c), pagination.LinkParams{}); header != "" {
 			c.Header("Link", header)
+		}
+
+		if wantsCSV(c) {
+			writeStatementsCSV(c, customerID, fields, statements)
+			return
 		}
 
 		if fields != nil {
@@ -254,6 +266,104 @@ func getAuthContext(c *gin.Context) (callerID string, roles []string, ok bool) {
 	return callerID, roles, true
 }
 
+func wantsCSV(c *gin.Context) bool {
+	accept := strings.ToLower(c.GetHeader("Accept"))
+	return strings.Contains(accept, "text/csv")
+}
+
+func writeStatementsCSV(c *gin.Context, customerID string, fields []string, statements []*service.StatementDetail) {
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", csvFilename(customerID)))
+
+	writer := csv.NewWriter(c.Writer)
+	columns := fields
+	if len(columns) == 0 {
+		columns = StatementAllowedFields
+	}
+	if err := writer.Write(columns); err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	for _, stmt := range statements {
+		if err := writer.Write(statementCSVRow(stmt, columns)); err != nil {
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+	}
+	writer.Flush()
+	if writer.Error() != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}
+}
+
+func statementCSVRow(stmt *service.StatementDetail, fields []string) []string {
+	if stmt == nil {
+		return make([]string, len(fields))
+	}
+	row := make([]string, 0, len(fields))
+	for _, field := range fields {
+		row = append(row, csvCellValue(stmt, field))
+	}
+	return row
+}
+
+func csvCellValue(stmt *service.StatementDetail, field string) string {
+	if stmt == nil {
+		return ""
+	}
+	switch field {
+	case "id":
+		return sanitizeCSVValue(stmt.ID)
+	case "subscription_id":
+		return sanitizeCSVValue(stmt.SubscriptionID)
+	case "customer":
+		return sanitizeCSVValue(stmt.Customer)
+	case "period_start":
+		return sanitizeCSVValue(stmt.PeriodStart)
+	case "period_end":
+		return sanitizeCSVValue(stmt.PeriodEnd)
+	case "issued_at":
+		return sanitizeCSVValue(stmt.IssuedAt)
+	case "total_amount":
+		return sanitizeCSVValue(stmt.TotalAmount)
+	case "currency":
+		return sanitizeCSVValue(stmt.Currency)
+	case "kind":
+		return sanitizeCSVValue(stmt.Kind)
+	case "status":
+		return sanitizeCSVValue(stmt.Status)
+	default:
+		return ""
+	}
+}
+
+func sanitizeCSVValue(value string) string {
+	for _, prefix := range []string{"=", "+", "-", "@"} {
+		if strings.HasPrefix(value, prefix) {
+			return "'" + value
+		}
+	}
+	return value
+}
+
+func csvFilename(customerID string) string {
+	base := strings.TrimSpace(customerID)
+	if base == "" {
+		base = "statements"
+	}
+	base = strings.ToLower(strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '-'
+	}, base))
+	base = strings.Trim(base, "-")
+	if base == "" {
+		base = "statements"
+	}
+	return fmt.Sprintf("%s-statements.csv", base)
+}
+
 // buildStatementQuery parses optional filter and pagination query parameters
 // into a repository.StatementQuery. Returns an error on any invalid input so
 // the handler can respond 400 before touching the service layer.
@@ -271,6 +381,13 @@ func buildStatementQuery(c *gin.Context) (repository.StatementQuery, error) {
 	}
 	if v := c.Query("status"); v != "" {
 		q.Status = v
+	}
+	if v := c.Query("filter"); v != "" {
+		filter, err := requestparams.ParseRSQL(v)
+		if err != nil {
+			return q, err
+		}
+		q.Filter = filter
 	}
 
 	if v := c.Query("start_after"); v != "" {

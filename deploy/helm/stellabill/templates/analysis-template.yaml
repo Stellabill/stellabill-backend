@@ -1,0 +1,103 @@
+{{- if .Values.rollout.enabled }}
+# deploy/helm/stellabill/templates/analysis-template.yaml
+#
+# AnalysisTemplate: stellabill-canary-analysis
+#
+# Metrics evaluated during every canary step:
+#   1. p99-latency  — p99 request latency must be < rollout.analysis.p99LatencyThresholdMs ms
+#   2. error-rate   — HTTP 5xx rate must be < rollout.analysis.errorRateThreshold (0–1)
+#
+# Safety: if the query returns zero samples (no traffic yet), the analysis is
+# marked Inconclusive, not Failed, so early canary steps with very low traffic
+# do not trigger a false abort. An Inconclusive result will not promote the
+# rollout automatically — it will wait for the next interval.
+#
+# The analysis runs every rollout.analysis.intervalSeconds seconds for
+# rollout.analysis.count total measurements. Failure on any measurement
+# causes an immediate abort and rollback.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Values.rollout.analysis.templateName | default "stellabill-canary-analysis" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "stellabill.labels" . | nindent 4 }}
+    app.kubernetes.io/component: canary-analysis
+spec:
+  args:
+    # Passed from the Rollout spec.strategy.canary.analysis.args.
+    - name: service-name
+    - name: namespace
+
+  metrics:
+    # ─────────────────────────────────────────────────────────────────────────
+    # Metric 1: p99 request latency (milliseconds)
+    # Fails if p99 latency exceeds the configured threshold.
+    # Inconclusive if no samples exist (zero-traffic guard).
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: p99-latency
+      interval: {{ .Values.rollout.analysis.intervalSeconds | default 60 }}s
+      count: {{ .Values.rollout.analysis.count | default 5 }}
+      failureLimit: {{ .Values.rollout.analysis.failureLimit | default 1 }}
+      inconclusiveLimit: {{ .Values.rollout.analysis.inconclusiveLimit | default 3 }}
+      successCondition: >-
+        result != nil && len(result) > 0 &&
+        asFloat(result[0]) < {{ .Values.rollout.analysis.p99LatencyThresholdMs | default 500 }}
+      failureCondition: >-
+        result != nil && len(result) > 0 &&
+        asFloat(result[0]) >= {{ .Values.rollout.analysis.p99LatencyThresholdMs | default 500 }}
+      provider:
+        prometheus:
+          address: {{ .Values.rollout.analysis.prometheusAddress | default "http://prometheus-operated.monitoring.svc.cluster.local:9090" }}
+          query: |
+            histogram_quantile(
+              0.99,
+              sum(
+                rate(
+                  http_request_duration_milliseconds_bucket{
+                    service="{{ `{{args.service-name}}` }}",
+                    namespace="{{ `{{args.namespace}}` }}"
+                  }[2m]
+                )
+              ) by (le)
+            )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Metric 2: HTTP 5xx error rate (fraction of total requests)
+    # Fails if more than rollout.analysis.errorRateThreshold of requests are 5xx.
+    # Inconclusive if no requests have been observed yet.
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: error-rate
+      interval: {{ .Values.rollout.analysis.intervalSeconds | default 60 }}s
+      count: {{ .Values.rollout.analysis.count | default 5 }}
+      failureLimit: {{ .Values.rollout.analysis.failureLimit | default 1 }}
+      inconclusiveLimit: {{ .Values.rollout.analysis.inconclusiveLimit | default 3 }}
+      successCondition: >-
+        result != nil && len(result) > 0 &&
+        asFloat(result[0]) < {{ .Values.rollout.analysis.errorRateThreshold | default 0.01 }}
+      failureCondition: >-
+        result != nil && len(result) > 0 &&
+        asFloat(result[0]) >= {{ .Values.rollout.analysis.errorRateThreshold | default 0.01 }}
+      provider:
+        prometheus:
+          address: {{ .Values.rollout.analysis.prometheusAddress | default "http://prometheus-operated.monitoring.svc.cluster.local:9090" }}
+          query: |
+            sum(
+              rate(
+                http_requests_total{
+                  service="{{ `{{args.service-name}}` }}",
+                  namespace="{{ `{{args.namespace}}` }}",
+                  status=~"5.."
+                }[2m]
+              )
+            )
+            /
+            sum(
+              rate(
+                http_requests_total{
+                  service="{{ `{{args.service-name}}` }}",
+                  namespace="{{ `{{args.namespace}}` }}"
+                }[2m]
+              )
+            )
+{{- end }}

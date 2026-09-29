@@ -1,0 +1,69 @@
+name: Buf Lint
+
+# Runs Buf lint and breaking-change detection on every push and PR.
+# Proto files live in proto/; OpenAPI linting is handled via buf plugins
+# when a buf.build/community/stephanain-openapi plugin is configured.
+#
+# This job is intentionally separate from ci.yml so it can be required
+# independently on branch protection rules.
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'proto/**'
+      - 'openapi/**'
+      - 'buf.yaml'
+      - 'buf.gen.yaml'
+      - '.github/workflows/buf.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'proto/**'
+      - 'openapi/**'
+      - 'buf.yaml'
+      - 'buf.gen.yaml'
+      - '.github/workflows/buf.yml'
+
+concurrency:
+  group: buf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  buf-lint:
+    name: Buf Lint & Breaking Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history required for breaking-change detection against main.
+          fetch-depth: 0
+
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          version: '1.32.2'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Buf lint
+        run: buf lint
+        # Lint always runs; an empty proto/ dir with no .proto files
+        # is valid — buf exits 0 when there is nothing to lint.
+
+      - name: Buf breaking-change detection
+        # Only run on pull_request so we always have a clear base branch.
+        if: github.event_name == 'pull_request'
+        run: |
+          buf breaking --against '.git#branch=${{ github.base_ref }}'
+        # This step FAILS if a field is removed, a type is changed, or an
+        # enum value is removed relative to the base branch.
+        # Use `buf breaking --error-format=json` for machine-parseable output.
+
+      - name: Buf lint report (summary)
+        if: failure()
+        run: |
+          echo "## Buf Lint Report" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          buf lint --error-format=text 2>&1 || true >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

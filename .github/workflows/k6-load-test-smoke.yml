@@ -1,0 +1,63 @@
+name: K6 Load Test Smoke
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  load-test-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup k6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6-stable.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run server
+        run: |
+          go run ./cmd/server &
+          echo "Server started"
+          sleep 10
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/test?sslmode=disable
+          JWT_SECRET: dev-secret
+
+      - name: Run Load Test Smoke
+        run: |
+          k6 run scripts/loadtest/plans.js --out=json=plans_results.json
+          k6 run scripts/loadtest/subscriptions.js --out=json=subscriptions_results.json
+          k6 run scripts/loadtest/statements.js --out=json=statements_results.json
+        env:
+          JWT_SECRET: dev-secret
+
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-smoke-results
+          path: |
+            plans_results.json
+            subscriptions_results.json
+            statements_results.json

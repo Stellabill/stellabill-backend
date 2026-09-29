@@ -1,0 +1,156 @@
+{{- if .Values.rollout.enabled }}
+# deploy/helm/stellabill/templates/rollout.yaml
+#
+# Argo Rollouts Rollout resource for the stellabill-api component.
+# Replaces the Deployment for the api component when rollout.enabled=true.
+#
+# Traffic is shifted in four canary steps: 10% → 25% → 50% → 100%.
+# Each step pauses for automated analysis on p99 latency and 5xx error rate.
+# If analysis fails, the rollout is automatically aborted and traffic returns
+# to the stable revision.
+#
+# Prerequisites:
+#   - Argo Rollouts controller installed in the cluster
+#     (https://argoproj.github.io/argo-rollouts/)
+#   - Prometheus available at the URL configured in rollout.analysis.prometheusAddress
+#   - The stellabill Service must exist (created separately or via service.yaml)
+#
+# Manual operations:
+#   kubectl argo rollouts get rollout stellabill-api -n <namespace> --watch
+#   kubectl argo rollouts promote stellabill-api -n <namespace>       # manual promote
+#   kubectl argo rollouts abort stellabill-api -n <namespace>         # manual abort
+#   kubectl argo rollouts undo stellabill-api -n <namespace>          # rollback
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ .Values.api.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "stellabill.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  annotations:
+    # Record the chart version for audit purposes.
+    helm.sh/chart-version: {{ .Chart.Version | quote }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  revisionHistoryLimit: {{ .Values.rollout.revisionHistoryLimit | default 3 }}
+
+  selector:
+    matchLabels:
+      {{- include "stellabill.componentSelectorLabels" (dict "Chart" .Chart "Release" .Release "component" "api") | nindent 6 }}
+
+  template:
+    metadata:
+      labels:
+        {{- include "stellabill.componentLabels" (dict "Chart" .Chart "Release" .Release "component" "api") | nindent 8 }}
+        tier: {{ .Values.api.labels.tier }}
+        component: {{ .Values.api.labels.component }}
+    spec:
+      {{- with .Values.api.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.api.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.api.topologySpread.maxSkew }}
+          topologyKey: {{ .Values.api.topologySpread.topologyKey }}
+          whenUnsatisfiable: {{ .Values.api.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "stellabill.componentSelectorLabels" (dict "Chart" .Chart "Release" .Release "component" "api") | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.api.container.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.api.container.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: {{ .Values.api.container.portName }}
+              containerPort: {{ .Values.api.container.port }}
+              protocol: TCP
+          {{- with .Values.api.container.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.api.container.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- with .Values.api.container.volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.api.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.api.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.api.container.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ .Values.api.serviceAccountName | default (printf "%s-%s" .Release.Name "api") }}
+
+  strategy:
+    canary:
+      # Reference the AnalysisTemplate that checks p99 latency and 5xx rate.
+      analysis:
+        templates:
+          - templateName: {{ .Values.rollout.analysis.templateName | default "stellabill-canary-analysis" }}
+        # Start analysis after the first canary step is stable.
+        startingStep: 1
+        args:
+          - name: service-name
+            value: {{ .Values.api.name }}
+          - name: namespace
+            value: {{ .Release.Namespace }}
+
+      steps:
+        # Step 1: send 10% of traffic to canary; run analysis.
+        - setWeight: 10
+        - pause:
+            duration: {{ .Values.rollout.canary.step1PauseDuration | default "2m" }}
+
+        # Step 2: promote to 25% if analysis passes.
+        - setWeight: 25
+        - pause:
+            duration: {{ .Values.rollout.canary.step2PauseDuration | default "2m" }}
+
+        # Step 3: promote to 50%.
+        - setWeight: 50
+        - pause:
+            duration: {{ .Values.rollout.canary.step3PauseDuration | default "5m" }}
+
+        # Step 4: full traffic — analysis continues until rollout completes.
+        - setWeight: 100
+
+      # Abort and roll back automatically if analysis fails.
+      abortScaleDownDelaySeconds: {{ .Values.rollout.canary.abortScaleDownDelaySeconds | default 30 }}
+
+      # Keep the canary alive for the duration of all analysis steps.
+      scaleDownDelaySeconds: {{ .Values.rollout.canary.scaleDownDelaySeconds | default 30 }}
+{{- end }}

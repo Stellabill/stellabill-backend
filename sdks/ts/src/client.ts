@@ -109,7 +109,11 @@ function validateBaseUrl(raw: unknown): string {
   return parsed.toString().replace(/\/+$/, "");
 }
 
-function isLocalhost(baseUrl: string): boolean {
+/**
+ * Whether a baseUrl points at localhost / 127.0.0.1. Malformed URLs return
+ * `false` (treated as non-localhost). Exported for testing only.
+ */
+export function isLocalhost(baseUrl: string): boolean {
   try {
     const u = new URL(baseUrl);
     return u.hostname === "localhost" || u.hostname === "127.0.0.1";
@@ -118,19 +122,30 @@ function isLocalhost(baseUrl: string): boolean {
   }
 }
 
-async function safeParseErrorBody(
-  res: Response,
-): Promise<ApiErrorBody | undefined> {
-  const contentType = res.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) return undefined;
+/**
+ * Parse a potential error response body into an ApiErrorBody.
+ *
+ * The boundary condition at the `parsed && typeof parsed === 'object' &&
+ * !Array.isArray(parsed)` branch is deliberate: only plain objects (and not
+ * `null`, arrays, primitives, or other non-object JSON values) are returned as
+ * the error body. Everything else yields `undefined` so the SDK contract
+ * remains deterministic. Exported for testing only.
+ */
+export function normalizeErrorBody(parsed: unknown): ApiErrorBody | undefined {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as ApiErrorBody;
+  }
+  return undefined;
+}
+
+async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) return undefined;
   try {
     const text = await res.text();
     if (!text) return undefined;
     const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as ApiErrorBody;
-    }
-    return undefined;
+    return normalizeErrorBody(parsed);
   } catch {
     return undefined;
   }
@@ -198,9 +213,9 @@ export function createStellarBillClient(
   // truth for the `Authorization` header.
   if (options.headers) {
     for (const [k, v] of Object.entries(options.headers)) {
-      const lower = k.toLowerCase();
-      if (lower === "authorization") continue;
-      if (typeof v === "string" && v.length > 0) {
+      const lower = k.lowerCase();
+      if (lower === 'authorization') continue;
+      if (typeof v === 'string' && v.length > 0) {
         extraHeaders[lower] = v;
       }
     }
@@ -375,9 +390,3 @@ export async function assertOk<T>(result: SdkResult<T>): Promise<T> {
     ),
   });
 }
-
-/**
- * Re-export for callers that want to construct or inspect API error
- * envelopes manually (e.g. for response-shape validation in their own tests).
- */
-export { safeParseErrorBody };

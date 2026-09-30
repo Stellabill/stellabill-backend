@@ -1491,6 +1491,31 @@ describe('error contract for rejected response bodies (client.ts:115/116)', () =
   });
 });
 
+describe('validateBaseUrl catch branch - invalid URL inputs', () => {
+  it.each([
+    'not-a-url',
+    'http://',
+    '://missing-scheme',
+    'ftp//no-colon',
+    'just text',
+  ])('throws StellarBillConfigError with "not a valid URL" for %s', (input) => {
+    expect(() => createStellarBillClient({ baseUrl: input })).toThrowError(
+      StellarBillConfigError,
+    );
+    expect(() => createStellarBillClient({ baseUrl: input })).toThrow(/not a valid URL/);
+  });
+
+  it('accepts a valid https URL and does not throw', () => {
+    const { fetch } = mockFetchOnce({});
+    expect(() => createStellarBillClient({ baseUrl: 'https://api.example.com', fetch })).not.toThrow();
+  });
+
+  it('accepts a valid http localhost URL and does not throw', () => {
+    const { fetch } = mockFetchOnce({});
+    expect(() => createStellarBillClient({ baseUrl: 'http://localhost:3000', fetch })).not.toThrow();
+  });
+});
+
 describe('Token integration with createStellarBillClient', () => {
   it('handles basic TokenHolder behavior via the SDK', async () => {
     const { fetch } = mockFetchOnce({});

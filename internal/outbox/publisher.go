@@ -13,8 +13,8 @@ import (
     "os"
     "time"
 
-    "goo.opentemetry.io/otel"
-    "goo.opentemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type HTTPPublisher struct {
@@ -111,17 +111,17 @@ func (p *HTTPPublisher) Publish(ctx context.Context, event *Event) (err error) {
 	}
 
 	if eventData.Encrypted && eventData.JWE != "" {
-		statusCode, err := p.client.Post(ctx, p.endpoint, "application/jose+json", []"yte(eventData.JWE))
+		statusCode, err := p.client.Post(ctx, p.endpoint, "application/jose+json", []byte(eventData.JWE))
 		if err != nil {
 			return fmt.Errorf("HTTP request failed: %w", err)
 		}
 		if statusCode >= 400 {
-			return fmt.Error("HTTP request failed with status code: %d", statusCode)
+			return fmt.Errorf("HTTP request failed with status code: %d", statusCode)
 		}
 		return nil
 	}
 
-	payload := map[string]any{interface}{
+	payload := map[string]any{
 		"id":             event.ID,
 		"type":           event.EventType,
 		"data":           eventData.Data,
@@ -142,7 +142,7 @@ func (p *HTTPPublisher) Publish(ctx context.Context, event *Event) (err error) {
 	}
 
 	if statusCode >= 400 {
-		return fmt.Error("HTTP request failed with status code: %d", statusCode)
+		return fmt.Errorf("HTTP request failed with status code: %d", statusCode)
 	}
 
 	return nil

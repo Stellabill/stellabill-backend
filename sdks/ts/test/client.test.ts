@@ -564,6 +564,27 @@ describe('safeParseErrorBody', () => {
     vi.spyOn(r, 'text').mockRejectedValue(new Error('boom'));
     expect(await safeParseErrorBody(r)).toBeUndefined();
   });
+
+  // parsed branch (client.ts:120) - valid JSON that is not a plain object
+  it.each([
+    ['a number', '42'],
+    ['a boolean', 'true'],
+    ['an array', '[{"code":"x"}]'],
+    ['a string', '"error text"'],
+    ['null', 'null'],
+  ])('returns undefined when parsed value is %s', async (_, body) => {
+    const r = new Response(body, { status: 400, headers: { 'content-type': 'application/json' } });
+    expect(await safeParseErrorBody(r)).toBeUndefined();
+  });
+
+  it('returns the parsed object when JSON is a plain object (accepted input)', async () => {
+    const payload = { error: 'bad_request', message: 'invalid field', code: 'validation_error' };
+    const r = new Response(JSON.stringify(payload), {
+      status: 422,
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(await safeParseErrorBody(r)).toEqual(payload);
+  });
 });
 
 describe('validateBaseUrl catch branch - invalid URL inputs', () => {

@@ -4,9 +4,14 @@ import { createStellarBillClient } from '../src/index.js';
 
 describe('authMiddleware - rejected input', () => {
   it('should reject invalid headers and not inject them', async () => {
-    const calls: any[] = [];
-    const mockFetch = vi.fn(async (input) => {
-      const headers = new Headers((input as Request).headers);
+    const calls: Array<{ headers: Record<string, string> }> = [];
+    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      let headers: Headers;
+      if (input instanceof Request) {
+        headers = input.headers;
+      } else {
+        headers = new Headers(init?.headers);
+      }
       const h: Record<string, string> = {};
       headers.forEach((v, k) => (h[k] = v));
       calls.push({ headers: h });
@@ -19,11 +24,11 @@ describe('authMiddleware - rejected input', () => {
         'x-valid': 'valid-value',
         'x-empty': '',
         'x-whitespace': '   ',
-        'x-number': 123 as any,
-        'x-object': {} as any,
-        'x-array': [] as any,
+        'x-number': 123 as unknown as string,
+        'x-object': {} as unknown as string,
+        'x-array': [] as unknown as string,
       },
-      fetch: mockFetch,
+      fetch: mockFetch as typeof fetch,
     });
 
     await sdk.getHealth();
@@ -38,9 +43,14 @@ describe('authMiddleware - rejected input', () => {
   });
 
   it('should not inject authorization header when token is rejected', async () => {
-    const calls: any[] = [];
-    const mockFetch = vi.fn(async (input) => {
-      const headers = new Headers((input as Request).headers);
+    const calls: Array<{ headers: Record<string, string> }> = [];
+    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      let headers: Headers;
+      if (input instanceof Request) {
+        headers = input.headers;
+      } else {
+        headers = new Headers(init?.headers);
+      }
       const h: Record<string, string> = {};
       headers.forEach((v, k) => (h[k] = v));
       calls.push({ headers: h });
@@ -50,7 +60,7 @@ describe('authMiddleware - rejected input', () => {
     const sdk = createStellarBillClient({
       baseUrl: 'https://api.example.com',
       token: 'invalid token', // Rejected by sanitizeToken due to whitespace
-      fetch: mockFetch,
+      fetch: mockFetch as typeof fetch,
     });
 
     await sdk.getHealth();

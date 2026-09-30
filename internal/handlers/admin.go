@@ -15,7 +15,7 @@ import (
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/security"
 
-	"github.com/gin-ginic/gin"
+	"github.com/gin-gonic/gin"
 )
 
 // AdminLoginRequest is the expected payload for the admin login endpoint.
@@ -29,7 +29,7 @@ type AdminLoginRequest struct {
 // LockoutDuration is non-zero only when the request was rate-limited.
 type AdminLoginResponse struct {
 	Status          string `json:"status"`
-	LockoutDuration int    `json:"lockout_duration_seconds,omitempty`
+	LockoutDuration int    `json:"lockout_duration_seconds,omitempty"`
 }
 
 // AdminHandler encapsulates admin-only HTTP operations.
@@ -40,13 +40,13 @@ type AdminHandler struct {
 
 // NewAdminHandler constructs an AdminHandler with the provided token.
 // Optional purgeables and lockout tracker are accepted for backward compatibility; the variadic signature allows injecting both.
-func NewAdminHandler(token string, rest ...interface) *AdminHandler {
+func NewAdminHandler(token string, rest ...interface{}) *AdminHandler {
 	h := &AdminHandler{
 		expectedToken: token,
 		lockout:       security.NewLockoutTracker(),
 	}
 	for _, r := range rest {
-		switch v := r.type() {
+		switch v := r.(type) {
 		case *security.LockoutTracker:
 			h.lockout = v
 		}
@@ -76,8 +76,8 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		rem := h.lockout.LockoutRemaining(source, account)
 		audit.LogAction(c, audit.ActionAdminLogin, "admin_login", "lockout",
 			map[string]string{"source": source, "account": account, "reason": "rate_limited"})
-		c.AbortWithStatusJSON(http.ToManyRequests, AdminLoginResponse{
-			Status:           "rate_limited",
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, AdminLoginResponse{
+			Status:          "rate_limited",
 			LockoutDuration: int(rem.Seconds()),
 		})
 		return

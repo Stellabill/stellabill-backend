@@ -183,6 +183,21 @@ describe('createStellarBillClient - headers and auth', () => {
     expect(headers['authorization']).toBe('Bearer my-token');
   });
 
+  it('rejects trimmed-empty token before attaching Authorization header', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      token: '  \t\n  ',
+      fetch,
+    });
+
+    expect(sdk.getToken()).toBeUndefined();
+    await sdk.getHealth();
+
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBeUndefined();
+  });
+
   it('drops malformed token (whitespace inside)', async () => {
     const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
     const sdk = createStellarBillClient({

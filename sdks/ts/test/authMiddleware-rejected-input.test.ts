@@ -36,5 +36,27 @@ describe('authMiddleware - rejected input', () => {
     expect(h['x-object']).toBeUndefined();
     expect(h['x-array']).toBeUndefined();
   });
+
+  it('should not inject authorization header when token is rejected', async () => {
+    const calls: any[] = [];
+    const mockFetch = vi.fn(async (input) => {
+      const headers = new Headers((input as Request).headers);
+      const h: Record<string, string> = {};
+      headers.forEach((v, k) => (h[k] = v));
+      calls.push({ headers: h });
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' }});
+    });
+
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      token: 'invalid token', // Rejected by sanitizeToken due to whitespace
+      fetch: mockFetch,
+    });
+
+    await sdk.getHealth();
+    expect(calls.length).toBe(1);
+    expect(calls[0].headers['authorization']).toBeUndefined();
+    expect(sdk.getToken()).toBeUndefined();
+  });
 });
 

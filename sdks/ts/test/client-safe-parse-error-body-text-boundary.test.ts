@@ -56,6 +56,58 @@ describe('safeParseErrorBody - text-read boundary (:112)', () => {
   });
 });
 
+// Issue #891 — the `text` guard itself (`if (!text) return undefined;`,
+// client.ts:133; the issue quotes it as :113, before #895 inserted
+// `normalizeErrorBody` above it). The suite above pins the short-circuit for a
+// 400; what it does not pin is *where* the rejected input stops. An empty string
+// also throws in `JSON.parse`, so every assertion that only checks the return
+// value stays green even if the guard is deleted and the body falls through to
+// the `catch`. These cases therefore assert which side of the guard the `text`
+// lands on, and that the decision depends on the decoded text alone, not on the
+// status.
+describe('safeParseErrorBody - rejected text input (:133)', () => {
+  it('rejects an empty body on a server error without reaching JSON.parse', async () => {
+    const res = new Response('', { status: 500, headers: { 'content-type': 'application/json' } });
+    const parse = vi.spyOn(JSON, 'parse');
+
+    await expect(safeParseErrorBody(res)).resolves.toBeUndefined();
+
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it('rejects a body the decoder reduces to empty without reaching JSON.parse', async () => {
+    // A lone BOM is stripped while decoding, so `text` is `''` by the time the
+    // guard sees it — the rejection happens at :113, not in the parser.
+    const res = jsonResponse('\uFEFF');
+    const parse = vi.spyOn(JSON, 'parse');
+
+    await expect(safeParseErrorBody(res)).resolves.toBeUndefined();
+
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it('sends whitespace-only text to JSON.parse, which then rejects it', async () => {
+    // Whitespace is truthy, so the guard must not fire. Both paths end in
+    // `undefined`, and only the call count tells them apart.
+    const res = jsonResponse('   \n\t ');
+    const parse = vi.spyOn(JSON, 'parse');
+
+    await expect(safeParseErrorBody(res)).resolves.toBeUndefined();
+
+    expect(parse).toHaveBeenCalledOnce();
+  });
+
+  it('sends non-empty text to JSON.parse exactly once and returns the envelope', async () => {
+    const body = { message: 'bad', code: 'invalid' };
+    const res = jsonResponse(JSON.stringify(body));
+    const parse = vi.spyOn(JSON, 'parse');
+
+    await expect(safeParseErrorBody(res)).resolves.toEqual(body);
+
+    expect(parse).toHaveBeenCalledOnce();
+  });
+});
+
 describe('safeParseErrorBody - accepted JSON shapes', () => {
   it('accepts an empty object as a valid error envelope', async () => {
     const res = jsonResponse('{}');

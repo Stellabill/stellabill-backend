@@ -40,8 +40,7 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "echo \"lint placeholder (eslint optional)\"",
-    "preinstall": "node dist/setup.js"
+    "lint": "echo \"lint placeholder (eslint optional)\""
   },
   "dependencies": {
     "openapi-fetch": "0.13.5"

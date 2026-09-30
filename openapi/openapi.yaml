@@ -134,6 +134,8 @@ paths:
           application/merge-patch+json:
             schema:
               $ref: "#/components/schemas/SubscriptionPatch"
+            example:
+              status: "paused"
       responses:
         "200":
           description: Subscription updated
@@ -141,6 +143,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+              example:
+                id: "sub_123"
+                plan_id: "plan_basic"
+                customer: "customer_123"
+                status: "paused"
+                amount: "1000"
+                interval: "monthly"
+                next_billing: "2026-08-01T00:00:00Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -347,7 +357,8 @@ components:
         interval:
           type: string
         next_billing:
-          type: [string, 'null']
+          type: string
+          nullable: true
     Error:
       type: object
       additionalProperties: false

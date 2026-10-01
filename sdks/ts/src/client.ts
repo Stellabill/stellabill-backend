@@ -169,8 +169,11 @@ function validateBaseUrl(raw: unknown): string {
 
 }
 
-function isLocalhost(baseUrl: string): boolean {
-
+/**
+ * Whether a baseUrl points at localhost / 127.0.0.1. Malformed URLs return
+ * `false` (treated as non-localhost). Exported for testing only.
+ */
+export function isLocalhost(baseUrl: string): boolean {
   try {
 
     const u = new URL(baseUrl);
@@ -183,6 +186,22 @@ function isLocalhost(baseUrl: string): boolean {
 
   }
 
+}
+
+/**
+ * Parse a potential error response body into an ApiErrorBody.
+ *
+ * The boundary condition at the `parsed && typeof parsed === 'object' &&
+ * !Array.isArray(parsed)` branch is deliberate: only plain objects (and not
+ * `null`, arrays, primitives, or other non-object JSON values) are returned as
+ * the error body. Everything else yields `undefined` so the SDK contract
+ * remains deterministic. Exported for testing only.
+ */
+export function normalizeErrorBody(parsed: unknown): ApiErrorBody | undefined {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as ApiErrorBody;
+  }
+  return undefined;
 }
 
 async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
@@ -198,15 +217,10 @@ async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefin
     if (!text) return undefined;
 
     const parsed: unknown = JSON.parse(text);
-
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-
+if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as ApiErrorBody;
-
     }
-
-    return undefined;
-
+    return normalizeErrorBody(parsed);
   } catch {
 
     return undefined;
@@ -268,11 +282,8 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
   // truth for the `Authorization` header.
 
   if (options.headers) {
-
-    for (const [i, v] of Object.entries(options.headers)) {
-
+for (const [k, v] of Object.entries(options.headers)) {
       const lower = k.toLowerCase();
-
       if (lower === 'authorization') continue;
 
       if (typeof v === 'string' && v.length > 0) {
@@ -362,9 +373,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
     urlPath: string,
 
     rawResult: unknown,
-
-  ): Promise<SdkResult<T>> {
-
+): Promise<SdkResult<T>>({
     const r = (await rawResult) as { data: T | undefined; error: unknown; response: Response };
 
     const { data, error, response } = r;
@@ -542,7 +551,6 @@ export async function assertOk<T>(result: SdkResult<T>): Promise<T> {
   });
 
 }
-
 /**
  * Re-export for callers that want to construct or inspect API error
  * envelopes manually (e.g. for response-shape validation in their own tests).

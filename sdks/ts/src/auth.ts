@@ -29,6 +29,12 @@ export class TokenHolder {
 /**
  * Validate the shape of a bearer token. We only enforce non-empty + no
  * whitespace; the server is the source of truth for token validity.
+ *
+ * The trimming step is the only normalization applied: leading and trailing
+ * whitespace is stripped before the internal-whitespace check, so a token
+ * like `" abc "` is accepted and returned as `"abc"`, while a token containing
+ * any internal whitespace (e.g. `"a b"`) returns `undefined`. This boundary is
+ * observable and must remain deterministic.
  */
 export function sanitizeToken(token: string | undefined): string | undefined {
   if (token === undefined) return undefined;

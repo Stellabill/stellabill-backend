@@ -469,6 +469,33 @@ describe('createStellarBillClient - headers and auth', () => {
     expect(headers['authorization']).toBe('Bearer my-token');
   });
 
+  it('accepts representative valid token string and injects Authorization Bearer header', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const representativeToken = 'sb_live_secret_key_12345';
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      token: representativeToken,
+      fetch,
+    });
+    expect(sdk.getToken()).toBe(representativeToken);
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBe(`Bearer ${representativeToken}`);
+  });
+
+  it('drops non-string token input and does not inject Authorization header', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({
+      baseUrl: 'https://api.example.com',
+      token: 12345 as unknown as string,
+      fetch,
+    });
+    expect(sdk.getToken()).toBeUndefined();
+    await sdk.getHealth();
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBeUndefined();
+  });
+
   it('drops malformed token (whitespace inside)', async () => {
     const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
     const sdk = createStellarBillClient({
@@ -1500,6 +1527,24 @@ describe('Token integration with createStellarBillClient', () => {
     expect(sdk1.getToken()).toBe('a');
     sdk1.setToken(undefined);
     expect(sdk1.getToken()).toBeUndefined();
+  });
+
+  it('accepts representative valid token on setToken and rejects non-string input', async () => {
+    const { fetch: fetch1, calls: calls1 } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk1 = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch: fetch1 });
+
+    const validToken = 'sb_live_session_token_xyz';
+    sdk1.setToken(validToken);
+    expect(sdk1.getToken()).toBe(validToken);
+    await sdk1.getHealth();
+    expect(callHeaders(calls1[0]!)['authorization']).toBe(`Bearer ${validToken}`);
+
+    const { fetch: fetch2, calls: calls2 } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk2 = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch: fetch2 });
+    sdk2.setToken(42 as unknown as string);
+    expect(sdk2.getToken()).toBeUndefined();
+    await sdk2.getHealth();
+    expect(callHeaders(calls2[0]!)['authorization']).toBeUndefined();
   });
 });
 

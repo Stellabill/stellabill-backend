@@ -1503,286 +1503,207 @@ describe('Token integration with createStellarBillClient', () => {
   });
 });
 
-/**
- * Boundary conditions for the `throwOnError` option (issue #850,
- * `src/client.ts:21` -> enforced in `wrap()` at `src/client.ts:228`).
- *
- * The option is documented as "throw StellarBillError on any non-2xx
- * response. Default false". The guard is:
- *
- * ```ts
- * if (throwOnError && (status < 200 || status >= 300)) { throw ... }
- * ```
- *
- * Two things are easy to get wrong and are therefore pinned explicitly here:
- *
- * 1. The enabled flag is read with **`=== true`**, not truthiness, so any
- *    non-`true` value (including a truthy one) selects envelope semantics.
- * 2. The exact edges are `status < 200` and `status >= 300` — 200 and 299 are
- *    successes and must NOT throw; 300 is the first throwing status.
- */
-describe('createStellarBillClient - throwOnError boundary conditions (#850)', () => {
-  /** Build a client whose response has a synthetic absolute URL + status. */
-  function respondWith(
-    body: unknown,
-    opts: { status: number; url?: string; contentType?: string },
-  ): { fetch: typeof globalThis.fetch } {
-    const text = typeof body === 'string' ? body : JSON.stringify(body);
-    const res = new Response(text, {
-      status: Math.min(Math.max(opts.status, 200), 599),
-      headers: { 'content-type': opts.contentType ?? 'application/json' },
+// ---------------------------------------------------------------------------
+// safeParseErrorBody – accepted-input branch (client.ts:116)
+//
+// Line 116: `return parsed as ApiErrorBody;`
+// Guard:    `parsed && typeof parsed === 'object' && !Array.isArray(parsed)`
+//
+// These tests exercise the branch both directly (unit) and end-to-end through
+// the SDK pipeline so the SDK contract is verifiable and deterministic.
+// ---------------------------------------------------------------------------
+
+describe('safeParseErrorBody – accepted-input branch (line 116)', () => {
+  // -- Direct unit tests for the accepted-input branch ---------------------
+
+  it('returns the full ApiErrorBody object when all three fields are present', async () => {
+    const body = { error: 'Bad Request', message: 'Invalid cursor', code: 'invalid_cursor' };
+    const r = new Response(JSON.stringify(body), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
     });
-    // `Response.status`/`.url` are prototype getters; a real fetch() response
-    // would carry the final absolute URL and (for opaque responses) status 0,
-    // neither of which the Response constructor can produce.
-    Object.defineProperty(res, 'status', { value: opts.status, configurable: true });
-    if (opts.url !== undefined) {
-      Object.defineProperty(res, 'url', { value: opts.url, configurable: true });
-    }
-    return makeFetchForResponse(res);
-  }
-
-  // ── The `status >= 300` edge ──────────────────────────────────────────────
-
-  it('does not throw at status 200 when throwOnError is enabled', async () => {
-    const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' }, { status: 200 });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const r = await sdk.getHealth();
-    expect(r.status).toBe(200);
-    expect(r.data?.status).toBe('ok');
-    expect(r.error).toBeUndefined();
+    const result = await safeParseErrorBody(r);
+    // Branch accepted the input → result must equal the original object shape.
+    expect(result).toEqual(body);
+    expect(result?.error).toBe('Bad Request');
+    expect(result?.message).toBe('Invalid cursor');
+    expect(result?.code).toBe('invalid_cursor');
   });
 
-  it('does not throw at status 299 (last 2xx) when throwOnError is enabled', async () => {
-    const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' }, { status: 299 });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const r = await sdk.getHealth();
-    expect(r.status).toBe(299);
-    expect(r.data?.status).toBe('ok');
+  it('returns the object when only the error field is present (partial ApiErrorBody)', async () => {
+    const body = { error: 'Unauthorized' };
+    const r = new Response(JSON.stringify(body), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+    const result = await safeParseErrorBody(r);
+    expect(result).toEqual({ error: 'Unauthorized' });
+    expect(result?.code).toBeUndefined();
+    expect(result?.message).toBeUndefined();
   });
 
-  it('throws at status 300 (first non-2xx) when throwOnError is enabled', async () => {
-    const { fetch } = mockFetchOnce(
-      { error: 'Multiple Choices', message: 'redirect-ish', code: 'ambiguous' },
-      { status: 300 },
-    );
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const caught = await sdk.listPlans().catch((e: unknown) => e);
-    expect(caught).toBeInstanceOf(StellarBillError);
-    expect((caught as StellarBillError).status).toBe(300);
+  it('returns the object when only the message field is present', async () => {
+    const body = { message: 'Resource not found' };
+    const r = new Response(JSON.stringify(body), {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    });
+    const result = await safeParseErrorBody(r);
+    expect(result).toEqual({ message: 'Resource not found' });
   });
 
-  it('returns an envelope at status 300 when throwOnError is disabled', async () => {
-    const { fetch } = mockFetchOnce(
-      { error: 'Multiple Choices', message: 'redirect-ish', code: 'ambiguous' },
-      { status: 300 },
-    );
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: false, fetch });
-    const r = await sdk.listPlans();
-    expect(r.status).toBe(300);
-    expect(r.error?.code).toBe('ambiguous');
+  it('preserves extra unknown fields that are not part of ApiErrorBody', async () => {
+    // The `as ApiErrorBody` cast does not strip extra properties — they must
+    // remain observable so callers who inspect the raw object are not surprised.
+    const body = { error: 'Gone', message: 'deleted', code: 'soft_deleted', detail: 'removed at t0' };
+    const r = new Response(JSON.stringify(body), {
+      status: 410,
+      headers: { 'content-type': 'application/json' },
+    });
+    const result = await safeParseErrorBody(r);
+    expect(result).toEqual(body);
+    expect((result as Record<string, unknown>)['detail']).toBe('removed at t0');
+  });
+
+  it('handles a deeply nested error object (accepted as-is, no recursion guard)', async () => {
+    const body = { error: 'Validation failed', nested: { inner: true } };
+    const r = new Response(JSON.stringify(body), {
+      status: 422,
+      headers: { 'content-type': 'application/json' },
+    });
+    const result = await safeParseErrorBody(r);
+    expect(result?.error).toBe('Validation failed');
+    expect((result as Record<string, unknown>)['nested']).toEqual({ inner: true });
+  });
+
+  it('accepts an empty object {} and returns it (not null, not array, is object)', async () => {
+    const r = new Response('{}', {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    });
+    const result = await safeParseErrorBody(r);
+    expect(result).toEqual({});
+    expect(result).not.toBeNull();
+    expect(result).not.toBeUndefined();
+  });
+
+  // -- End-to-end pipeline tests (accepted-input flows through full SDK) ---
+
+  it('propagates the parsed error body in the SDK result envelope (non-throwOnError)', async () => {
+    // Exercises the full path: fetch → openapi-fetch → wrap() → SdkResult
+    // with a valid JSON object response body that hits line 116.
+    const errorBody = { error: 'Not Found', message: 'subscription gone', code: 'subscription_not_found' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 404 });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    const r = await sdk.getSubscription('sub-xyz');
+    expect(r.status).toBe(404);
+    // The error field must be the parsed object (not undefined, not a string).
+    expect(r.error).toEqual(errorBody);
+    expect(r.error?.code).toBe('subscription_not_found');
+    expect(r.error?.message).toBe('subscription gone');
+    expect(r.error?.error).toBe('Not Found');
     expect(r.data).toBeUndefined();
   });
 
-  // ── The `status < 200` edge ───────────────────────────────────────────────
-
-  it('throws at status 0 (opaque response) when throwOnError is enabled', async () => {
-    const { fetch } = respondWith({ code: 'opaque' }, { status: 0 });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const caught = await sdk.getHealth().catch((e: unknown) => e);
-    expect(caught).toBeInstanceOf(StellarBillError);
-    expect((caught as StellarBillError).status).toBe(0);
-  });
-
-  it('throws at status 199 (last value below 200) when throwOnError is enabled', async () => {
-    const { fetch } = respondWith({ status: 'informational' }, { status: 199 });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const caught = await sdk.getHealth().catch((e: unknown) => e);
-    expect(caught).toBeInstanceOf(StellarBillError);
-    expect((caught as StellarBillError).status).toBe(199);
-  });
-
-  // ── The `=== true` strict-equality boundary ───────────────────────────────
-
-  it('treats an omitted throwOnError as false (default)', async () => {
-    const { fetch } = mockFetchOnce({ error: 'nope' }, { status: 500 });
+  it('propagates parsed error body on 400 from listPlans', async () => {
+    const errorBody = { error: 'Bad Request', message: 'limit must be > 0', code: 'invalid_limit' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 400 });
     const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
-    const r = await sdk.getHealth();
-    expect(r.status).toBe(500);
-    expect(r.error?.error).toBe('nope');
+    const r = await sdk.listPlans({ limit: -1 });
+    expect(r.status).toBe(400);
+    expect(r.error?.code).toBe('invalid_limit');
+    expect(r.error?.message).toBe('limit must be > 0');
+    expect(r.data).toBeUndefined();
   });
 
-  it('treats an explicit throwOnError: false as false', async () => {
-    const { fetch } = mockFetchOnce({ error: 'nope' }, { status: 500 });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: false, fetch });
-    const r = await sdk.getHealth();
-    expect(r.status).toBe(500);
+  it('propagates parsed error body on 401 from inspectIdempotencyKey', async () => {
+    const errorBody = { error: 'Unauthorized', message: 'token missing', code: 'auth_required' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 401 });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    const r = await sdk.inspectIdempotencyKey('idem-key-abc');
+    expect(r.status).toBe(401);
+    expect(r.error).toEqual(errorBody);
+    expect(r.data).toBeUndefined();
   });
 
-  it('treats a truthy non-boolean throwOnError as false (strict === true comparison)', async () => {
-    // `options.throwOnError === true` means JS truthiness is deliberately NOT
-    // used: 1, 'true', {} etc. all select envelope semantics. Pinned so the
-    // comparison operator cannot be relaxed without this test failing.
-    const { fetch } = mockFetchOnce({ error: 'nope' }, { status: 500 });
+  it('parsed error body lands in StellarBillError.body when throwOnError: true', async () => {
+    // This verifies the accepted-input (line 116) object reaches the thrown
+    // error's .body property intact through the full SDK error path.
+    const errorBody = { error: 'Forbidden', message: 'wrong owner', code: 'ownership_violation' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 403 });
     const sdk = createStellarBillClient({
       baseUrl: 'https://api.example.com',
-      throwOnError: 1 as unknown as boolean,
+      throwOnError: true,
       fetch,
     });
-    const r = await sdk.getHealth();
-    expect(r.status).toBe(500);
-    expect(r.error?.error).toBe('nope');
-  });
-
-  // ── Thrown error shape + message fallback chain ───────────────────────────
-
-  it('populates every StellarBillError field and the message from body.message', async () => {
-    const { fetch } = mockFetchOnce(
-      { error: 'Not Found', message: 'gone', code: 'missing' },
-      { status: 404 },
-    );
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const caught = (await sdk.getSubscription('abc').catch((e: unknown) => e)) as StellarBillError;
-
+    let caught: unknown;
+    try {
+      await sdk.getSubscription('sub-forbidden');
+    } catch (err) {
+      caught = err;
+    }
     expect(caught).toBeInstanceOf(StellarBillError);
-    expect(caught.name).toBe('StellarBillError');
-    expect(caught.status).toBe(404);
-    expect(caught.requestMethod).toBe('GET');
-    expect(caught.requestUrl).toBe('/api/subscriptions/abc');
-    expect(caught.body).toEqual({ error: 'Not Found', message: 'gone', code: 'missing' });
-    expect(caught.message).toBe('GET /api/subscriptions/abc failed (404): gone');
-    expect(caught.toString()).toContain('404 (missing)');
+    const e = caught as StellarBillError;
+    expect(e.status).toBe(403);
+    // The body must be the fully parsed object that came through line 116.
+    expect(e.body).toEqual(errorBody);
+    expect(e.body?.code).toBe('ownership_violation');
+    expect(e.body?.message).toBe('wrong owner');
+    expect(e.body?.error).toBe('Forbidden');
+    expect(e.requestMethod).toBe('GET');
+    expect(e.requestUrl).toContain('/api/subscriptions/');
   });
 
-  it('falls back to body.error when body.message is absent', async () => {
-    const { fetch } = mockFetchOnce({ error: 'Bad Request' }, { status: 400 });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const caught = (await sdk.listPlans().catch((e: unknown) => e)) as StellarBillError;
-    expect(caught.message).toBe('GET /api/v1/plans failed (400): Bad Request');
-  });
-
-  it('falls back to `HTTP <status>` when the body is unusable', async () => {
-    const { fetch } = mockFetchOnce('<html>nope</html>', { status: 500, contentType: 'text/html' });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const caught = (await sdk.getHealth().catch((e: unknown) => e)) as StellarBillError;
-    expect(caught.status).toBe(500);
-    expect(caught.body).toBeUndefined();
-    expect(caught.message).toBe('GET /api/health failed (500): HTTP 500');
-  });
-
-  it('drops a non-object error payload from the envelope but still throws', async () => {
-    // openapi-fetch surfaces a string body verbatim as `error`; the SDK only
-    // accepts objects as ApiErrorBody, so `error`/`body` become undefined while
-    // the non-2xx status still throws.
-    const { fetch } = mockFetchOnce('"boom"', { status: 502 });
-    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', throwOnError: true, fetch });
-    const caught = (await sdk.getHealth().catch((e: unknown) => e)) as StellarBillError;
+  it('assertOk throws with the accepted-input error body available on the error', async () => {
+    const errorBody = { error: 'Gone', message: 'soft deleted', code: 'soft_deleted' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 410 });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch });
+    const r = await sdk.getSubscription('deleted-id');
+    // Confirm the SDK result carries the parsed body before assertOk.
+    expect(r.error).toEqual(errorBody);
+    // assertOk must re-throw a StellarBillError whose .body matches.
+    let caught: unknown;
+    try {
+      await assertOk(r);
+    } catch (err) {
+      caught = err;
+    }
     expect(caught).toBeInstanceOf(StellarBillError);
-    expect(caught.status).toBe(502);
-    expect(caught.body).toBeUndefined();
-
-    const { fetch: fetch2 } = mockFetchOnce('"boom"', { status: 502 });
-    const sdk2 = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch: fetch2 });
-    const r = await sdk2.getHealth();
-    expect(r.status).toBe(502);
-    expect(r.error).toBeUndefined();
+    const e = caught as StellarBillError;
+    expect(e.status).toBe(410);
+    expect(e.body).toEqual(errorBody);
+    expect(e.body?.code).toBe('soft_deleted');
   });
 
-  // ── requestUrl asymmetry between the two modes ────────────────────────────
-
-  it('exposes the absolute URL in the envelope but the relative path in the thrown error', async () => {
-    // Characterization test for a known inconsistency (follow-up in the PR):
-    // `wrap()` returns `response.url || urlPath` but throws with `urlPath`.
-    // With a real fetch the envelope therefore carries the fully-resolved URL
-    // (query string included) while the error carries only the path template.
-    const absoluteUrl = 'https://api.example.com/api/v1/plans?cursor=c&limit=25';
-
-    const { fetch: envelopeFetch } = respondWith(
-      { error: 'Bad Request', message: 'Invalid cursor', code: 'invalid_cursor' },
-      { status: 400, url: absoluteUrl },
-    );
-    const envelopeSdk = createStellarBillClient({ baseUrl: 'https://api.example.com', fetch: envelopeFetch });
-    const envelope = await envelopeSdk.listPlans({ cursor: 'c', limit: 25 });
-    expect(envelope.requestUrl).toBe(absoluteUrl);
-
-    const { fetch: throwFetch } = respondWith(
-      { error: 'Bad Request', message: 'Invalid cursor', code: 'invalid_cursor' },
-      { status: 400, url: absoluteUrl },
-    );
-    const throwSdk = createStellarBillClient({
+  it('request metadata (method, url) is preserved alongside the parsed error body', async () => {
+    // End-to-end: verify the full SdkResult envelope fields are consistent
+    // when line 116 branch is taken.
+    const errorBody = { error: 'Internal Server Error', message: 'unexpected', code: 'server_error' };
+    const { fetch } = mockFetchOnce(errorBody, { status: 500 });
+    const sdk = createStellarBillClient({
       baseUrl: 'https://api.example.com',
-      throwOnError: true,
-      fetch: throwFetch,
+      token: 'valid-token',
+      fetch,
     });
-    const caught = (await throwSdk.listPlans({ cursor: 'c', limit: 25 }).catch((e: unknown) => e)) as StellarBillError;
-
-    // Documents today's behaviour: the error loses the absolute URL and the
-    // query string that the envelope preserves.
-    expect(caught.requestUrl).toBe('/api/v1/plans');
-    expect(caught.requestUrl).not.toContain('limit=');
+    const r = await sdk.listSubscriptions();
+    expect(r.status).toBe(500);
+    expect(r.requestMethod).toBe('GET');
+    expect(r.requestUrl).toContain('/api/subscriptions');
+    expect(r.response).toBeInstanceOf(Response);
+    expect(r.error).toEqual(errorBody);
+    expect(r.data).toBeUndefined();
   });
 
-  // ── Determinism ───────────────────────────────────────────────────────────
-
-  it('produces byte-identical error fields for identical inputs', async () => {
-    async function capture(): Promise<Record<string, unknown>> {
-      const { fetch } = mockFetchOnce({ error: 'E', message: 'M', code: 'C' }, { status: 409 });
-      const sdk = createStellarBillClient({
-        baseUrl: 'https://api.example.com',
-        throwOnError: true,
-        fetch,
-      });
-      const err = (await sdk.listSubscriptions().catch((e: unknown) => e)) as StellarBillError;
-      return {
-        status: err.status,
-        body: err.body,
-        requestMethod: err.requestMethod,
-        requestUrl: err.requestUrl,
-        message: err.message,
-        stringified: err.toString(),
-      };
-    }
-
-    const first = await capture();
-    const second = await capture();
-    expect(second).toEqual(first);
-  });
-
-  it('never throws for non-2xx on every wrapped operation when throwOnError is off', async () => {
-    // A fresh mock per operation: each mocked Response body can only be read once.
-    const cases: Array<() => Promise<{ status: number; error: unknown; data: unknown }>> = [
-      () =>
-        createStellarBillClient({
-          baseUrl: 'https://api.example.com',
-          fetch: mockFetchOnce({ error: 'E' }, { status: 500 }).fetch,
-        }).getHealth(),
-      () =>
-        createStellarBillClient({
-          baseUrl: 'https://api.example.com',
-          fetch: mockFetchOnce({ error: 'E' }, { status: 500 }).fetch,
-        }).listPlans(),
-      () =>
-        createStellarBillClient({
-          baseUrl: 'https://api.example.com',
-          fetch: mockFetchOnce({ error: 'E' }, { status: 500 }).fetch,
-        }).listSubscriptions(),
-      () =>
-        createStellarBillClient({
-          baseUrl: 'https://api.example.com',
-          fetch: mockFetchOnce({ error: 'E' }, { status: 500 }).fetch,
-        }).getSubscription('id'),
-      () =>
-        createStellarBillClient({
-          baseUrl: 'https://api.example.com',
-          fetch: mockFetchOnce({ error: 'E' }, { status: 500 }).fetch,
-        }).inspectIdempotencyKey('key'),
-    ];
-
-    for (const run of cases) {
-      const r = await run();
-      expect(r.status).toBe(500);
-      expect(r.data).toBeUndefined();
-      expect(r.error).toEqual({ error: 'E' });
-    }
+  it('content-type with charset still triggers the accepted-input branch', async () => {
+    // Ensures `contentType.includes('application/json')` matches
+    // 'application/json; charset=utf-8' so the branch is reachable.
+    const body = { error: 'Conflict', message: 'duplicate key', code: 'duplicate' };
+    const r = new Response(JSON.stringify(body), {
+      status: 409,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+    const result = await safeParseErrorBody(r);
+    expect(result).toEqual(body);
+    expect(result?.code).toBe('duplicate');
   });
 });

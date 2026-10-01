@@ -68,7 +68,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Partially update a subscription using JSON Merge Patch */
+        patch: operations["patchSubscriptionV1"];
         trace?: never;
     };
     "/api/v1/idempotency/{key}": {
@@ -100,6 +101,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SubscriptionPatch: {
+            status?: string;
+            plan_id?: string;
+            customer?: string;
+            amount?: string;
+            interval?: string;
+            next_billing?: string | null;
+        };
         Error: {
             /** @description High-level error type */
             error: string;
@@ -198,6 +207,15 @@ export interface components {
         };
     };
     responses: {
+        /** @description Unsupported content type */
+        UnsupportedMediaType: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description Validation or client error */
         BadRequest: {
             headers: {
@@ -242,7 +260,18 @@ export interface components {
         Limit: number;
     };
     requestBodies: never;
-    headers: never;
+    headers: {
+        /**
+         * @description RFC 5988 (RFC 8288) Link header for cursor pagination. Always
+         *     includes rel="first"; includes rel="prev" when the request was not
+         *     for the first page, and rel="next" when more results are available.
+         *     Provided alongside the `pagination` object in the response body so
+         *     generic HTTP clients can walk the collection without parsing JSON.
+         *
+         * @example <https://api.example.com/api/v1/plans?limit=20>; rel="first", <https://api.example.com/api/v1/plans?limit=20&cursor=abc>; rel="next"
+         */
+        Link: string;
+    };
     pathItems: never;
 }
 export type $defs = Record<string, never>;
@@ -290,6 +319,7 @@ export interface operations {
             /** @description Plans list */
             200: {
                 headers: {
+                    Link: components["headers"]["Link"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -323,6 +353,7 @@ export interface operations {
             /** @description Subscriptions list */
             200: {
                 headers: {
+                    Link: components["headers"]["Link"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -360,6 +391,39 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    patchSubscriptionV1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Subscription identifier
+                 * @example sub_123
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/merge-patch+json": components["schemas"]["SubscriptionPatch"];
+            };
+        };
+        responses: {
+            /** @description Subscription updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Subscription"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            415: components["responses"]["UnsupportedMediaType"];
         };
     };
     inspectIdempotencyKey: {

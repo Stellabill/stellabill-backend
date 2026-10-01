@@ -4,6 +4,8 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+pnpmfileChecksum: sha256-c00uPx3AJ73t5709Y0iG/UaVNqWVIBqUhMutcwLBDrI=
+
 importers:
 
   .:
@@ -17,13 +19,13 @@ importers:
         version: 20.14.2
       '@vitest/coverage-v8':
         specifier: 2.1.9
-        version: 2.1.9(vitest@2.1.9(@types/node@20.14.2))
+        version: 2.1.9(supports-color@9.4.0)(vitest@2.1.9(@types/node@20.14.2)(supports-color@9.4.0))
       openapi-typescript:
         specifier: 7.4.2
         version: 7.4.2(typescript@5.7.2)
       tsup:
         specifier: 8.3.5
-        version: 8.3.5(postcss@8.5.23)(tsx@4.19.2)(typescript@5.7.2)
+        version: 8.3.5(postcss@8.5.23)(supports-color@9.4.0)(tsx@4.19.2)(typescript@5.7.2)
       tsx:
         specifier: 4.19.2
         version: 4.19.2
@@ -32,7 +34,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: 2.1.9
-        version: 2.1.9(@types/node@20.14.2)
+        version: 2.1.9(@types/node@20.14.2)(supports-color@9.4.0)
 
 packages:
 
@@ -1713,21 +1715,21 @@ snapshots:
     dependencies:
       undici-types: 5.26.5
 
-  '@vitest/coverage-v8@2.1.9(vitest@2.1.9(@types/node@20.14.2))':
+  '@vitest/coverage-v8@2.1.9(supports-color@9.4.0)(vitest@2.1.9(@types/node@20.14.2)(supports-color@9.4.0))':
     dependencies:
       '@ampproject/remapping': 2.3.0
       '@bcoe/v8-coverage': 0.2.3
       debug: 4.4.3(supports-color@9.4.0)
       istanbul-lib-coverage: 3.2.2
       istanbul-lib-report: 3.0.1
-      istanbul-lib-source-maps: 5.0.6
+      istanbul-lib-source-maps: 5.0.6(supports-color@9.4.0)
       istanbul-reports: 3.2.0
       magic-string: 0.30.21
       magicast: 0.3.5
       std-env: 3.10.0
       test-exclude: 7.0.2
       tinyrainbow: 1.2.0
-      vitest: 2.1.9(@types/node@20.14.2)
+      vitest: 2.1.9(@types/node@20.14.2)(supports-color@9.4.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -1999,7 +2001,7 @@ snapshots:
       make-dir: 4.0.0
       supports-color: 7.2.0
 
-  istanbul-lib-source-maps@5.0.6:
+  istanbul-lib-source-maps@5.0.6(supports-color@9.4.0):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       debug: 4.4.3(supports-color@9.4.0)
@@ -2274,7 +2276,7 @@ snapshots:
 
   ts-interface-checker@0.1.13: {}
 
-  tsup@8.3.5(postcss@8.5.23)(tsx@4.19.2)(typescript@5.7.2):
+  tsup@8.3.5(postcss@8.5.23)(supports-color@9.4.0)(tsx@4.19.2)(typescript@5.7.2):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.24.2)
       cac: 6.7.14
@@ -2316,7 +2318,7 @@ snapshots:
 
   uri-js-replace@1.0.1: {}
 
-  vite-node@2.1.9(@types/node@20.14.2):
+  vite-node@2.1.9(@types/node@20.14.2)(supports-color@9.4.0):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3(supports-color@9.4.0)
@@ -2343,7 +2345,7 @@ snapshots:
       '@types/node': 20.14.2
       fsevents: 2.3.3
 
-  vitest@2.1.9(@types/node@20.14.2):
+  vitest@2.1.9(@types/node@20.14.2)(supports-color@9.4.0):
     dependencies:
       '@vitest/expect': 2.1.9
       '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@20.14.2))
@@ -2363,7 +2365,7 @@ snapshots:
       tinypool: 1.1.1
       tinyrainbow: 1.2.0
       vite: 5.4.21(@types/node@20.14.2)
-      vite-node: 2.1.9(@types/node@20.14.2)
+      vite-node: 2.1.9(@types/node@20.14.2)(supports-color@9.4.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 20.14.2

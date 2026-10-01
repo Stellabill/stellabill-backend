@@ -7,6 +7,45 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var defaultAllowHeaders = []string{
+	"Content-Type",
+	"Authorization",
+	"Idempotency-Key",
+	"X-Request-ID",
+	"X-Admin-Token",
+	"X-Stellabill-Date",
+	"X-Stellabill-Request-ID",
+	"X-Stellabill-Signature",
+}
+
+func buildAllowHeaders(requestedHeaders string) string {
+	seen := make(map[string]struct{})
+	allowHeaders := make([]string, 0, len(defaultAllowHeaders)+8)
+
+	addHeader := func(header string) {
+		header = strings.TrimSpace(header)
+		if header == "" {
+			return
+		}
+		key := strings.ToLower(header)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		allowHeaders = append(allowHeaders, header)
+	}
+
+	for _, header := range defaultAllowHeaders {
+		addHeader(header)
+	}
+
+	for _, header := range strings.Split(requestedHeaders, ",") {
+		addHeader(header)
+	}
+
+	return strings.Join(allowHeaders, ", ")
+}
+
 // CORS creates a strict CORS middleware enforcing an origin allow-list.
 func CORS(env string, allowedOriginsRaw string) gin.HandlerFunc {
 	isProdEnv := env == "production" || env == "staging"
@@ -27,7 +66,8 @@ func CORS(env string, allowedOriginsRaw string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 
-		c.Header("Vary", "Origin")
+		c.Header("Vary", "Origin, Access-Control-Request-Headers")
+		allowHeaders := buildAllowHeaders(c.GetHeader("Access-Control-Request-Headers"))
 
 		// Not a cross-origin request. However, treat OPTIONS in non-prod as
 		// a preflight and short-circuit even when Origin header is absent
@@ -38,7 +78,7 @@ func CORS(env string, allowedOriginsRaw string) gin.HandlerFunc {
 				// respond as wildcard-allowed preflight in dev
 				c.Header("Access-Control-Allow-Origin", "*")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key")
+				c.Header("Access-Control-Allow-Headers", allowHeaders)
 				c.AbortWithStatus(http.StatusNoContent)
 				return
 			}
@@ -76,7 +116,7 @@ func CORS(env string, allowedOriginsRaw string) gin.HandlerFunc {
 
 		c.Header("Access-Control-Allow-Origin", allowOriginHeader)
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key")
+		c.Header("Access-Control-Allow-Headers", allowHeaders)
 
 		if allowOriginHeader != "*" {
 			c.Header("Access-Control-Allow-Credentials", "true")

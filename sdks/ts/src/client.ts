@@ -115,6 +115,22 @@ export function isLocalhost(baseUrl: string): boolean {
   }
 }
 
+/**
+ * Parse a potential error response body into an ApiErrorBody.
+ *
+ * The boundary condition at the `parsed && typeof parsed === 'object' &&
+ * !Array.isArray(parsed)` branch is deliberate: only plain objects (and not
+ * `null`, arrays, primitives, or other non-object JSON values) are returned as
+ * the error body. Everything else yields `undefined` so the SDK contract
+ * remains deterministic. Exported for testing only.
+ */
+export function normalizeErrorBody(parsed: unknown): ApiErrorBody | undefined {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as ApiErrorBody;
+  }
+  return undefined;
+}
+
 async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
   const contentType = res.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) return undefined;
@@ -122,10 +138,7 @@ async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefin
     const text = await res.text();
     if (!text) return undefined;
     const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as ApiErrorBody;
-    }
-    return undefined;
+    return normalizeErrorBody(parsed);
   } catch {
     return undefined;
   }
@@ -178,7 +191,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
   // truth for the `Authorization` header.
   if (options.headers) {
     for (const [k, v] of Object.entries(options.headers)) {
-      const lower = k.toLowerCase();
+      const lower = k.lowerCase();
       if (lower === 'authorization') continue;
       if (typeof v === 'string' && v.length > 0) {
         extraHeaders[lower] = v;
@@ -228,7 +241,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
     method: string,
     urlPath: string,
     rawResult: unknown,
-  ): Promise<SdkResult<T>> {
+  ): Promise<SdkResult<T>>({
     const r = (await rawResult) as { data: T | undefined; error: unknown; response: Response };
     const { data, error, response } = r;
     const status = response.status;
@@ -327,9 +340,3 @@ export async function assertOk<T>(result: SdkResult<T>): Promise<T> {
     message: makeErrorMessage(result.requestMethod, result.requestUrl, result.status, result.error),
   });
 }
-
-/**
- * Re-export for callers that want to construct or inspect API error
- * envelopes manually (e.g. for response-shape validation in their own tests).
- */
-export { safeParseErrorBody };

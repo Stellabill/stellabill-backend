@@ -567,16 +567,25 @@ describe('createStellarBillClient - headers and auth', () => {
     expect(headers['x-custom-trace']).toBe('abc');
   });
 
-  it('skips empty-valued static headers', async () => {
+  it('skips non-string and empty-valued static headers', async () => {
     const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
     const sdk = createStellarBillClient({
       baseUrl: 'https://api.example.com',
-      headers: { 'X-Empty': '', 'X-Keep': 'v' },
+      headers: { 
+        'X-Empty': '', 
+        'X-Number': 42 as unknown as string,
+        'X-Boolean': true as unknown as string,
+        'X-Object': { foo: 'bar' } as unknown as string,
+        'X-Keep': 'v' 
+      },
       fetch,
     });
     await sdk.getHealth();
     const headers = callHeaders(calls[0]!);
     expect(headers['x-empty']).toBeUndefined();
+    expect(headers['x-number']).toBeUndefined();
+    expect(headers['x-boolean']).toBeUndefined();
+    expect(headers['x-object']).toBeUndefined();
     expect(headers['x-keep']).toBe('v');
   });
 

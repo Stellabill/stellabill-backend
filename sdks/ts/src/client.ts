@@ -97,8 +97,14 @@ function validateBaseUrl(raw: unknown): string {
 }
 
 /**
- * Whether a baseUrl points at localhost / 127.0.0.1. Malformed URLs return
- * `false` (treated as non-localhost). Exported for testing only.
+ * True when `baseUrl` points at the local loopback interface
+ * (`localhost` or `127.0.0.1`), regardless of scheme or port. Any value
+ * `URL` cannot parse is treated as non-local, which keeps the insecure-URL
+ * warning conservative.
+ *
+ * Exported for direct boundary testing of the parse-failure branch; it is
+ * intentionally **not** re-exported from `src/index.ts`, so the package's
+ * public surface is unchanged.
  */
 export function isLocalhost(baseUrl: string): boolean {
   try {

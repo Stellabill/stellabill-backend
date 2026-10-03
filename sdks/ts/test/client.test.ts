@@ -159,6 +159,16 @@ describe('createStellarBillClient - configuration', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('accepts a valid base URL and normalizes its trailing slashes', async () => {
+    const { fetch, calls } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });
+    const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com/sdk///', fetch });
+
+    await sdk.getHealth();
+
+    expect(calls[0]!.url).toBe('https://api.example.com/sdk/api/health');
+
+  });
+
   it('warns when baseUrl is http with deceptive or unsupported localhost hostnames', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     

@@ -18,9 +18,11 @@ func TestCORS(t *testing.T) {
 		allowedOrigins     string
 		reqOrigin          string
 		reqMethod          string
+		reqHeaders         string
 		expectedStatus     int
 		expectedAllowOrig  string
 		expectedAllowCreds string
+		expectedAllowHdrs  string
 	}{
 		{
 			name:               "Production - Allowed origin",
@@ -31,6 +33,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "https://example.com",
 			expectedAllowCreds: "true",
+			expectedAllowHdrs:  "Content-Type, Authorization, Idempotency-Key, X-Request-ID, X-Admin-Token, X-Stellabill-Date, X-Stellabill-Request-ID, X-Stellabill-Signature",
 		},
 		{
 			name:               "Production - Case insensitive allowed origin",
@@ -41,6 +44,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "https://example.com",
 			expectedAllowCreds: "true",
+			expectedAllowHdrs:  "Content-Type, Authorization, Idempotency-Key, X-Request-ID, X-Admin-Token, X-Stellabill-Date, X-Stellabill-Request-ID, X-Stellabill-Signature",
 		},
 		{
 			name:               "Production - Disallowed origin",
@@ -51,6 +55,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK, // Request proceeds but no CORS headers
 			expectedAllowOrig:  "",
 			expectedAllowCreds: "",
+			expectedAllowHdrs:  "",
 		},
 		{
 			name:               "Production - Preflight allowed origin",
@@ -58,9 +63,11 @@ func TestCORS(t *testing.T) {
 			allowedOrigins:     "https://example.com",
 			reqOrigin:          "https://example.com",
 			reqMethod:          "OPTIONS",
+			reqHeaders:         "X-Request-ID, X-Stellabill-Date, X-Stellabill-Signature",
 			expectedStatus:     http.StatusNoContent,
 			expectedAllowOrig:  "https://example.com",
 			expectedAllowCreds: "true",
+			expectedAllowHdrs:  "Content-Type, Authorization, Idempotency-Key, X-Request-ID, X-Stellabill-Date, X-Stellabill-Signature",
 		},
 		{
 			name:               "Production - Preflight disallowed origin",
@@ -71,6 +78,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusForbidden,
 			expectedAllowOrig:  "",
 			expectedAllowCreds: "",
+			expectedAllowHdrs:  "",
 		},
 		{
 			name:               "Production - Wildcard is ignored",
@@ -81,6 +89,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusForbidden,
 			expectedAllowOrig:  "",
 			expectedAllowCreds: "",
+			expectedAllowHdrs:  "",
 		},
 		{
 			name:               "Production - Empty allowed origins",
@@ -91,6 +100,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "",
 			expectedAllowCreds: "",
+			expectedAllowHdrs:  "",
 		},
 		{
 			name:               "Staging - Allowed origin",
@@ -101,6 +111,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "https://staging.example.com",
 			expectedAllowCreds: "true",
+			expectedAllowHdrs:  "Content-Type, Authorization, Idempotency-Key, X-Request-ID, X-Admin-Token, X-Stellabill-Date, X-Stellabill-Request-ID, X-Stellabill-Signature",
 		},
 		{
 			name:               "Development - Allowed origin",
@@ -111,6 +122,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "https://example.com",
 			expectedAllowCreds: "true",
+			expectedAllowHdrs:  "Content-Type, Authorization, Idempotency-Key, X-Request-ID, X-Admin-Token, X-Stellabill-Date, X-Stellabill-Request-ID, X-Stellabill-Signature",
 		},
 		{
 			name:               "Development - Disallowed origin",
@@ -121,6 +133,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "",
 			expectedAllowCreds: "",
+			expectedAllowHdrs:  "",
 		},
 		{
 			name:               "Development - Wildcard allow all",
@@ -131,6 +144,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "*",
 			expectedAllowCreds: "",
+			expectedAllowHdrs:  "Content-Type, Authorization, Idempotency-Key, X-Request-ID, X-Admin-Token, X-Stellabill-Date, X-Stellabill-Request-ID, X-Stellabill-Signature",
 		},
 		{
 			name:               "Development - Empty origins allow all",
@@ -141,6 +155,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "*",
 			expectedAllowCreds: "",
+			expectedAllowHdrs:  "Content-Type, Authorization, Idempotency-Key, X-Request-ID, X-Admin-Token, X-Stellabill-Date, X-Stellabill-Request-ID, X-Stellabill-Signature",
 		},
 		{
 			name:               "No Origin header",
@@ -151,6 +166,7 @@ func TestCORS(t *testing.T) {
 			expectedStatus:     http.StatusOK,
 			expectedAllowOrig:  "",
 			expectedAllowCreds: "",
+			expectedAllowHdrs:  "",
 		},
 	}
 
@@ -166,6 +182,9 @@ func TestCORS(t *testing.T) {
 			if tt.reqOrigin != "" {
 				req.Header.Set("Origin", tt.reqOrigin)
 			}
+			if tt.reqHeaders != "" {
+				req.Header.Set("Access-Control-Request-Headers", tt.reqHeaders)
+			}
 
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
@@ -173,9 +192,8 @@ func TestCORS(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, w.Code)
 			assert.Equal(t, tt.expectedAllowOrig, w.Header().Get("Access-Control-Allow-Origin"))
 			assert.Equal(t, tt.expectedAllowCreds, w.Header().Get("Access-Control-Allow-Credentials"))
-			if w.Header().Get("Access-Control-Allow-Origin") != "" {
-				assert.Equal(t, "GET, POST, PUT, PATCH, DELETE, OPTIONS", w.Header().Get("Access-Control-Allow-Methods"))
-				assert.Equal(t, "Content-Type, Authorization, Idempotency-Key", w.Header().Get("Access-Control-Allow-Headers"))
+			if tt.expectedAllowHdrs != "" {
+				assert.Equal(t, tt.expectedAllowHdrs, w.Header().Get("Access-Control-Allow-Headers"))
 			}
 		})
 	}

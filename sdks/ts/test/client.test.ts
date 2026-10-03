@@ -140,6 +140,29 @@ describe('createStellarBillClient - configuration', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Insecure baseUrl'));
   });
 
+  it('accepts an insecure HTTP baseUrl as valid input, making successful requests and preserving token/response state', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { fetch, calls } = mockFetchOnce({ status: 'ok' }, { status: 200 });
+    const sdk = createStellarBillClient({ baseUrl: 'http://example.com', fetch, token: 'test-token' });
+    const r = await sdk.getHealth();
+    
+    // Assert the warning branch was triggered
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Insecure baseUrl'));
+    
+    // Assert the request behavior exposed by this branch (e.g. host correctly used, protocol intact)
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('http://example.com/api/health');
+    
+    // Assert token state propagation
+    const headers = callHeaders(calls[0]!);
+    expect(headers['authorization']).toBe('Bearer test-token');
+    
+    // Assert response state is preserved
+    expect(r.status).toBe(200);
+    expect(r.data?.status).toBe('ok');
+    expect(r.error).toBeUndefined();
+  });
+
   it('does not warn when baseUrl is https', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { fetch } = mockFetchOnce({ status: 'ok', service: 'stellarbill-backend' });

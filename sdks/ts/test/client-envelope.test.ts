@@ -47,7 +47,7 @@ function responseFetch(makeResponse: () => Response): {
   calls: FetchCall[];
 } {
   const calls: FetchCall[] = [];
-  const fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+  const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const method = input instanceof Request ? input.method : 'GET';
     calls.push({ url: toUrl(input), method });
     return makeResponse();

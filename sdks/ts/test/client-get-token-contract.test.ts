@@ -29,7 +29,7 @@ function mockFetch(
   const contentType = init.contentType ?? 'application/json';
   const text = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body);
   const res = new Response(text, { status, headers: { 'content-type': contentType } });
-  const fetch: typeof globalThis.fetch = vi.fn(async (input: RequestInfo) => {
+  const fetch: typeof globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const headers: Record<string, string> = {};
     if (input instanceof Request) {
       input.headers.forEach((value, key) => {

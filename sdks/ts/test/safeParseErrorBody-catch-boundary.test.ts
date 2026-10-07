@@ -160,9 +160,13 @@ describe('safeParseErrorBody catch boundary – Source 2: JSON.parse() throws', 
     expect(await safeParseErrorBody(res)).toBeUndefined();
   });
 
-  it('returns undefined for a body with a leading BOM', async () => {
-    // A UTF-8 BOM (U+FEFF) before the JSON causes JSON.parse to throw.
-    const res = new Response('\uFEFF{"error":"bom"}', {
+  it('returns undefined for a BOM-prefixed body whose remaining text is malformed', async () => {
+    // NOTE: the WHATWG UTF-8 decode performed by Response.text() strips a
+    // leading BOM, so the BOM itself never reaches JSON.parse (see
+    // client-safe-parse-error-body.test.ts). Here the text *after* the BOM is
+    // malformed, so JSON.parse still throws and the catch path returns
+    // undefined — keeping this a genuine JSON.parse-failure case.
+    const res = new Response('\uFEFF{"error":', {
       status: 400,
       headers: { 'content-type': 'application/json' },
     });

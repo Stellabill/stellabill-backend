@@ -49,7 +49,7 @@ function toUrl(input: Parameters<typeof fetch>[0]): string {
 /** Records the headers openapi-fetch actually put on the outgoing request. */
 function headerRecordingFetch(): { fetch: typeof globalThis.fetch; calls: FetchCall[] } {
   const calls: FetchCall[] = [];
-  const fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+  const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const headers: Record<string, string> = {};
     if (input instanceof Request) {
       input.headers.forEach((value, key) => {

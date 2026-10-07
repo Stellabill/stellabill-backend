@@ -48,12 +48,18 @@ type FetchCall = {
   inputHeaders: Record<string, string>;
 };
 
-function captureHeaders(): { fetch: typeof globalThis.fetch; calls: FetchCall[] } {
-  const calls: FetchCall[] = [];
-  const res = new Response(JSON.stringify({ status: 'ok', service: 'stellarbill-backend' }), {
+const HEALTH_BODY = JSON.stringify({ status: 'ok', service: 'stellarbill-backend' });
+
+/** A fresh Response per call: an HTTP body can only be consumed once. */
+function healthResponse(): Response {
+  return new Response(HEALTH_BODY, {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function captureHeaders(): { fetch: typeof globalThis.fetch; calls: FetchCall[] } {
+  const calls: FetchCall[] = [];
   const fetch: typeof globalThis.fetch = vi.fn(async (input) => {
     const inputHeaders: Record<string, string> = {};
     if (input instanceof Request) {
@@ -62,7 +68,7 @@ function captureHeaders(): { fetch: typeof globalThis.fetch; calls: FetchCall[] 
       });
     }
     calls.push({ inputHeaders });
-    return res;
+    return healthResponse();
   });
   return { fetch, calls };
 }
@@ -109,17 +115,13 @@ describe('authMiddleware line 196 – Branch 1: ACCEPT (header absent, non-empty
   it('injects static headers on every call, not only the first', async () => {
     // extraHeaders are bound at construction time; middleware runs per-request.
     const calls: FetchCall[] = [];
-    const res = new Response(JSON.stringify({ status: 'ok', service: 'stellarbill-backend' }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
     const fetch: typeof globalThis.fetch = vi.fn(async (input) => {
       const inputHeaders: Record<string, string> = {};
       if (input instanceof Request) {
         input.headers.forEach((v, k) => { inputHeaders[k.toLowerCase()] = v; });
       }
       calls.push({ inputHeaders });
-      return res;
+      return healthResponse();
     });
     const sdk = createStellarBillClient({
       baseUrl: 'https://api.example.com',
@@ -304,10 +306,12 @@ describe('authMiddleware line 196 – Branch 4: SKIP (empty string value)', () =
     await sdk.getHealth();
     const h = calls[0]!.inputHeaders;
     expect(h['x-empty']).toBeUndefined();
-    // Note: 'X-Also-Empty' with spaces is a non-empty string (length > 0),
-    // so it IS accepted by the guards — the SDK does not trim individual header
-    // values (only keys are lowercased). This pins that contract explicitly.
-    expect(h['x-also-empty']).toBe('   ');
+    // 'X-Also-Empty' with spaces is a non-empty string (length > 0), so it IS
+    // accepted by the SDK guards — the SDK does not trim header values itself
+    // (only keys are lowercased). The WHATWG `Headers` normalization, however,
+    // strips surrounding whitespace, so the value observed on the wire is the
+    // empty string. Pinned explicitly (mirrors client-headers-lowercase.test.ts).
+    expect(h['x-also-empty']).toBe('');
     expect(h['x-non-empty']).toBe('present');
   });
 
@@ -411,15 +415,11 @@ describe('authMiddleware – token injection path (lines 199-202)', () => {
 
   it('uses the updated token after setToken() is called between requests', async () => {
     const callLog: Array<{ auth: string | undefined }> = [];
-    const res = new Response(JSON.stringify({ status: 'ok', service: 'stellarbill-backend' }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
     const fetch: typeof globalThis.fetch = vi.fn(async (input) => {
       let auth: string | undefined;
       if (input instanceof Request) auth = input.headers.get('authorization') ?? undefined;
       callLog.push({ auth });
-      return res;
+      return healthResponse();
     });
     const sdk = createStellarBillClient({ baseUrl: 'https://api.example.com', token: 'first', fetch });
     await sdk.getHealth();           // call 1: token = 'first'

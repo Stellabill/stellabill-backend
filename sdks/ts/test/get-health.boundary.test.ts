@@ -48,8 +48,8 @@ describe('getHealth - request shape', () => {
     await client.getHealth();
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].method).toBe('GET');
-    expect(calls[0].url).toBe(`${BASE}/api/health`);
+    expect(calls[0]!.method).toBe('GET');
+    expect(calls[0]!.url).toBe(`${BASE}/api/health`);
   });
 
   it('normalises a baseUrl with trailing slashes before composing the path', async () => {
@@ -58,7 +58,7 @@ describe('getHealth - request shape', () => {
 
     await client.getHealth();
 
-    expect(calls[0].url).toBe(`${BASE}/api/health`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/health`);
   });
 
   it('composes the health path relative to a baseUrl that already has a path prefix', async () => {
@@ -67,7 +67,7 @@ describe('getHealth - request shape', () => {
 
     await client.getHealth();
 
-    expect(calls[0].url).toBe(`${BASE}/gateway/api/health`);
+    expect(calls[0]!.url).toBe(`${BASE}/gateway/api/health`);
   });
 
   it('does not send an Authorization header when no token was configured', async () => {

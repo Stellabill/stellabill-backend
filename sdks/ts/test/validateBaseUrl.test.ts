@@ -16,7 +16,7 @@ describe('validateBaseUrl rejection paths via client creation', () => {
     it(`throws StellarBillConfigError for ${caseName}`, () => {
       expect(() =>
         // @ts-expect-error intentionally passing bad type
-        createStellarBillClient({ baseUrl: input as any })
+        createStellarBillClient({ baseUrl: input })
       ).toThrowError(new StellarBillConfigError(expectedMessage));
     });
   }

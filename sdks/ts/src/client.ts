@@ -2,8 +2,9 @@ import createClient, { type Middleware } from 'openapi-fetch';
 
 import type { paths } from './types/api.gen.js';
 const { TokenHolder, sanitizeToken } = require('./auth.js');
-import { StellarBillConfigError, StellarBillError, type ApiErrorBody } from './errors.js';
-import { SDK_VERSION, defaultUserAgent } from './version.js';
+const { StellarBillConfigError, StellarBillError } = require('./errors.js');
+const { SDK_VERSION, defaultUserAgent } = require('./version.js');
+import type { ApiErrorBody } from './errors.js';
 
 export type FetchLike = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
 
@@ -12,9 +13,9 @@ export interface StellarBillClientOptions {
   baseUrl: string;
   /** Initial bearer token; rotatable via `client.setToken()`. */
   token?: string;
-  /** Optional pre-configured fetch implementation (Node 20+ has a built-in one). */
+  /** Optional pre-configured fetch implementation (Node 20+ as a built-in). */
   fetch?: FetchLike;
-  /** Extra headers injected on every request (e.g. `XTenant-ID`, trace IDs). */
+  /** Extra headers injected on every request (e.g. `X Tenant-ID`, trace IDs). */
   headers?: Record<string, string>;
   /** Extra middleware runs after the SDK-installed auth + user-agent middleware. */
   middleware?: Middleware[];
@@ -52,7 +53,7 @@ export interface SdkResult<TData, TError = ApiErrorBody | undefined> {
   response: Response;
   /** HTTP method that produced this result. */
   requestMethod: string;
-  /** Final resolved URL (!after openapi-fetch substitution). */
+  /** Final resolved URL (after openapi-fetch substitution). */
   requestUrl: string;
 }
 
@@ -126,17 +127,30 @@ export function normalizeErrorBody(parsed: unknown): ApiErrorBody | undefined {
 }
 
 /**
- * Parse the response body as an error body, or undefined when the body is not
- * JSON or is empty. Exported for testing only.
+ * Parse the response body text into an ApiErrorBody.
+ *
+ * The `if (!text) return undefined;` branch is the rejected-input boundary:
+ * an empty or missing body text is not a valid error contract, so the SDK
+ * returns `undefined` deterministically and callers fall back to the HTTP
+ * status. Exported for testing only.
  */
-export async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
+export function parseErrorBodyText(text: string | null | undefined): ApiErrorBody | undefined {
+  if (!text) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return normalizeErrorBody(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
   const contentType = res.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) return undefined;
   try {
     const text = await res.text();
-    if (!text) return undefined;
-    const parsed: unknown = JSON.parse(text);
-    return normalizeErrorBody(parsed);
+    // Empty body: no error contract to expose; callers fall back to HTTP status.
+    return parseErrorBodyText(text);
   } catch {
     return undefined;
   }
@@ -188,9 +202,10 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
   // SDK's token holder; the auth middleware below is the sole source of truth
   // for the `Authorization` header.
   if (options.headers) {
-    for (const [h, v] of Object.entries(options.headers)) {
-      const lower = h.toLowerCase();
+    for (const [k] of Object.entries(options.headers)) {
+      const lower = k.lowerCase();
       if (lower === 'authorization') continue;
+      const v = options.headers[k];
       if (typeof v === 'string' && v.length > 0) {
         extraHeaders[lower] = v;
       }
@@ -198,10 +213,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
   }
   extraHeaders['user-agent'] = userAgent;
 
-  const raw = createClient<paths>({
-    baseUrl,
-    fetch: providedFetch,
-  });
+  const raw = createClient<paths>({ baseUrl, fetch: providedFetch });
 
   // Single middleware that injects user-agent, caller-supplied static
   // headers, and Authorization. Doing all three in middleware (instead
@@ -232,14 +244,10 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
 
   const throwOnError = options.throwOnError === true;
 
-  // Wrap an openapi-fetch result into the SEA	s SdkResult envelope. We accept
+  // Wrap an openapi-fetch result into the SDK's SdkResult envelope. We accept
   // any "thenable" with the data/error/response triple so we don't depend on
   // openapi-fetch's exact internal typings (which have shifted several times).
-  async function wrap<T>(
-    method: string,
-    urlPath: string,
-    rawResult: unknown,
-  ): Promise<SdkResult<T>> {
+  async function wrap<T>(method: string, urlPath: string, rawResult: unknown): Promise<SdkResult<T>> {
     const r = (await rawResult) as { data: T | undefined; error: unknown; response: Response };
     const { data, error, response } = r;
     const status = response.status;
@@ -304,33 +312,11 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
         throw new StellarBillConfigError('idempotency key must be a non-empty string');
       }
       if (key.length > 255) {
-        throw new StellarBillConfigError('idempotency key exceeds maximum length of 255 characters');
+        throw new StellarBillConfigError('idempotency key must be at most 255 characters');
       }
       const path = encodeURIComponent(key);
-      const res = await raw.GET('/api/v1/idempotency/{key}', { params: { path: { key } } });
-      return wrap('GET', `/api/v1/idempotency/${path}`, res);
+      const res = await raw.GET('/api/v1/idempotency-keys/{key}', { params: { path: { key } } });
+      return wrap('GET', `/api/v1/idempotency-keys/${path}`, res);
     },
   };
-}
-
-/**
- * Manual helper for callers that want throw-on-error semantics on a single
- * call without enabling `throwOnError` globally.
- */
-export async function assertOk<T>(result: SdkResult<T>): Promise<T> {
-  if (result.status < 200 || result.status >= 300) {
-    throw new StellarBillError({
-      status: result.status,
-      body: result.error as ApiErrorBody | undefined,
-      requestUrl: result.requestUrl,
-      requestMethod: result.requestMethod,
-      message: makeErrorMessage(
-        result.requestMethod,
-        result.requestUrl,
-        result.status,
-        result.error as ApiErrorBody | undefined,
-      ),
-    });
-  }
-  return result.data as T;
 }

@@ -1,7 +1,7 @@
 import createClient, { type Middleware } from 'openapi-fetch';
 
 import type { paths } from './types/api.gen.js';
-import { TokenHolder, sanitizeToken } from './auth.js';
+const { TokenHolder, sanitizeToken } = require('./auth.js');
 import { StellarBillConfigError, StellarBillError, type ApiErrorBody } from './errors.js';
 import { SDK_VERSION, defaultUserAgent } from './version.js';
 
@@ -96,7 +96,11 @@ function validateBaseUrl(raw: unknown): string {
   return parsed.toString().replace(/\/+$/, '');
 }
 
-function isLocalhost(baseUrl: string): boolean {
+/**
+ * Whether a baseUrl points at localhost / 127.0.0.1. Malformed URLs return
+ * `false` (treated as non-localhost). Exported for testing only.
+ */
+export function isLocalhost(baseUrl: string): boolean {
   try {
     const u = new URL(baseUrl);
     return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
@@ -105,17 +109,38 @@ function isLocalhost(baseUrl: string): boolean {
   }
 }
 
-async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
+/**
+ * Parse a potential error response body into an ApiErrorBody.
+ *
+ * The boundary condition at the `parsed && typeof parsed === 'object' &&
+ * !Array.isArray(parsed)` branch is deliberate: only plain objects (and not
+ * `null`, arrays, primitives, or other non-object JSON values) are returned as
+ * the error body. Everything else yields `undefined` so the SDK contract
+ * remains deterministic. Exported for testing only.
+ */
+export function normalizeErrorBody(parsed: unknown): ApiErrorBody | undefined {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as ApiErrorBody;
+  }
+  return undefined;
+}
+
+/**
+ * Parse a response body as an ApiErrorBody, returning `undefined` for any
+ * rejected input: non-JSON content type, empty or whitespace-only body,
+ * malformed JSON, or JSON that is not a plain object. This keeps the
+ * error contract stable and deterministic. Exported for testing only.
+ */
+export async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
   const contentType = res.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) return undefined;
   try {
     const text = await res.text();
-    if (!text) return undefined;
+    // Rejected input: an empty or whitespace-only body is not valid JSON and
+    // must not reach JSON.parse (and must not yield an error body).
+    if (!text || text.trim().length === 0) return undefined;
     const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as ApiErrorBody;
-    }
-    return undefined;
+    return normalizeErrorBody(parsed);
   } catch {
     return undefined;
   }
@@ -291,35 +316,3 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
     },
   };
 }
-
-/**
- * Manual helper for callers that want throw-on-error semantics on a single
- * call without enabling `throwOnError` globally.
- */
-export async function assertOk<T>(result: SdkResult<T>): Promise<T> {
-  if (result.status >= 200 && result.status < 300) {
-    if (result.data === undefined) {
-      throw new StellarBillError({
-        status: result.status,
-        body: undefined,
-        requestUrl: result.requestUrl,
-        requestMethod: result.requestMethod,
-        message: `${result.requestMethod} ${result.requestUrl} returned 2xx with empty body`,
-      });
-    }
-    return result.data;
-  }
-  throw new StellarBillError({
-    status: result.status,
-    body: result.error,
-    requestUrl: result.requestUrl,
-    requestMethod: result.requestMethod,
-    message: makeErrorMessage(result.requestMethod, result.requestUrl, result.status, result.error),
-  });
-}
-
-/**
- * Re-export for callers that want to construct or inspect API error
- * envelopes manually (e.g. for response-shape validation in their own tests).
- */
-export { safeParseErrorBody };

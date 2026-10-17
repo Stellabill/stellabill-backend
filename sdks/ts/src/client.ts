@@ -12,9 +12,9 @@ export interface StellarBillClientOptions {
   baseUrl: string;
   /** Initial bearer token; rotatable via `client.setToken()`. */
   token?: string;
-  /** Optional pre-configured fetch implementation (Node 20+ has a built-in). */
+  /** Optional pre-configured fetch implementation (Node 20+ has a built-in one). */
   fetch?: FetchLike;
-  /** Extra headers injected on every request (e.g. `X-Tenant-ID`, trace IDs). */
+  /** Extra headers injected on every request (e.g. `XTenant-ID`, trace IDs). */
   headers?: Record<string, string>;
   /** Extra middleware runs after the SDK-installed auth + user-agent middleware. */
   middleware?: Middleware[];
@@ -52,7 +52,7 @@ export interface SdkResult<TData, TError = ApiErrorBody | undefined> {
   response: Response;
   /** HTTP method that produced this result. */
   requestMethod: string;
-  /** Final resolved URL (after openapi-fetch substitution). */
+  /** Final resolved URL (!after openapi-fetch substitution). */
   requestUrl: string;
 }
 
@@ -126,19 +126,15 @@ export function normalizeErrorBody(parsed: unknown): ApiErrorBody | undefined {
 }
 
 /**
- * Parse a response body as an ApiErrorBody, returning `undefined` for any
- * rejected input: non-JSON content type, empty or whitespace-only body,
- * malformed JSON, or JSON that is not a plain object. This keeps the
- * error contract stable and deterministic. Exported for testing only.
+ * Parse the response body as an error body, or undefined when the body is not
+ * JSON or is empty. Exported for testing only.
  */
 export async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
   const contentType = res.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) return undefined;
   try {
     const text = await res.text();
-    // Rejected input: an empty or whitespace-only body is not valid JSON and
-    // must not reach JSON.parse (and must not yield an error body).
-    if (!text || text.trim().length === 0) return undefined;
+    if (!text) return undefined;
     const parsed: unknown = JSON.parse(text);
     return normalizeErrorBody(parsed);
   } catch {
@@ -189,11 +185,11 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
 
   // Normalize caller headers and combine with User-Agent. Reject caller-
   // supplied Authorization headers so they cannot smuggle auth past the
-  // SDK's token holder; the auth middleware below is the sole source of
-  // truth for the `Authorization` header.
+  // SDK's token holder; the auth middleware below is the sole source of truth
+  // for the `Authorization` header.
   if (options.headers) {
-    for (const [k, v] of Object.entries(options.headers)) {
-      const lower = k.toLowerCase();
+    for (const [h, v] of Object.entries(options.headers)) {
+      const lower = h.toLowerCase();
       if (lower === 'authorization') continue;
       if (typeof v === 'string' && v.length > 0) {
         extraHeaders[lower] = v;
@@ -236,7 +232,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
 
   const throwOnError = options.throwOnError === true;
 
-  // Wrap an openapi-fetch result into the SDK's SdkResult envelope. We accept
+  // Wrap an openapi-fetch result into the SEA	s SdkResult envelope. We accept
   // any "thenable" with the data/error/response triple so we don't depend on
   // openapi-fetch's exact internal typings (which have shifted several times).
   async function wrap<T>(
@@ -315,4 +311,26 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
       return wrap('GET', `/api/v1/idempotency/${path}`, res);
     },
   };
+}
+
+/**
+ * Manual helper for callers that want throw-on-error semantics on a single
+ * call without enabling `throwOnError` globally.
+ */
+export async function assertOk<T>(result: SdkResult<T>): Promise<T> {
+  if (result.status < 200 || result.status >= 300) {
+    throw new StellarBillError({
+      status: result.status,
+      body: result.error as ApiErrorBody | undefined,
+      requestUrl: result.requestUrl,
+      requestMethod: result.requestMethod,
+      message: makeErrorMessage(
+        result.requestMethod,
+        result.requestUrl,
+        result.status,
+        result.error as ApiErrorBody | undefined,
+      ),
+    });
+  }
+  return result.data as T;
 }

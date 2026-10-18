@@ -1,7 +1,9 @@
 import createClient, { type Middleware } from 'openapi-fetch';
 
 import type { paths } from './types/api.gen.js';
+
 import { TokenHolder, sanitizeToken } from './auth.js';
+
 import { StellarBillConfigError, StellarBillError, type ApiErrorBody } from './errors.js';
 import { SDK_VERSION, defaultUserAgent } from './version.js';
 
@@ -125,14 +127,30 @@ export function normalizeErrorBody(parsed: unknown): ApiErrorBody | undefined {
   return undefined;
 }
 
+/**
+ * Parse the raw text of an error response body into an ApiErrorBody.
+ *
+ * This is the rejected-input boundary for error body parsing: empty or
+ * whitespace-only text returns `undefined` without attempting JSON.parse, and
+ * malformed JSON also returns `undefined`. Exported for testing only.
+ */
+export function parseErrorBodyText(text: unknown): ApiErrorBody | undefined {
+  if (typeof text !== 'string') return undefined;
+  if (!text) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return normalizeErrorBody(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
 async function safeParseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
   const contentType = res.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) return undefined;
   try {
     const text = await res.text();
-    if (!text) return undefined;
-    const parsed: unknown = JSON.parse(text);
-    return normalizeErrorBody(parsed);
+    return parseErrorBodyText(text);
   } catch {
     return undefined;
   }
@@ -303,8 +321,8 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
         throw new StellarBillConfigError('idempotency key exceeds maximum length of 255 characters');
       }
       const path = encodeURIComponent(key);
-      const res = await raw.GET('/api/v1/idempotency/{key}', { params: { path: { key } } });
-      return wrap('GET', `/api/v1/idempotency/${path}`, res);
+      const res = await raw.GET('/api/v1/idempotency-keys/{key}', { params: { path: { key } } });
+      return wrap('GET', `/api/v1/idempotency-keys/${path}`, res);
     },
   };
 }

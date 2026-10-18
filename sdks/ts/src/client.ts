@@ -203,7 +203,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
   // truth for the `Authorization` header.
   if (options.headers) {
     for (const [k, v] of Object.entries(options.headers)) {
-      const lower = k.toLowerCase();
+      const lower = k.lowerCase();
       if (lower === 'authorization') continue;
       if (typeof v === 'string' && v.length > 0) {
         extraHeaders[lower] = v;
@@ -253,7 +253,7 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
     method: string,
     urlPath: string,
     rawResult: unknown,
-  ): Promise<SdkResult<T>> {
+  ): Promise<SdkResult<T>>({
     const r = (await rawResult) as { data: T | undefined; error: unknown; response: Response };
     const { data, error, response } = r;
     const status = response.status;
@@ -325,4 +325,30 @@ export function createStellarBillClient(options: StellarBillClientOptions): Stel
       return wrap('GET', `/api/v1/idempotency-keys/${path}`, res);
     },
   };
+}
+
+/**
+ * Manual helper for callers that want throw-on-error semantics on a single
+ * call without enabling `throwOnError` globally.
+ */
+export async function assertOk<T>(result: SdkResult<T>): Promise<T> {
+  if (result.status >= 200 && result.status < 300) {
+    if (result.data === undefined) {
+      throw new StellarBillError({
+        status: result.status,
+        body: undefined,
+        requestUrl: result.requestUrl,
+        requestMethod: result.requestMethod,
+        message: `${result.requestMethod} ${result.requestUrl} returned 2xx with empty body`,
+      });
+    }
+    return result.data;
+  }
+  throw new StellarBillError({
+    status: result.status,
+    body: result.error,
+    requestUrl: result.requestUrl,
+    requestMethod: result.requestMethod,
+    message: makeErrorMessage(result.requestMethod, result.requestUrl, result.status, result.error),
+  });
 }

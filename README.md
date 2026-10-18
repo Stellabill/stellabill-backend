@@ -1,6 +1,8 @@
 # Stellabill Backend
 
-Go (Gin) API backend for Stellabill - subscription and billing plans API. This repo is backend-only; a separate frontend consumes these APIs.
+[Go (Gin) API backend for Stellabill - subscription and billing plans API. This repo is backend-only; a separate frontend consumes these APIs.]
+
+For a concise tech-stack, API overview, and quick startup instructions see [TECH_STACK.md](TECH_STACK.md).
 
 [![CI](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/Stellabill/stellabill-backend/actions/workflows/ci.yml)
 

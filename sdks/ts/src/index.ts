@@ -15,6 +15,7 @@ export {
   createStellarBillClient,
   assertOk,
   safeParseErrorBody,
+  isLocalhost,
   type StellarBillClient,
   type StellarBillClientOptions,
   type SdkResult,

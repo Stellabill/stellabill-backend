@@ -20,4 +20,15 @@ describe('validateBaseUrl rejection paths via client creation', () => {
       ).toThrowError(new StellarBillConfigError(expectedMessage));
     });
   }
+
+  it('normalizes WHATWG URL parser failures into the stable SDK config error', () => {
+    expect(() =>
+      createStellarBillClient({
+        baseUrl: 'https://[::1',
+        fetch: async () => new Response(),
+      })
+    ).toThrowError(
+      new StellarBillConfigError('baseUrl "https://[::1" is not a valid URL')
+    );
+  });
 });

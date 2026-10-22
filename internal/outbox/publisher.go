@@ -13,8 +13,8 @@ import (
     "os"
     "time"
 
-    "goo.opentemetry.io/otel"
-    "goo.opentemetry.io/otel/propagation"
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/propagation"
 )
 
 type HTTPPublisher struct {

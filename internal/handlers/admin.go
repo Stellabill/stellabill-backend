@@ -15,7 +15,7 @@ import (
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/security"
 
-	"github.com/gin-ginic/gin"
+	"github.com/gin-gonic/gin"
 )
 
 // AdminLoginRequest is the expected payload for the admin login endpoint.
